@@ -54,14 +54,15 @@ flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets
 flags.DEFINE_list("inference_server_gpu_ids", ["1"], "Which GPUs to use for inference servers. For now, all get all")
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
+flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
+
 
 FLAGS = flags.FLAGS
 
 
 def build_experiment_config():
   """Builds R2D2 experiment config which can be executed in different ways."""
-  # batch_size = 32
-  batch_size = 8
+  batch_size = FLAGS.learner_batch_size
 
   # The env_name must be dereferenced outside the environment factory as FLAGS
   # cannot be pickled and pickling is necessary when launching distributed
