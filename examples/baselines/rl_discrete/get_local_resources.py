@@ -85,40 +85,6 @@ def make_actor_resources(num_actors, one_cpu_per_actor=False):
   return process_dict
     
 
-
-
-# def make_with_gpu_dict(gpu_str="0"):
-#   return PythonProcess(env={
-#     # "CUDA_VISIBLE_DEVICES": str(0),
-#     "CUDA_VISIBLE_DEVICES": gpu_str,
-#     "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-#     "TF_FORCE_GPU_ALLOW_GROWTH": "true",
-#     # # "XLA_FLAGS": r"--xla_cpu_multi_thread_eigen=false\ intra_op_parallelism_threads=1\ inter_op_parallelism_threads=1",
-#     # # "XLA_FLAGS": "--xla_cpu_multi_thread_eigen=false",
-#     # # "XLA_FLAGS": "intra_op_parallelism_threads=1",
-#     # "XLA_FLAGS": r"--xla_force_host_platform_device_count=1\ --xla_cpu_multi_thread_eigen=false\ intra_op_parallelism_threads=1\ inter_op_parallelism_threads=1",
-#     # The flags do nothing :(
-#     "ACME_ID": FLAGS.acme_id,
-#   },
-#   # pre_command="ulimit -u 100000"
-#   )
-
-# def make_without_gpu_dict():
-#   return PythonProcess(env={
-#     "CUDA_VISIBLE_DEVICES": str(-1),
-#     # # "XLA_FLAGS": "intra_op_parallelism_threads=1",
-#     # # "XLA_FLAGS": "--xla_cpu_multi_thread_eigen=false",
-#     # "XLA_FLAGS": r"--xla_cpu_multi_thread_eigen=false\ intra_op_parallelism_threads=1\ inter_op_parallelism_threads=1",
-#     # # "XLA_FLAGS": "--xla_force_host_platform_device_count=1"
-#     "XLA_FLAGS": r"--xla_force_host_platform_device_count=1\ --xla_cpu_multi_thread_eigen=false\ intra_op_parallelism_threads=1\ inter_op_parallelism_threads=1",
-#     "OPENBLAS_NUM_THREADS": "1",
-#     "MKL_NUM_THREADS": "1",
-#     "OMP_NUM_THREAD": "1",
-#     "ACME_ID": FLAGS.acme_id,
-#     },
-#     # pre_command="ulimit -u 100000"
-#   )
-
 def _get_local_resources(launch_type):
   num_actors = FLAGS.num_actors
   num_actors_per_node = FLAGS.num_actors_per_node
