@@ -189,7 +189,7 @@ def determine_is_door_open(env):
 
 
 def info2goals(info):
-  return np.array([info['player_x'], info['player_y']])
+  return np.array([info['player_x'], info['player_y']], dtype=np.int16)
 
 
 def environment_builder(

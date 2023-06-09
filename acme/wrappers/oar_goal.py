@@ -51,13 +51,14 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
     reward = tree.map_structure(
         lambda x: x.generate_value(), self._environment.reward_spec())
     timestep = self._environment.reset()
-    goals = self._info2goals(self.environment.get_info())
+    goals = self._info2goals(self._environment.get_info())
     new_timestep = self._augment_observation(action, reward, timestep, goals)
     return new_timestep
 
   def step(self, action: types.NestedArray) -> dm_env.TimeStep:
     timestep = self._environment.step(action)
-    new_timestep = self._augment_observation(action, timestep.reward, timestep)
+    goals = self._info2goals(self._environment.get_info())
+    new_timestep = self._augment_observation(action, timestep.reward, timestep, goals)
     return new_timestep
 
   def _augment_observation(self, action: types.NestedArray,
