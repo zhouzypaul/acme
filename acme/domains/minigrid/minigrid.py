@@ -12,8 +12,7 @@ from gymnasium import spaces
 from acme.wrappers.gymnasium_wrapper import GymnasiumWrapper
 from acme.wrappers.oar_goal import ObservationActionRewardGoalWrapper
 from acme.wrappers.observation_action_reward import ObservationActionRewardWrapper
-from acme.wrappers.atari_wrapper import AtariWrapper
-
+from acme.wrappers.minigrid_wrapper import MiniGridWrapper
 
 class MinigridInfoWrapper(Wrapper):
   """Include extra information in the info dict for debugging/visualizations."""
@@ -227,7 +226,7 @@ def environment_builder(
   # Convert the gym environment to a dm_env
   env = GymnasiumWrapper(env)
   
-  env = AtariWrapper(
+  env = MiniGridWrapper(
     env,
     num_stacked_frames=1,
     action_repeats=1,
@@ -238,6 +237,6 @@ def environment_builder(
   )
   
   # Use the OARG Wrapper
-  # env = ObservationActionRewardGoalWrapper(env, info2goals, n_goal_dims=2)
-  env = ObservationActionRewardWrapper(env)
+  env = ObservationActionRewardGoalWrapper(env, info2goals, n_goal_dims=2)
+  # env = ObservationActionRewardWrapper(env)
   return env
