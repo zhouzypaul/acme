@@ -32,6 +32,8 @@ import gym
 import haiku as hk
 import jax.numpy as jnp
 
+from acme.domains.minigrid.minigrid import environment_builder
+
 
 FLAGS = flags.FLAGS
 
@@ -129,6 +131,19 @@ def make_atari_environment(
     wrapper_list.append(wrappers.ObservationActionRewardWrapper)
 
   return wrappers.wrap_all(env, wrapper_list)
+
+def make_minigrid_environment(
+    level_name: str = 'MiniGrid-Empty-16x16',
+    max_episode_len: int = 1000
+) -> dm_env.Environment:
+  """Loads the Atari environment."""
+# Internal logic.
+  env = environment_builder(
+    level_name,
+    max_steps=max_episode_len
+  )
+  env = wrappers.SinglePrecisionWrapper(env)
+  return env
 
 
 def make_dqn_atari_network(
