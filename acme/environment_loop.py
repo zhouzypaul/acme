@@ -16,18 +16,21 @@
 
 import operator
 import time
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 from acme import core
 from acme.utils import counting
 from acme.utils import loggers
 from acme.utils import observers as observers_lib
 from acme.utils import signals
+from acme.wrappers.oar_goal import OARG
 
 import dm_env
 from dm_env import specs
 import numpy as np
 import tree
+import random
+import copy
 
 
 class EnvironmentLoop(core.Worker):
@@ -72,6 +75,63 @@ class EnvironmentLoop(core.Worker):
         label, steps_key=self._counter.get_steps_key())
     self._should_update = should_update
     self._observers = observers
+    
+  def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
+    """Is the goal achieved in the current state."""
+    reached = (current.goals == goal.goals).all()
+    return reached, float(reached)
+    
+  def select_goal(self, timestep, method='task') -> OARG:
+    """Select a goal to pursue in the upcoming episode."""
+    if method == 'task':
+      task_goal_img = np.zeros_like(timestep.observation.observation)
+      task_goal_features = np.array(
+        [6, 6],  # TODO(ab): pass in the task goal features
+        dtype=timestep.observation.goals.dtype)
+      return OARG(
+        task_goal_img,
+        action=timestep.observation.action,  # doesnt matter
+        reward=timestep.observation.reward,  # doesnt matter
+        goals=task_goal_features)
+
+  def augment_ts_with_goal(
+    self, timestep: dm_env.TimeStep, goal: OARG, method: str):
+    """Concatenate the goal to the current observation."""
+    new_obs = self.augment(
+      timestep.observation.observation,
+      goal.observation, method=method)
+    reached, reward = self.goal_reward_func(timestep.observation, goal)
+    new_oarg = OARG(
+      observation=new_obs,  # pursued goal
+      action=timestep.observation.action,
+      reward=np.array(reward, dtype=np.float32),
+      goals=timestep.observation.goals  # achieved goals
+    )
+    if reached:
+      return dm_env.TimeStep(
+        step_type=dm_env.StepType.LAST,
+        reward=np.array(reward, dtype=np.float32),
+        observation=new_oarg,
+        discount=np.array(0, dtype=np.float32)
+      )
+
+    # NOTE(ab): overwrites extrinsic reward (maintains done though)
+    return timestep._replace(observation=new_oarg,
+                             reward=np.array(reward, dtype=np.float32))
+    
+  @staticmethod
+  def augment(
+    obs: np.ndarray, goal: np.ndarray, method: str
+  ) -> np.ndarray:
+    assert method in ('concat', 'relabel'), method
+    if method == 'concat':
+      return np.concatenate((obs, goal), axis=-1)
+    if method == 'relabel':
+      n_goal_dims = n_obs_dims = obs.shape[-1] // 2
+      return np.concatenate(
+        (obs[:, :, :n_obs_dims],
+         goal[:, :, :n_goal_dims]), axis=-1)
+    raise NotImplementedError(method)
 
   def run_episode(self) -> loggers.LoggingData:
     """Run one episode.
@@ -88,14 +148,22 @@ class EnvironmentLoop(core.Worker):
     select_action_durations: List[float] = []
     env_step_durations: List[float] = []
     episode_steps: int = 0
+    episode_trajectory : List = []
 
     # For evaluation, this keeps track of the total undiscounted reward
     # accumulated during the episode.
     episode_return = tree.map_structure(_generate_zeros_from_spec,
                                         self._environment.reward_spec())
+    # TODO(ab): only do this if we timed out, not if we achieved the goal
     env_reset_start = time.time()
     timestep = self._environment.reset()
     env_reset_duration = time.time() - env_reset_start
+    
+    start_state = copy.deepcopy(timestep.observation)
+    
+    goal = self.select_goal(timestep)
+    timestep = self.augment_ts_with_goal(timestep, goal, 'concat')
+    
     # Make the first observation.
     self._actor.observe_first(timestep)
     for observer in self._observers:
@@ -103,7 +171,7 @@ class EnvironmentLoop(core.Worker):
       # and the initial timestep.
       observer.observe_first(self._environment, timestep)
 
-    # Run an episode.
+    # Run an episode; terminate on goal achievement or timeout
     while not timestep.last():
       # Book-keeping.
       episode_steps += 1
@@ -115,15 +183,24 @@ class EnvironmentLoop(core.Worker):
 
       # Step the environment with the agent's selected action.
       env_step_start = time.time()
-      timestep = self._environment.step(action)
+      next_timestep = self._environment.step(action)
       env_step_durations.append(time.time() - env_step_start)
+      
+      # Augment the ts with the current goal being pursued
+      next_timestep = self.augment_ts_with_goal(next_timestep, goal, 'concat')
+      
+      # TODO(ab): How to manage the hidden state?
+      episode_trajectory.append((
+        timestep, action, next_timestep, goal
+      ))
 
       # Have the agent and observers observe the timestep.
-      self._actor.observe(action, next_timestep=timestep)
+      # import ipdb; ipdb.set_trace()
+      self._actor.observe(action, next_timestep=next_timestep)
       for observer in self._observers:
         # One environment step was completed. Observe the current state of the
         # environment, the current timestep and the action.
-        observer.observe(self._environment, timestep, action)
+        observer.observe(self._environment, next_timestep, action)
 
       # Give the actor the opportunity to update itself.
       if self._should_update:
@@ -136,7 +213,11 @@ class EnvironmentLoop(core.Worker):
       # argument episode_return.)
       episode_return = tree.map_structure(operator.iadd,
                                           episode_return,
-                                          timestep.reward)
+                                          next_timestep.reward)
+      timestep = next_timestep
+      
+    # HER
+    self.hingsight_experience_replay(start_state, episode_trajectory)
 
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_steps)
@@ -155,6 +236,51 @@ class EnvironmentLoop(core.Worker):
     for observer in self._observers:
       result.update(observer.get_metrics())
     return result
+  
+  def replay_trajectory_with_new_goal(
+    self, trajectory: List, hindsight_goal: OARG):
+    """Replay the same trajectory with a goal achieved in hindsight.
+
+    Args:
+        trajectory (List): trajectory from pursuing one goal.
+        hindsight_goal (OARG): hindsight goal for learning.
+    """
+    ts0 = trajectory[0][0]
+    augmented_ts0 = self.augment_ts_with_goal(ts0, hindsight_goal, 'relabel')
+    self._actor.observe_first(augmented_ts0)
+    
+    for ts, action, next_ts, pursued_goal in trajectory:
+      augmented_ts = self.augment_ts_with_goal(ts, hindsight_goal, 'relabel')
+      hindsight_action = self._actor.select_action(augmented_ts.observation)
+      augmented_next_ts = self.augment_ts_with_goal(next_ts, hindsight_goal, 'relabel')
+      self._actor.observe(action, augmented_next_ts)
+      if augmented_next_ts.reward == 1:  # truncate early
+        assert augmented_next_ts.last(), 'Making sure that we are overwriting R'
+        break
+      
+  def hingsight_experience_replay(
+    self, start_state: OARG, trajectory: List):
+    """Learn about goal(s) achieved when following a diff goal."""
+    def pick_hindsight_goal(traj: List[dm_env.TimeStep]) -> OARG:
+      start_idx = len(traj) // 2
+      goal_idx = random.randint(start_idx, len(traj) - 1)
+      goal_ts = traj[goal_idx]
+      assert isinstance(goal_ts, dm_env.TimeStep)
+      return goal_ts.observation
+    
+    def get_achieved_goals() -> List[dm_env.TimeStep]:
+      """Filter out goals that are satisfied at s_t."""
+      feasible_goals = []
+      for _, _, ts, _ in trajectory:
+        if not self.goal_reward_func(start_state, ts.observation)[0]:
+          feasible_goals.append(ts)
+      return feasible_goals
+    
+    filtered_trajectory = get_achieved_goals()
+    if filtered_trajectory:
+      hindsight_goal = pick_hindsight_goal(filtered_trajectory)
+      print(f'replaying wrt to {hindsight_goal.goals}')
+      self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
 
   def run(
       self,

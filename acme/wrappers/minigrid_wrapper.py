@@ -75,7 +75,8 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
                flatten_frame_stack: bool = False,
                max_episode_len: Optional[int] = None,
                to_float: bool = False,
-               grayscaling: bool = True):
+               grayscaling: bool = True,
+               goal_conditioned: bool = False):
     """Initializes a new MiniGridWrapper.
 
     Args:
@@ -105,6 +106,8 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
       grayscaling: If `True` returns a grayscale version of the observations. In
         this case, the observation is 3D (H, W, num_stacked_frames). If `False`
         the observations are RGB and have shape (H, W, C, num_stacked_frames).
+      goal_conditioned: If `True` the observation space has twice as many channels
+        representing the goal obs being concatenated to the current obs.
 
     Raises:
       ValueError: For various invalid inputs.
@@ -130,6 +133,7 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
     self._max_abs_reward = max_abs_reward or np.inf
     self._to_float = to_float
     self._expose_lives_observation = expose_lives_observation
+    self._goal_conditioned = goal_conditioned
 
     if scale_dims:
       self._height, self._width = scale_dims
@@ -173,7 +177,8 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
       pixels_spec_shape = (self._height, self._width)
       pixels_spec_name = "grayscale"
     else:
-      pixels_spec_shape = (self._height, self._width, NUM_COLOR_CHANNELS)
+      n_channels = 2 * NUM_COLOR_CHANNELS if self._goal_conditioned else NUM_COLOR_CHANNELS
+      pixels_spec_shape = (self._height, self._width, n_channels)
       pixels_spec_name = "RGB"
 
     pixel_spec = specs.Array(

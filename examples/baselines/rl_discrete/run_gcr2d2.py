@@ -52,18 +52,6 @@ def build_experiment_config():
   # cannot be pickled and pickling is necessary when launching distributed
   # experiments via Launchpad.
   env_name = FLAGS.env_name
-
-  # Create an environment factory.
-  # def environment_factory(seed: int) -> dm_env.Environment:
-  #   del seed
-  #   return helpers.make_atari_environment(
-  #       level=env_name,
-  #       sticky_actions=True,
-  #       zero_discount_on_life_loss=False,
-  #       oar_wrapper=True,
-  #       num_stacked_frames=1,
-  #       flatten_frame_stack=True,
-  #       grayscaling=False)
   
   def environment_factory(seed: int) -> dm_env.Environment:
     return helpers.make_minigrid_environment(

@@ -200,6 +200,7 @@ def environment_builder(
   seed=42,
   random_reset=False,
   max_steps=None,
+  goal_conditioned=True
 ):
   if max_steps is not None and max_steps > 0:
     env = gym.make(level_name, max_steps=max_steps)  #, goal_pos=(11, 11))
@@ -234,6 +235,7 @@ def environment_builder(
     grayscaling=False, 
     pooled_frames=1,
     to_float=True,
+    goal_conditioned=goal_conditioned
   )
   
   # Use the OARG Wrapper
