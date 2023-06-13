@@ -60,6 +60,7 @@ def make_distributed_experiment(
     ] = None,
     name: str = 'agent',
     program: Optional[lp.Program] = None,
+    create_goal_space_manager: bool = False
 ) -> lp.Program:
   """Builds a Launchpad program for running the experiment.
 
@@ -93,6 +94,7 @@ def make_distributed_experiment(
       passed.
     program: a program where agent nodes are added to. If None, a new program is
       created.
+    create_goal_space_manager: whether to create node for managing the goal-space.
 
   Returns:
     The Launchpad program with all the nodes needed for running the experiment.
@@ -281,6 +283,10 @@ def make_distributed_experiment(
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
         environment, actor, counter, logger, observers=experiment.observers)
+    
+  def _gsm_node(rng_num):
+    from acme.agents.jax.r2d2 import GoalSpaceManager
+    return GoalSpaceManager()
 
   if not program:
     program = lp.Program(name=name)
@@ -396,6 +402,11 @@ def make_distributed_experiment(
         lp.CourierNode(evaluator, evaluator_key, learner, counter,
                        experiment.builder.make_actor),
         label='evaluator')
+    
+  with program.group('gsm'):
+    gsm_key, _ = jax.random.split(key)
+    gsm_node = lp.CourierNode(_gsm_node, gsm_key)
+    program.add_node(gsm_node, label='gsm')
 
   if make_snapshot_models and experiment.checkpointing:
     program.add_node(

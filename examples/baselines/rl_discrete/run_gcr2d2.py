@@ -96,6 +96,7 @@ def _get_local_resources(launch_type):
        "inference_server":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
        "counter":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
        "replay":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
+       "gsm": PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)})
      }
    else:
      local_resources = {}

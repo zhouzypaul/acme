@@ -189,7 +189,6 @@ class EnvironmentLoop(core.Worker):
       # Augment the ts with the current goal being pursued
       next_timestep = self.augment_ts_with_goal(next_timestep, goal, 'concat')
       
-      # TODO(ab): How to manage the hidden state?
       episode_trajectory.append((
         timestep, action, next_timestep, goal
       ))
