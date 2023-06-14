@@ -35,6 +35,7 @@ from acme.utils import lp_utils
 import jax
 import launchpad as lp
 import reverb
+from acme.agents.jax.r2d2 import GoalSpaceManager
 
 ActorId = int
 InferenceServer = inference_server_lib.InferenceServer[
@@ -246,6 +247,7 @@ def make_distributed_experiment(
       counter: counting.Counter,
       actor_id: ActorId,
       inference_server: Optional[InferenceServer],
+      gsm: Optional[GoalSpaceManager]
   ) -> environment_loop.EnvironmentLoop:
     """The actor process."""
     environment_key, actor_key = jax.random.split(random_key)
@@ -282,10 +284,10 @@ def make_distributed_experiment(
                                        actor_id)
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
-        environment, actor, counter, logger, observers=experiment.observers)
+        environment, actor, counter, logger, observers=experiment.observers,
+        goal_space_manager=gsm)
     
   def _gsm_node(rng_num):
-    from acme.agents.jax.r2d2 import GoalSpaceManager
     return GoalSpaceManager()
 
   if not program:
@@ -360,7 +362,12 @@ def make_distributed_experiment(
 
   num_actor_nodes, remainder = divmod(num_actors, num_actors_per_node)
   num_actor_nodes += int(remainder > 0)
-
+  
+  with program.group('gsm'):
+    gsm_key, _ = jax.random.split(key)
+    gsm_node = lp.CourierNode(_gsm_node, gsm_key)
+    gsm = gsm_node.create_handle()
+    program.add_node(gsm_node, label='gsm')
 
   with program.group('actor'):
     # Create all actor threads.
@@ -386,6 +393,7 @@ def make_distributed_experiment(
             counter,
             actor_id,
             inference_node,
+            gsm
         )
         colocation_nodes.append(actor)
 
@@ -402,11 +410,6 @@ def make_distributed_experiment(
         lp.CourierNode(evaluator, evaluator_key, learner, counter,
                        experiment.builder.make_actor),
         label='evaluator')
-    
-  with program.group('gsm'):
-    gsm_key, _ = jax.random.split(key)
-    gsm_node = lp.CourierNode(_gsm_node, gsm_key)
-    program.add_node(gsm_node, label='gsm')
 
   if make_snapshot_models and experiment.checkpointing:
     program.add_node(

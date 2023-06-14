@@ -24,6 +24,7 @@ from acme.utils import loggers
 from acme.utils import observers as observers_lib
 from acme.utils import signals
 from acme.wrappers.oar_goal import OARG
+from acme.agents.jax.r2d2.gsm import GoalSpaceManager
 
 import dm_env
 from dm_env import specs
@@ -66,6 +67,7 @@ class EnvironmentLoop(core.Worker):
       should_update: bool = True,
       label: str = 'environment_loop',
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
+      goal_space_manager: GoalSpaceManager = None
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -75,6 +77,7 @@ class EnvironmentLoop(core.Worker):
         label, steps_key=self._counter.get_steps_key())
     self._should_update = should_update
     self._observers = observers
+    self._goal_space_manager = goal_space_manager
     
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
@@ -194,7 +197,6 @@ class EnvironmentLoop(core.Worker):
       ))
 
       # Have the agent and observers observe the timestep.
-      # import ipdb; ipdb.set_trace()
       self._actor.observe(action, next_timestep=next_timestep)
       for observer in self._observers:
         # One environment step was completed. Observe the current state of the
@@ -220,6 +222,16 @@ class EnvironmentLoop(core.Worker):
 
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_steps)
+    
+    # Stream the episodic trajectory to the goal space manager.
+    streaming_timesteps = set([tuple(trans[-2].observation.goals) for trans in episode_trajectory])
+    # import ipdb; ipdb.set_trace()
+    # Can stream primitives, no complex data types
+    self._goal_space_manager.update(
+      [(1, 2)] * len(streaming_timesteps)  # works
+      # {1: (2, 2)}  # works
+      # streaming_timesteps
+    )
 
     # Collect the results and combine with counts.
     steps_per_second = episode_steps / (time.time() - episode_start_time)
