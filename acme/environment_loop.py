@@ -16,7 +16,7 @@
 
 import operator
 import time
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple, Dict
 
 from acme import core
 from acme.utils import counting
@@ -32,6 +32,8 @@ import numpy as np
 import tree
 import random
 import copy
+import collections
+import ipdb
 
 
 class EnvironmentLoop(core.Worker):
@@ -84,18 +86,35 @@ class EnvironmentLoop(core.Worker):
     reached = (current.goals == goal.goals).all()
     return reached, float(reached)
     
-  def select_goal(self, timestep, method='task') -> OARG:
+  def select_goal(self, timestep, method='uniform') -> OARG:
     """Select a goal to pursue in the upcoming episode."""
-    if method == 'task':
-      task_goal_img = np.zeros_like(timestep.observation.observation)
-      task_goal_features = np.array(
-        [6, 6],  # TODO(ab): pass in the task goal features
-        dtype=timestep.observation.goals.dtype)
-      return OARG(
-        task_goal_img,
-        action=timestep.observation.action,  # doesnt matter
-        reward=timestep.observation.reward,  # doesnt matter
-        goals=task_goal_features)
+    def get_candidate_goals():
+      at_goal = lambda g: (timestep.observation.goals == g).all()
+      goal_dict = self._goal_space_manager.get_goal_dict()
+      return {goal: obs for (goal, obs) in goal_dict.items() if not at_goal(goal)}
+    
+    if method == 'uniform':
+      goal_dict = get_candidate_goals()
+      if goal_dict:
+        sampled_goal_feats = random.choice(list(goal_dict.keys()))
+        return OARG(
+          np.asarray(goal_dict[sampled_goal_feats],
+                     dtype=timestep.observation.observation.dtype),
+          action=timestep.observation.action,
+          reward=timestep.observation.reward,
+          goals=np.asarray(
+            sampled_goal_feats, dtype=timestep.observation.goals.dtype)
+        )
+    
+    task_goal_img = np.zeros_like(timestep.observation.observation)
+    task_goal_features = np.array(
+      [6, 6],  # TODO(ab): pass in the task goal features
+      dtype=timestep.observation.goals.dtype)
+    return OARG(
+      task_goal_img,
+      action=timestep.observation.action,  # doesnt matter
+      reward=timestep.observation.reward,  # doesnt matter
+      goals=task_goal_features)
 
   def augment_ts_with_goal(
     self, timestep: dm_env.TimeStep, goal: OARG, method: str):
@@ -224,14 +243,9 @@ class EnvironmentLoop(core.Worker):
     counts = self._counter.increment(episodes=1, steps=episode_steps)
     
     # Stream the episodic trajectory to the goal space manager.
-    streaming_timesteps = set([tuple(trans[-2].observation.goals) for trans in episode_trajectory])
-    # import ipdb; ipdb.set_trace()
-    # Can stream primitives, no complex data types
-    self._goal_space_manager.update(
-      [(1, 2)] * len(streaming_timesteps)  # works
-      # {1: (2, 2)}  # works
-      # streaming_timesteps
-    )
+    self.stream_achieved_goals_to_gsm(episode_trajectory)
+    
+    print(f'Goal={goal.goals} Achieved={next_timestep.observation.goals} R={next_timestep.reward}')
 
     # Collect the results and combine with counts.
     steps_per_second = episode_steps / (time.time() - episode_start_time)
@@ -247,6 +261,34 @@ class EnvironmentLoop(core.Worker):
     for observer in self._observers:
       result.update(observer.get_metrics())
     return result
+  
+  def stream_achieved_goals_to_gsm(self, trajectory: List) -> None:
+    """Send the goals achieved during the episode to the GSM."""
+    def get_key(ts: dm_env.TimeStep) -> Tuple:
+      """Extract a hashable from a transition."""
+      return tuple([int(g) for g in ts.observation.goals])
+    
+    def extract_counts() -> Dict:
+      """Return a dictionary mapping goal to visit count in episode."""
+      achieved_goals = [get_key(trans[-2]) for trans in trajectory]
+      return dict(collections.Counter(achieved_goals))
+    
+    def extract_goal_to_obs() -> Dict:
+      """Return a dictionary mapping goal to the obs when goal was achieved."""
+      return {
+        get_key(transition[-2]): 
+        transition[-2].observation.observation[:, :, :3].tolist() 
+        for transition in trajectory
+      }
+    
+    def extract_rewards():
+      """Return a dictionary mapping goal to avg extrinsic reward."""
+      pass
+    
+    hash2count = extract_counts()
+    hash2obs = extract_goal_to_obs()
+    
+    self._goal_space_manager.update(hash2obs, hash2count)
   
   def replay_trajectory_with_new_goal(
     self, trajectory: List, hindsight_goal: OARG):
