@@ -69,7 +69,8 @@ class EnvironmentLoop(core.Worker):
       should_update: bool = True,
       label: str = 'environment_loop',
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
-      goal_space_manager: GoalSpaceManager = None
+      goal_space_manager: GoalSpaceManager = None,
+      task_goal_probability: float = 0.1
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -80,6 +81,7 @@ class EnvironmentLoop(core.Worker):
     self._should_update = should_update
     self._observers = observers
     self._goal_space_manager = goal_space_manager
+    self._task_goal_probability = task_goal_probability
     
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
@@ -182,8 +184,13 @@ class EnvironmentLoop(core.Worker):
     env_reset_duration = time.time() - env_reset_start
     
     start_state = copy.deepcopy(timestep.observation)
-    
-    goal = self.select_goal(timestep)
+          
+    # Evaluator always picks task goal and actors do with some prob
+    goal = self.select_goal(
+      timestep,
+      method='task' if self._goal_space_manager is None or \
+        random.random() < self._task_goal_probability else 'uniform'
+    )
     timestep = self.augment_ts_with_goal(timestep, goal, 'concat')
     
     # Make the first observation.
@@ -243,7 +250,8 @@ class EnvironmentLoop(core.Worker):
     counts = self._counter.increment(episodes=1, steps=episode_steps)
     
     # Stream the episodic trajectory to the goal space manager.
-    self.stream_achieved_goals_to_gsm(episode_trajectory)
+    if self._goal_space_manager is not None:
+      self.stream_achieved_goals_to_gsm(episode_trajectory)
     
     print(f'Goal={goal.goals} Achieved={next_timestep.observation.goals} R={next_timestep.reward}')
 
