@@ -287,8 +287,12 @@ def make_distributed_experiment(
         environment, actor, counter, logger, observers=experiment.observers,
         goal_space_manager=gsm)
     
-  def _gsm_node(rng_num):
-    return GoalSpaceManager()
+  def _gsm_node(rng_num, networks, variable_source):
+    variable_client = variable_utils.VariableClient(
+        variable_source,
+        key='actor_variables',
+        update_period=400)
+    return GoalSpaceManager(rng_num, networks, variable_client)
 
   if not program:
     program = lp.Program(name=name)
@@ -364,8 +368,17 @@ def make_distributed_experiment(
   num_actor_nodes += int(remainder > 0)
   
   with program.group('gsm'):
+    spec = (
+        experiment.environment_spec or
+        specs.make_environment_spec(experiment.environment_factory(1))
+    )
     gsm_key, _ = jax.random.split(key)
-    gsm_node = lp.CourierNode(_gsm_node, gsm_key)
+    gsm_node = lp.CourierNode(
+      _gsm_node,
+      gsm_key,
+      experiment.network_factory(spec),
+      variable_sources[0],
+      )
     gsm = gsm_node.create_handle()
     program.add_node(gsm_node, label='gsm')
 
