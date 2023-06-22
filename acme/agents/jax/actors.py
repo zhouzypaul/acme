@@ -80,6 +80,10 @@ class GenericActor(core.Actor, Generic[actor_core.State, actor_core.Extras]):
                     observation: network_lib.Observation) -> types.NestedArray:
     action, self._state = self._policy(self._params, observation, self._state)
     return utils.to_numpy(action)
+  
+  def get_value(self, observation: network_lib.Observation):
+    action, state = self._policy(self._params, observation, self._state)
+    return state.q_values[action]
 
   def observe_first(self, timestep: dm_env.TimeStep):
     self._random_key, key = jax.random.split(self._random_key)
