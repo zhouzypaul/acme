@@ -41,6 +41,7 @@ class R2D2ActorState(Generic[actor_core_lib.RecurrentState]):
   epsilon: jnp.ndarray
   recurrent_state: actor_core_lib.RecurrentState
   prev_recurrent_state: actor_core_lib.RecurrentState
+  q_values: jnp.ndarray
 
 
 R2D2Policy = actor_core_lib.ActorCore[
@@ -74,7 +75,9 @@ def get_actor_core(
         rng=rng,
         epsilon=state.epsilon,
         recurrent_state=recurrent_state,
-        prev_recurrent_state=state.recurrent_state)
+        prev_recurrent_state=state.recurrent_state,
+        q_values=q_values  # Akhil: sneaking in the Q-values
+    )
 
   def init(
       rng: networks_lib.PRNGKey
@@ -90,7 +93,8 @@ def get_actor_core(
         rng=rng,
         epsilon=epsilon,
         recurrent_state=initial_core_state,
-        prev_recurrent_state=initial_core_state)
+        prev_recurrent_state=initial_core_state,
+        q_values=jnp.zeros((7,)))  # TODO(ab)
 
   def get_extras(
       state: R2D2ActorState[actor_core_lib.RecurrentState]) -> R2D2Extras:
