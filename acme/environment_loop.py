@@ -25,6 +25,7 @@ from acme.utils import observers as observers_lib
 from acme.utils import signals
 from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2.gsm import GoalSpaceManager
+from acme.goal_sampler import GoalSampler
 
 import dm_env
 from dm_env import specs
@@ -90,47 +91,18 @@ class EnvironmentLoop(core.Worker):
     
   def select_goal(self, timestep, method='uniform') -> OARG:
     """Select a goal to pursue in the upcoming episode."""
-    def get_candidate_goals():
-      at_goal = lambda g: (timestep.observation.goals == g).all()
-      goal_dict = self._goal_space_manager.get_goal_dict()
-      return {goal: obs for (goal, obs) in goal_dict.items() if not at_goal(goal)}
-    
-    if method == 'uniform':
-      goal_dict = get_candidate_goals()
-      if goal_dict:
-        sampled_goal_feats = random.choice(list(goal_dict.keys()))
-        return OARG(
-          np.asarray(goal_dict[sampled_goal_feats],
-                     dtype=timestep.observation.observation.dtype),
-          action=timestep.observation.action,
-          reward=timestep.observation.reward,
-          goals=np.asarray(
-            sampled_goal_feats, dtype=timestep.observation.goals.dtype)
-        )
-    
-    task_goal_img = np.zeros_like(timestep.observation.observation)
-    task_goal_features = np.array(
-      [6, 6],  # TODO(ab): pass in the task goal features
-      dtype=timestep.observation.goals.dtype)
-    return OARG(
-      task_goal_img,
-      action=timestep.observation.action,  # doesnt matter
-      reward=timestep.observation.reward,  # doesnt matter
-      goals=task_goal_features)
+    # TODO(ab): pass in the task goal features
+    return GoalSampler(
+      self._goal_space_manager)(
+      timestep, method=method
+    )
 
   def augment_ts_with_goal(
-    self, timestep: dm_env.TimeStep, goal: OARG, method: str):
+    self, timestep: dm_env.TimeStep, goal: OARG, method: str
+    ) -> dm_env.TimeStep:
     """Concatenate the goal to the current observation."""
-    new_obs = self.augment(
-      timestep.observation.observation,
-      goal.observation, method=method)
-    reached, reward = self.goal_reward_func(timestep.observation, goal)
-    new_oarg = OARG(
-      observation=new_obs,  # pursued goal
-      action=timestep.observation.action,
-      reward=np.array(reward, dtype=np.float32),
-      goals=timestep.observation.goals  # achieved goals
-    )
+    new_oarg, reached, reward = self.augment_obs_with_goal(
+      timestep.observation, goal, method)
     if reached:
       return dm_env.TimeStep(
         step_type=dm_env.StepType.LAST,
@@ -142,6 +114,19 @@ class EnvironmentLoop(core.Worker):
     # NOTE(ab): overwrites extrinsic reward (maintains done though)
     return timestep._replace(observation=new_oarg,
                              reward=np.array(reward, dtype=np.float32))
+    
+  def augment_obs_with_goal(
+    self, obs: OARG, goal: OARG, method: str
+  ) -> Tuple[OARG, bool, float]:
+    new_obs = self.augment(
+      obs.observation, goal.observation, method=method)
+    reached, reward = self.goal_reward_func(obs, goal)
+    return OARG(
+      observation=new_obs,  # pursued goal
+      action=obs.action,
+      reward=np.array(reward, dtype=np.float32),
+      goals=obs.goals  # achieved goals
+    ), reached, reward
     
   @staticmethod
   def augment(
@@ -252,6 +237,9 @@ class EnvironmentLoop(core.Worker):
     # Stream the episodic trajectory to the goal space manager.
     if self._goal_space_manager is not None:
       self.stream_achieved_goals_to_gsm(episode_trajectory)
+      
+      # Update the Q-function parameters of the GSM
+      self._goal_space_manager.update_params() 
     
     print(f'Goal={goal.goals} Achieved={next_timestep.observation.goals} R={next_timestep.reward}')
 
@@ -282,16 +270,15 @@ class EnvironmentLoop(core.Worker):
       return dict(collections.Counter(achieved_goals))
     
     def extract_goal_to_obs() -> Dict:
-      """Return a dictionary mapping goal to the obs when goal was achieved."""
+      """Return a dictionary mapping goal hash to the OAR when goal was achieved."""
       return {
         get_key(transition[-2]): 
-        transition[-2].observation.observation[:, :, :3].tolist() 
+        (transition[-2].observation.observation[:, :, :3].tolist(),
+         int(transition[-2].observation.action),
+         float(transition[-2].observation.reward)  # TODO(ab): is this the correct reward?
+        ) 
         for transition in trajectory
       }
-    
-    def extract_rewards():
-      """Return a dictionary mapping goal to avg extrinsic reward."""
-      pass
     
     hash2count = extract_counts()
     hash2obs = extract_goal_to_obs()
