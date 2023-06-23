@@ -55,7 +55,7 @@ class IMPALALearner(acme.Learner):
       max_abs_reward: float = np.inf,
       counter: Optional[counting.Counter] = None,
       logger: Optional[loggers.Logger] = None,
-      devices: Optional[Sequence[jax.xla.Device]] = None,
+      devices: Optional[Sequence[jax.Device]] = None,
       prefetch_size: int = 2,
   ):
     local_devices = jax.local_devices()

@@ -114,7 +114,7 @@ class MPOLearner(acme.Learner):
       value_tx_pair: rlax.TxPair = rlax.IDENTITY_PAIR,
       counter: Optional[counting.Counter] = None,
       logger: Optional[loggers.Logger] = None,
-      devices: Optional[Sequence[jax.xla.Device]] = None,
+      devices: Optional[Sequence[jax.Device]] = None,
   ):
 
     self._critic_type = critic_type
