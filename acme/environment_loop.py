@@ -174,7 +174,7 @@ class EnvironmentLoop(core.Worker):
     goal = self.select_goal(
       timestep,
       method='task' if self._goal_space_manager is None or \
-        random.random() < self._task_goal_probability else 'uniform'
+        random.random() < self._task_goal_probability else 'amdp'
     )
     timestep = self.augment_ts_with_goal(timestep, goal, 'concat')
     
@@ -184,6 +184,8 @@ class EnvironmentLoop(core.Worker):
       # Initialize the observer with the current state of the env after reset
       # and the initial timestep.
       observer.observe_first(self._environment, timestep)
+      
+    print(f'V({timestep.observation.goals}, {goal.goals})={self._actor.get_value(timestep.observation)}')
 
     # Run an episode; terminate on goal achievement or timeout
     while not timestep.last():
