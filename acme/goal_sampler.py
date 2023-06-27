@@ -1,11 +1,15 @@
 import ipdb
 import time
+import copy
 import dm_env
 import random
 import numpy as np
 
+from typing import Tuple
+
 from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2.gsm import GoalSpaceManager
+from acme.agents.jax.r2d2.amdp import AMDP
 
 
 class GoalSampler:
@@ -40,6 +44,38 @@ class GoalSampler:
           goals=np.asarray(
             sampled_goal_feats, dtype=timestep.observation.goals.dtype)
         )
+    if method == 'amdp':
+      # TODO(ab): get rid of the copying,
+      # have it now to prevent them from going out of sync
+      value_dict = copy.deepcopy(self._goal_space_manager.get_value_dict())
+      goal_dict = copy.deepcopy(get_candidate_goals())
+      if value_dict:
+        if len(value_dict) == 1:
+          goal_features = list(value_dict.keys())[0]
+        else:
+          # TODO(ab): maintain reward_dict in GSM
+          reward_dict = {node: 0. for node in value_dict}
+          # TODO(ab): Plug in actual alg for picking expansion node
+          target_node = self.select_expansion_node(timestep, goal_dict, method='random')
+          print(f'[GoalSampler] TargetNode={target_node}')
+          abstract_mdp = AMDP(
+            value_dict=value_dict,
+            reward_dict=reward_dict,
+            target_node=target_node,
+            count_dict=self._goal_space_manager.get_count_dict()
+          )
+          goal_features = abstract_mdp.policy(tuple(timestep.observation.goals))
+        if goal_features in goal_dict:
+          return OARG(
+            np.asarray(goal_dict[goal_features][0],
+                      dtype=timestep.observation.observation.dtype),
+            action=goal_dict[goal_features][1],
+            reward=goal_dict[goal_features][2],
+            goals=np.asarray(
+              goal_features, dtype=timestep.observation.goals.dtype
+            ))
+        elif goal_dict:  # if goal_dict is not empty, why doesn't it contain goal_features?
+          print(f'[GoalSampler] Warning: {goal_features} not in goal_dict {goal_dict.keys()}')
     
     task_goal_img = np.zeros_like(timestep.observation.observation)
     task_goal_features = np.array(
@@ -67,5 +103,12 @@ class GoalSampler:
       goals=np.asarray(goal_features, dtype=np.int16)
     )
 
-  def construct_abstract_mdp(self, skill_graph):
-    pass
+  def select_expansion_node(
+    self,
+    timestep: dm_env.TimeStep,
+    goal_dict: dict,
+    method: str) -> Tuple:
+    if method == 'random':
+      potential_goals = list(goal_dict.keys())
+      return random.choice(potential_goals)
+    raise NotImplementedError(method)
