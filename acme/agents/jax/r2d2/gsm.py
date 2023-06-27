@@ -8,6 +8,8 @@ import collections
 import numpy as np
 
 from typing import Dict, Optional, Tuple
+from scipy.special import expit as sigmoid
+
 from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2 import networks as r2d2_networks
 from acme.jax import variable_utils
@@ -86,6 +88,10 @@ class GoalSpaceManager(object):
   
   def get_goal_dict(self):
     return self._hash2obs
+  
+  def get_value_dict(self) -> dict:
+    """Convert to regular dict because courier cannot handle fancy dicts."""
+    return self._default_dict_to_dict(self._value_matrix)
     
   def update(self, hash2obs: Dict, hash2count: Dict):
     """Update based on goals achieved by the different actors."""
@@ -152,17 +158,19 @@ class GoalSpaceManager(object):
       return src_dest_pairs, OARG(augmented_observations, actions, rewards, goals)
     
     return None, None
+  
+  @staticmethod
+  def _default_dict_to_dict(dd):
+    d = {}
+    for key in dd:
+      d[key] = {k: v for k, v in dd[key].items()}
+    return d
     
-  def _save_value_dict(self, iteration):
-    def _default_dict_to_dict(dd):
-      d = {}
-      for key in dd:
-        d[key] = {k: v for k, v in dd[key].items()}
-      return d
+  def _save_value_dict(self, iteration):   
     t0 = time.time()
     print('Saving the value matrix..')
     with open(f'value_matrix_iteration_{iteration}.pkl', 'wb+') as f:
-      pickle.dump(_default_dict_to_dict(self._value_matrix), f)
+      pickle.dump(self._default_dict_to_dict(self._value_matrix), f)
     print(f'Took {time.time() - t0}s to save value matrix.')
 
   def run(self):
@@ -170,14 +178,21 @@ class GoalSpaceManager(object):
       t0 = time.time()
       src_dest_pairs, batch_oarg = self._construct_obs_matrix()
       if batch_oarg is not None:
-        print('Creating LSTM state')
+        
         lstm_state = self.get_recurrent_state(batch_oarg.observation.shape[1])
-        print('Querying the Value Function')
+        
         values, _ = self._networks.unroll(
-          self._variable_client.params,
-          self._rng_key, batch_oarg, lstm_state)  # (1, B, |A|)
-        values = values.max(axis=-1)[0]  #  -> (1, B) -> (B,)
+          self._params,
+          self._rng_key,
+          batch_oarg,
+          lstm_state
+        )  # (1, B, |A|)
+        values = values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
+        
+        # Sigmoid to convert the values to a probability between 0 and 1
+        values = sigmoid(values)
+        
         print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
         self._update_value_dict(src_dest_pairs, values)
         if len(src_dest_pairs) > 1000:
-          pprint.pprint(self._value_matrix)
+          pprint.pprint(self._value_matrix[(1, 1)])
