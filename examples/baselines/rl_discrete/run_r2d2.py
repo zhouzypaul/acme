@@ -55,9 +55,26 @@ flags.DEFINE_list("inference_server_gpu_ids", ["1"], "Which GPUs to use for infe
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
+flags.DEFINE_boolean('use_rnd', False, 'Whether to use RND')
+flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
+flags.DEFINE_integer('min_replay_size', 1000, 'When replay starts')
+
 
 
 FLAGS = flags.FLAGS
+
+def make_rnd_builder(r2d2_builder):
+    from acme.agents.jax import rnd
+    # import ipdb; ipdb.set_trace()
+    rnd_config = rnd.RNDConfig(
+        is_sequence_based=True, # Probably
+    )
+    logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
+    builder = rnd.RNDBuilder(
+        rl_agent=r2d2_builder,
+        config=rnd_config,
+        logger_fn=logger_fn)
+    return builder
 
 
 def build_experiment_config():
@@ -91,7 +108,7 @@ def build_experiment_config():
       trace_length=40,
       sequence_period=20,
       # min_replay_size=10_000,
-      min_replay_size=1000,
+      min_replay_size=FLAGS.min_replay_size,
       batch_size=batch_size,
       prefetch_size=1,
       # samples_per_insert=1.0,
@@ -106,36 +123,8 @@ def build_experiment_config():
 
   # # Configure the agent.
 
-  # batch_size = 8
-  # config = r2d2.R2D2Config(
-  #     # burn_in_length=8,
-  #     # trace_length=40,
-  #     # sequence_period=20,
-  #     burn_in_length=2,
-  #     trace_length=10,
-  #     sequence_period=4,
-  #     # min_replay_size=10_000,
-  #     # min_replay_size=200,
-  #     # max_replay_size=10000,
-  #     min_replay_size=10000,
-  #     max_replay_size=100000,
-  #     batch_size=batch_size,
-  #     # prefetch_size=1,
-  #     prefetch_size=0,
-  #     samples_per_insert=0,
-  #     # samples_per_insert=1,
-  #     # samples_per_insert=4.0, # shouldn't this be 0.25 to match DQN? I dunno. Maybe this is more sample efficent.
-  #     # can see what it means/does.
-  #     evaluation_epsilon=1e-3,
-  #     # learning_rate=1e-4,
-  #     # target_update_period=1200,
-  #     # variable_update_period=100,
-  #     # actor_jit=False,
-  #     # actor_jit=False,
-  #     actor_jit=not FLAGS.use_inference_server, # we don't use this if we're doing inference-server
-  # )
-
-  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
+  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir,
+                                                         time_delta_minutes=FLAGS.checkpointing_freq)
 
   print('hardcoded save dir to see if this is where we need it')
   # def temp_logger_factory():
@@ -143,9 +132,23 @@ def build_experiment_config():
 
   # logger_factory = functools.partial(create_experiment_logger_factory, save_dir="~/acme_experiment_utils")
 
+  agent_builder = r2d2.R2D2Builder(config)
+  if FLAGS.use_rnd:
+    agent_builder = make_rnd_builder(agent_builder)
+    def network_factory(env_spec):
+      from acme.agents.jax import rnd
+      r2d2_networks = r2d2.make_atari_networks(env_spec)
+      rnd_networks = rnd.make_networks(env_spec, direct_rl_networks=r2d2_networks)
+      return rnd_networks
+  else:
+    network_factory = r2d2.make_atari_networks
+
+
   return experiments.ExperimentConfig(
-      builder=r2d2.R2D2Builder(config),
-      network_factory=r2d2.make_atari_networks,
+      # builder=r2d2.R2D2Builder(config),
+      builder=agent_builder,
+      # network_factory=r2d2.make_atari_networks,
+      network_factory=network_factory,
       environment_factory=environment_factory,
       seed=FLAGS.seed,
       max_num_actor_steps=FLAGS.num_steps,

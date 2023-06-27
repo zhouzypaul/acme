@@ -78,7 +78,7 @@ class RNDBuilder(Generic[rnd_networks.DirectRLNetworks, Policy],
           direct_rl_learner_key,
           networks,
           dataset,
-          logger_fn=lambda name: self._logger_fn(),
+          logger_fn=lambda name: self._logger_fn('direct_rl_learner'), # I guess you need a name for the RL learner's logger...
           environment_spec=environment_spec,
           replay_client=replay_client,
           counter=direct_rl_counter)

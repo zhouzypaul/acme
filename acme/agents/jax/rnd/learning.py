@@ -26,6 +26,7 @@ from acme.jax import utils
 from acme.utils import counting
 from acme.utils import loggers
 from acme.utils import reverb_utils
+from acme.jax.utils import PrefetchingSplit
 import jax
 import jax.numpy as jnp
 import optax
@@ -179,8 +180,19 @@ class RNDLearner(acme.Learner):
     Returns:
       The sample replay sample with an updated reward.
     """
+
+    is_prefetch = isinstance(sample, PrefetchingSplit)
+    if is_prefetch:
+      prefetch_split_sample = sample
+      sample = sample.device
+
     transitions = reverb_utils.replay_sample_to_sars_transition(
         sample, is_sequence=self._is_sequence_based)
+
+    # We might be dealing with an OAR tuple, in which case
+    if hasattr(transitions.observation, 'observation'):
+      transitions = transitions.observation # its already an OAR.
+
     self._state, metrics = self._update(self._state, transitions)
     rewards = self._get_reward(self._state.params, self._state.target_params,
                                transitions)
@@ -196,7 +208,11 @@ class RNDLearner(acme.Learner):
     # Attempts to write the logs.
     self._logger.write({**metrics, **counts})
 
-    return sample._replace(data=sample.data._replace(reward=rewards))
+    sample = sample._replace(data=sample.data._replace(reward=rewards))
+    if is_prefetch:
+      sample = PrefetchingSplit(device=sample, host=prefetch_split_sample.host) # its a NamedTuple
+
+    return sample
 
   def step(self):
     self._direct_rl_learner.step()
