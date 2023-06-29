@@ -26,7 +26,7 @@ import dm_env
 import launchpad as lp
 from datetime import datetime, timedelta
 from acme.jax import inference_server as inference_server_lib
-from get_local_resources import _get_local_resources
+from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
 import functools
 start_time = datetime.now()
@@ -81,10 +81,6 @@ def build_experiment_config():
         flatten_frame_stack=True,
         grayscaling=False)
 
-  # Their default config:
-  # TODO: actor GPU ids isn't passed through to subprocesses, so we need to
-  # do something to find it. For example, looking at CUDA_VISIBLE_DEVICES, or passing it through perhaps is easiest.
-  # Yeah we'll modify the config.
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   config = r2d2.R2D2Config(
       burn_in_length=8,
@@ -104,44 +100,7 @@ def build_experiment_config():
       actor_backend=actor_backend,
   )
 
-  # # Configure the agent.
-
-  # batch_size = 8
-  # config = r2d2.R2D2Config(
-  #     # burn_in_length=8,
-  #     # trace_length=40,
-  #     # sequence_period=20,
-  #     burn_in_length=2,
-  #     trace_length=10,
-  #     sequence_period=4,
-  #     # min_replay_size=10_000,
-  #     # min_replay_size=200,
-  #     # max_replay_size=10000,
-  #     min_replay_size=10000,
-  #     max_replay_size=100000,
-  #     batch_size=batch_size,
-  #     # prefetch_size=1,
-  #     prefetch_size=0,
-  #     samples_per_insert=0,
-  #     # samples_per_insert=1,
-  #     # samples_per_insert=4.0, # shouldn't this be 0.25 to match DQN? I dunno. Maybe this is more sample efficent.
-  #     # can see what it means/does.
-  #     evaluation_epsilon=1e-3,
-  #     # learning_rate=1e-4,
-  #     # target_update_period=1200,
-  #     # variable_update_period=100,
-  #     # actor_jit=False,
-  #     # actor_jit=False,
-  #     actor_jit=not FLAGS.use_inference_server, # we don't use this if we're doing inference-server
-  # )
-
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
-
-  print('hardcoded save dir to see if this is where we need it')
-  # def temp_logger_factory():
-  #   return functools.partial(make_experiment_logger, save_dir="~/acme_experiment_utils_again")
-
-  # logger_factory = functools.partial(create_experiment_logger_factory, save_dir="~/acme_experiment_utils")
 
   return experiments.ExperimentConfig(
       builder=r2d2.R2D2Builder(config),
@@ -177,36 +136,29 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
 
 
 def main(_):
-  # import os
-  # os.makedirs("tmp", exist_ok=True)
-  # FLAGS.append_flags_into_file('tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
   config = build_experiment_config()
   print(FLAGS.use_inference_server)
   if FLAGS.run_distributed:
     num_actors = FLAGS.num_actors
     num_actors_per_node = FLAGS.num_actors_per_node
-    inference_batch_size = FLAGS.inference_batch_size or int(max(num_actors//FLAGS.num_inference_servers//2, 1)) # defaults flag to 0
     launch_type = FLAGS.lp_launch_type
     if FLAGS.use_inference_server:
+      inference_batch_size = FLAGS.inference_batch_size or int(max(num_actors//FLAGS.num_inference_servers//2, 1)) # defaults flag to 0
       print('inference batch size ', inference_batch_size)
-      # print('but not using it')
       inference_server_config = inference_server_lib.InferenceServerConfig(
         # batch_size=max(num_actors_per_node // 2, 1),
         batch_size=inference_batch_size, 
         update_period=400,
-        # update_period=5,
         timeout=timedelta(
             microseconds=999000,
         ),
-        # timeout=1000,
         )
       print(inference_server_config)
     else:
       inference_server_config = None
       print('not using inference server')
-    # import ipdb
-    # ipdb.set_trace(context=10)
-    local_resources = _get_local_resources(launch_type)
+
+    local_resources = get_local_resources(launch_type)
     print(local_resources)
 
     program = experiments.make_distributed_experiment(
@@ -217,8 +169,7 @@ def main(_):
         multiprocessing_colocate_actors=FLAGS.multiprocessing_colocate_actors,
         split_actor_specs=True,
         )
-    # program = experiments.make_distributed_experiment(
-    #     experiment=config, num_actors=64 if lp_utils.is_local_run() else 80)
+
     lp.launch(program,
               xm_resources=lp_utils.make_xm_docker_resources(program),
               local_resources=local_resources,

@@ -22,7 +22,7 @@ from absl import app
 from acme.jax import experiments
 from acme.utils import lp_utils
 import launchpad as lp
-from get_local_resources import _get_local_resources
+from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
 import functools
 
@@ -91,7 +91,7 @@ def build_experiment_config():
 
 def main(_):
   launch_type = FLAGS.lp_launch_type
-  local_resources = _get_local_resources(launch_type)
+  local_resources = get_local_resources(launch_type)
   experiment_config = build_experiment_config()
   if RUN_DISTRIBUTED.value:
     program = experiments.make_distributed_experiment(

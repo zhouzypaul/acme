@@ -15,12 +15,6 @@ flags.DEFINE_bool(
 # Then we change the interpreter. Nice.
 # We also want learner_gpus and 
 
-def _get_num_actor_nodes(num_actors, num_actors_per_node):
-  num_actor_nodes, remainder = divmod(num_actors, num_actors_per_node)
-  num_actor_nodes += int(remainder > 0)
-  return num_actor_nodes
-
-
 def pin_process_to_cpu(python_process, cpu_num):
   interpreter = python_process.absolute_interpreter_path
   print('old interpreter', interpreter)
@@ -55,8 +49,6 @@ def make_process_dict(gpu_str="-1", pin_to=None):
 
     
 
-# def make_actor_resources(num_actors, cpu_start=-1, cpu_end=-1, gpu_str="-1"):
-# def make_actor_resources(num_actors, one_cpu_per_actor=False):
 def make_actor_resources(num_actors, one_cpu_per_actor=False):
   # If you don't specify CPU range, then just do them all like before I guess.
   # What if I always modify it? I think that's better actually.
@@ -83,9 +75,9 @@ def make_actor_resources(num_actors, one_cpu_per_actor=False):
     process_dict[actor_key] = process
 
   return process_dict
-    
 
-def _get_local_resources(launch_type):
+
+def get_local_resources(launch_type):
   num_actors = FLAGS.num_actors
   num_actors_per_node = FLAGS.num_actors_per_node
   one_cpu_per_actor = FLAGS.one_cpu_per_actor

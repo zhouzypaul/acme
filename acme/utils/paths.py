@@ -64,9 +64,6 @@ _DATETIME = time.strftime('%Y%m%d-%H%M%S')
 
 def get_unique_id() -> Tuple[str, ...]:
   """Makes a unique identifier for this process; override with --acme_id."""
-  # saved_flags = FLAGS.read_flags_from_files(['--flagfile', '/tmp/temp_flags'])
-  # acme_id_flag = list(filter(lambda x: x.startswith('--acme_id='), saved_flags))[-1]  # use -1 because different experiment write to the same temp_flags file
-  # acme_id = acme_id_flag[10:]  # hack to remove the string '--acme_id='
   # By default we'll use the global id.
   identifier = _DATETIME
   identifier = os.environ.get('ACME_ID', identifier)
