@@ -54,11 +54,12 @@ def build_experiment_config():
   # cannot be pickled and pickling is necessary when launching distributed
   # experiments via Launchpad.
   env_name = FLAGS.env_name
+  max_episode_steps = FLAGS.max_episode_steps
   
   def environment_factory(seed: int) -> dm_env.Environment:
     return helpers.make_minigrid_environment(
       level_name=env_name,
-      max_episode_len=FLAGS.max_episode_steps
+      max_episode_len=max_episode_steps
     )
 
   # Configure the agent.

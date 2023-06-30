@@ -84,6 +84,16 @@ class EnvironmentLoop(core.Worker):
     self._goal_space_manager = goal_space_manager
     self._task_goal_probability = task_goal_probability
     
+  @property
+  def task_goal(self) -> OARG:
+    obs = self._environment.observation_spec()
+    return OARG(
+      observation=np.zeros(obs.observation.shape, dtype=obs.observation.dtype),
+      action=np.zeros(obs.action.shape, dtype=obs.action.dtype),  # doesnt matter
+      reward=np.zeros(obs.reward.shape, dtype=obs.reward.dtype),  # doesnt matter
+      goals=np.asarray(self._environment.task_goal_features, dtype=obs.goals.dtype)
+    )
+    
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
     reached = (current.goals == goal.goals).all()
@@ -198,7 +208,7 @@ class EnvironmentLoop(core.Worker):
       action = self._actor.select_action(timestep.observation)
       select_action_durations.append(time.time() - select_action_start)
       
-      print(f'V({timestep.observation.goals}, {goal.goals})={self._actor.get_value(timestep.observation)}')
+      # print(f'V({timestep.observation.goals}, {goal.goals})={self._actor.get_value(timestep.observation)}')
 
       # Step the environment with the agent's selected action.
       env_step_start = time.time()
@@ -235,8 +245,6 @@ class EnvironmentLoop(core.Worker):
       
     # HER
     self.hingsight_experience_replay(start_state, episode_trajectory)
-    
-    # TODO(ab): should always learn about task goal
 
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_steps)
@@ -334,8 +342,12 @@ class EnvironmentLoop(core.Worker):
     filtered_trajectory = get_achieved_goals()
     if filtered_trajectory:
       hindsight_goal = pick_hindsight_goal(filtered_trajectory)
-      print(f'replaying wrt to {hindsight_goal.goals}')
+      print(f'[HER] replaying wrt to {hindsight_goal.goals}')
       self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
+      
+      task_goal = self.task_goal
+      print(f'[HER] Replay wrt task goal {task_goal.goals}')
+      self.replay_trajectory_with_new_goal(trajectory, task_goal)
 
   def run(
       self,
