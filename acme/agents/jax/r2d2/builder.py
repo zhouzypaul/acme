@@ -262,16 +262,19 @@ class R2D2Builder(Generic[actor_core_lib.RecurrentState],
     actor_backend = 'cpu' if force_cpu else self._config.actor_backend
     print('actor backend', actor_backend)
 
-    def _obs_map_function(obs):
+    def oar_preprocessing(obs):
       new_observation = OAR(
         observation=jnp.array(obs.observation),
         action=jnp.array(obs.action),
         reward=jnp.array(obs.reward))
       return new_observation
 
+    # Only preprocess when requested, this is for inference server compatibility.
+    obs_map_function = oar_preprocessing if self._config.use_oar_preprocessing else None
+
     return actors.GenericActor(
         policy, random_key, variable_client, adder, backend=actor_backend,
-        jit=self._config.actor_jit, obs_map_function=_obs_map_function)
+        jit=self._config.actor_jit, obs_map_function=obs_map_function)
 
   def make_policy(self,
                   networks: r2d2_networks.R2D2Networks,

@@ -98,6 +98,7 @@ def build_experiment_config():
       variable_update_period=100,
       actor_jit=not FLAGS.use_inference_server, # we don't use this if we're doing inference-server
       actor_backend=actor_backend,
+      use_oar_preprocessing=FLAGS.use_inference_server,
   )
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
