@@ -70,7 +70,29 @@ def build_experiment_config():
       environment_factory=env_factory,
       network_factory=network_factory,
       seed=SEED.value,
-      max_num_actor_steps=NUM_STEPS.value)
+      max_num_actor_steps=NUM_STEPS.value)  
+
+
+def _get_local_resources(launch_type):
+  assert launch_type in ('local_mp', 'local_mt'), launch_type
+  from launchpad.nodes.python.local_multi_processing import PythonProcess
+  if launch_type == 'local_mp':
+    local_resources = {
+      "learner":PythonProcess(env={
+        "CUDA_VISIBLE_DEVICES": str(0),
+        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+        "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+      }),
+      "actor":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
+      "evaluator":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(0)}),
+      "inference_server":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
+      "counter":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
+      "replay":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
+      "gsm": PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)})
+    }
+  else:
+    local_resources = {}
+  return local_resources
 
 
 def main(_):
@@ -78,8 +100,11 @@ def main(_):
   if RUN_DISTRIBUTED.value:
     program = experiments.make_distributed_experiment(
         experiment=experiment_config,
-        num_actors=4 if lp_utils.is_local_run() else 16)
-    lp.launch(program, xm_resources=lp_utils.make_xm_docker_resources(program))
+        num_actors=32 if lp_utils.is_local_run() else 16)
+    lp.launch(program,
+              xm_resources=lp_utils.make_xm_docker_resources(program),
+              local_resources=_get_local_resources('local_mp'),
+              terminal='tmux_session')
   else:
     experiments.run_experiment(experiment_config)
 
