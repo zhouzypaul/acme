@@ -60,6 +60,7 @@ def make_distributed_experiment(
     name: str = 'agent',
     program: Optional[lp.Program] = None,
     split_actor_specs=False,
+    one_gpu_per_inference_server=False,
 ) -> lp.Program:
   """Builds a Launchpad program for running the experiment.
 
@@ -93,6 +94,7 @@ def make_distributed_experiment(
       passed.
     program: a program where agent nodes are added to. If None, a new program is
       created.
+    one_gpu_per_inference_server: whether to use one GPU per inference server.
 
   Returns:
     The Launchpad program with all the nodes needed for running the experiment.
@@ -223,12 +225,15 @@ def make_distributed_experiment(
           f'Using InferenceServer with policy of unsupported type:'
           f'{type(policy)}. InferenceServer only supports `ActorCore` policies.'
       )
-
-    num_devices = len(jax.local_devices())
-    print(f'How many inference devices? {num_devices}')
-    print(f"This is number {server_number}")
-    device = jax.local_devices()[server_number % num_devices]
-    print(f"Using device {device}")
+    if one_gpu_per_inference_server:
+      num_devices = len(jax.local_devices())
+      print(f'How many inference devices? {num_devices}')
+      print(f"This is number {server_number}")
+      device = jax.local_devices()[server_number % num_devices]
+      print(f"Using device {device}")
+      inference_server_devices = [device]
+    else:
+      inference_server_devices = jax.local_devices()
 
     return InferenceServer(
         handler=jax.jit(
@@ -241,7 +246,7 @@ def make_distributed_experiment(
             ),),
         variable_source=variable_source,
         # devices=jax.local_devices(),
-        devices=[device],
+        devices=inference_server_devices,
         config=inference_server_config,
     )
 

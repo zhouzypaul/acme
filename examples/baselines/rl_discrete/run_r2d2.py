@@ -51,7 +51,8 @@ flags.DEFINE_float('spi', 1.0,
                      'Number of samples per insert. 0 means does not constrain, other values do.')
 flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
 flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets all")
-flags.DEFINE_list("inference_server_gpu_ids", ["1"], "Which GPUs to use for inference servers. For now, all get all")
+flags.DEFINE_list("inference_server_gpu_ids", ["1"], "Which GPUs to use for inference servers. By default, gets second GPU (zero-indexed)")
+flags.DEFINE_boolean("one_gpu_per_inference_server", False, "Whether to use one GPU per inference server. By default, all get all")
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
@@ -169,6 +170,7 @@ def main(_):
         num_actors_per_node=num_actors_per_node,
         multiprocessing_colocate_actors=FLAGS.multiprocessing_colocate_actors,
         split_actor_specs=True,
+        one_gpu_per_inference_server=FLAGS.one_gpu_per_inference_server,
         )
 
     lp.launch(program,
