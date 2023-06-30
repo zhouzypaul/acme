@@ -8,7 +8,6 @@ import collections
 import numpy as np
 
 from typing import Dict, Optional, Tuple
-from scipy.special import expit as sigmoid
 
 from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2 import networks as r2d2_networks
@@ -188,9 +187,6 @@ class GoalSpaceManager(object):
           lstm_state
         )  # (1, B, |A|)
         values = values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
-        
-        # Sigmoid to convert the values to a probability between 0 and 1
-        values = sigmoid(values)
         
         print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
         self._update_value_dict(src_dest_pairs, values)

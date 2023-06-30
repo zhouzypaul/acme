@@ -17,7 +17,7 @@ class GoalSampler:
   
   def __init__(self,
                gsm: GoalSpaceManager,
-               task_goal_features=(6, 6)):
+               task_goal_features: Tuple):
     self._goal_space_manager = gsm
     self._task_goal_features = task_goal_features
     

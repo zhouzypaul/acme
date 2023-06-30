@@ -406,7 +406,7 @@ def make_distributed_experiment(
             counter,
             actor_id,
             inference_node,
-            gsm
+            gsm if create_goal_space_manager else None
         )
         colocation_nodes.append(actor)
 

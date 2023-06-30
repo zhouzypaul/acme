@@ -226,6 +226,8 @@ def environment_builder(
   
   # Convert the gym environment to a dm_env
   env = GymnasiumWrapper(env)
+  goal_pos = determine_goal_pos(env)
+  print(f'[MiniGrid-Environment] GoalPos: {goal_pos}')
   
   env = MiniGridWrapper(
     env,
@@ -235,7 +237,8 @@ def environment_builder(
     grayscaling=False, 
     pooled_frames=1,
     to_float=True,
-    goal_conditioned=goal_conditioned
+    goal_conditioned=goal_conditioned,
+    task_goal_features=goal_pos
   )
   
   # Use the OARG Wrapper

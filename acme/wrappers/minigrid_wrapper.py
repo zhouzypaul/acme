@@ -76,7 +76,8 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
                max_episode_len: Optional[int] = None,
                to_float: bool = False,
                grayscaling: bool = True,
-               goal_conditioned: bool = False):
+               goal_conditioned: bool = False,
+               task_goal_features: Tuple = (6, 6)):
     """Initializes a new MiniGridWrapper.
 
     Args:
@@ -108,6 +109,7 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
         the observations are RGB and have shape (H, W, C, num_stacked_frames).
       goal_conditioned: If `True` the observation space has twice as many channels
         representing the goal obs being concatenated to the current obs.
+      task_goal_features: position of the task goal.
 
     Raises:
       ValueError: For various invalid inputs.
@@ -134,6 +136,8 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
     self._to_float = to_float
     self._expose_lives_observation = expose_lives_observation
     self._goal_conditioned = goal_conditioned
+    
+    self.task_goal_features = task_goal_features
 
     if scale_dims:
       self._height, self._width = scale_dims

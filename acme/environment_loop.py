@@ -91,9 +91,10 @@ class EnvironmentLoop(core.Worker):
     
   def select_goal(self, timestep, method='uniform') -> OARG:
     """Select a goal to pursue in the upcoming episode."""
-    # TODO(ab): pass in the task goal features
+
     return GoalSampler(
-      self._goal_space_manager)(
+      self._goal_space_manager,
+      task_goal_features=self._environment.task_goal_features)(
       timestep, method=method
     )
 
@@ -196,6 +197,8 @@ class EnvironmentLoop(core.Worker):
       select_action_start = time.time()
       action = self._actor.select_action(timestep.observation)
       select_action_durations.append(time.time() - select_action_start)
+      
+      print(f'V({timestep.observation.goals}, {goal.goals})={self._actor.get_value(timestep.observation)}')
 
       # Step the environment with the agent's selected action.
       env_step_start = time.time()
@@ -232,6 +235,8 @@ class EnvironmentLoop(core.Worker):
       
     # HER
     self.hingsight_experience_replay(start_state, episode_trajectory)
+    
+    # TODO(ab): should always learn about task goal
 
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_steps)
