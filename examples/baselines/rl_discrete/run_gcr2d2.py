@@ -25,6 +25,7 @@ from acme.utils import lp_utils
 import dm_env
 import launchpad as lp
 from datetime import datetime
+import rlax
 
 start_time = datetime.now()
 
@@ -33,13 +34,14 @@ start_time = datetime.now()
 flags.DEFINE_bool(
     'run_distributed', True, 'Should an agent be executed in a distributed '
     'way. If False, will run single-threaded.')
-flags.DEFINE_string('env_name', 'Pong', 'What environment to run.')
+flags.DEFINE_string('env_name', 'MiniGrid-Empty-8x8-v0', 'What environment to run.')
 flags.DEFINE_integer('seed', 0, 'Random seed (experiment).')
 flags.DEFINE_integer('num_steps', 50_000_000,
                      'Number of environment steps to run for. Number of frames is 4x this')
 flags.DEFINE_integer('num_actors', 64, 'Number of actors to use')
 flags.DEFINE_integer('spi', 0, 'Samples per insert')
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
+flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
 
 FLAGS = flags.FLAGS
 
@@ -55,16 +57,16 @@ def build_experiment_config():
   
   def environment_factory(seed: int) -> dm_env.Environment:
     return helpers.make_minigrid_environment(
-      level_name='MiniGrid-Empty-8x8-v0',
-      max_episode_len=1000
+      level_name=env_name,
+      max_episode_len=FLAGS.max_episode_steps
     )
 
   # Configure the agent.
   config = r2d2.R2D2Config(
-      burn_in_length=8,
+      burn_in_length=0,
       trace_length=40,
       sequence_period=20,
-      min_replay_size=10_000,
+      min_replay_size=1_000,
       batch_size=batch_size,
       prefetch_size=1,
       samples_per_insert=FLAGS.spi,
@@ -72,6 +74,8 @@ def build_experiment_config():
       learning_rate=1e-4,
       target_update_period=1200,
       variable_update_period=100,
+      # The default hyperbolic transform makes the vf preds small (~0.4 max)
+      tx_pair=rlax.IDENTITY_PAIR
   )
   return experiments.ExperimentConfig(
       builder=r2d2.R2D2Builder(config),
@@ -130,7 +134,8 @@ def main(_):
   config = build_experiment_config()
   if FLAGS.run_distributed:
     program = experiments.make_distributed_experiment(
-        experiment=config, num_actors=FLAGS.num_actors if lp_utils.is_local_run() else 80
+        experiment=config, num_actors=FLAGS.num_actors if lp_utils.is_local_run() else 80,
+        create_goal_space_manager=True
     )
     lp.launch(program, 
               xm_resources=lp_utils.make_xm_docker_resources(program),
