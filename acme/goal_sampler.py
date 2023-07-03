@@ -17,75 +17,83 @@ class GoalSampler:
   
   def __init__(self,
                gsm: GoalSpaceManager,
-               task_goal_features: Tuple):
+               task_goal_probability: float,
+               task_goal: OARG,
+               method='amdp'):
+    assert method in ('task', 'amdp', 'uniform'), method
+    
+    self._amdp = None
     self._goal_space_manager = gsm
-    self._task_goal_features = task_goal_features
+    self._sampling_method = method
+    self._task_goal = task_goal
+    self._task_goal_probability = task_goal_probability
     
-  def __call__(
-    self,
-    timestep: dm_env.TimeStep,
-    method='uniform'
-  ) -> OARG:
+    self.value_dict = {}
+    self.goal_dict = {}
+    self.count_dict = {}
+    
+    # TODO(ab): get rid of the copying, rn it prevents them from going out of sync
+    if gsm is not None:
+      self.value_dict = copy.deepcopy(self._goal_space_manager.get_value_dict())
+      self.goal_dict = copy.deepcopy(self._goal_space_manager.get_goal_dict())
+      self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
+    
+  def get_candidate_goals(self, timestep: dm_env.TimeStep) -> dict:
+    """Get the possible goals to pursue at the current state."""
+    at_goal = lambda g: (timestep.observation.goals == g).all()
+    return {goal: oar for (goal, oar) in self.goal_dict.items() if not at_goal(goal)}
+    
+  def __call__(self, timestep: dm_env.TimeStep) -> OARG:
     """Select a goal to pursue in the upcoming episode."""
-    def get_candidate_goals():
-      at_goal = lambda g: (timestep.observation.goals == g).all()
-      goal_dict = self._goal_space_manager.get_goal_dict()
-      return {goal: oar for (goal, oar) in goal_dict.items() if not at_goal(goal)}
+    if self._sampling_method == 'task' or \
+      random.random() < self._task_goal_probability:
+      return self._task_goal
+      
+    goal_dict = self.get_candidate_goals(timestep)
+        
+    if self._sampling_method == 'amdp':
+      goal_hash = self._amdp_goal_sampling(timestep, goal_dict)
+      
+    if self._sampling_method == 'uniform':
+      goal_hash = random.choice(list(goal_dict.keys()))
+      
+    if goal_hash is not None and goal_hash in goal_dict:
+      return OARG(
+        np.asarray(goal_dict[goal_hash][0],
+                  dtype=timestep.observation.observation.dtype),
+        action=goal_dict[goal_hash][1],
+        reward=goal_dict[goal_hash][2],
+        goals=np.asarray(
+          goal_hash, dtype=timestep.observation.goals.dtype
+        ))
+      
+    return self._task_goal
     
-    if method == 'uniform':
-      goal_dict = get_candidate_goals()
-      if goal_dict:
-        sampled_goal_feats = random.choice(list(goal_dict.keys()))
-        return OARG(
-          np.asarray(goal_dict[sampled_goal_feats][0],
-                     dtype=timestep.observation.observation.dtype),
-          action=goal_dict[sampled_goal_feats][1],
-          reward=goal_dict[sampled_goal_feats][2],
-          goals=np.asarray(
-            sampled_goal_feats, dtype=timestep.observation.goals.dtype)
+  def _amdp_goal_sampling(self, timestep: dm_env.TimeStep, goal_dict: dict) -> Tuple:
+    """Solve the abstract MDP to pick the hash of the goal to pursue at s_t."""
+    
+    if goal_dict:
+      if len(goal_dict) == 1:
+        return list(goal_dict.keys())[0]
+      if len(self.value_dict) == 1:
+        return list(self.value_dict.keys())[0]
+      
+      if self._amdp is None and self.value_dict:
+        # TODO(ab): maintain reward_dict in GSM
+        reward_dict = {node: 0. for node in self.value_dict}
+        
+        target_node = self.select_expansion_node(timestep, goal_dict, method='random')
+        print(f'[GoalSampler] TargetNode={target_node}')
+        
+        self._amdp = AMDP(
+          value_dict=self.value_dict,
+          reward_dict=reward_dict,
+          target_node=target_node,
+          count_dict=self.count_dict
         )
-    if method == 'amdp':
-      # TODO(ab): get rid of the copying,
-      # have it now to prevent them from going out of sync
-      value_dict = copy.deepcopy(self._goal_space_manager.get_value_dict())
-      goal_dict = copy.deepcopy(get_candidate_goals())
-      if value_dict:
-        if len(value_dict) == 1:
-          goal_features = list(value_dict.keys())[0]
-        else:
-          # TODO(ab): maintain reward_dict in GSM
-          reward_dict = {node: 0. for node in value_dict}
-          # TODO(ab): Plug in actual alg for picking expansion node
-          target_node = self.select_expansion_node(timestep, goal_dict, method='random')
-          print(f'[GoalSampler] TargetNode={target_node}')
-          abstract_mdp = AMDP(
-            value_dict=value_dict,
-            reward_dict=reward_dict,
-            target_node=target_node,
-            count_dict=self._goal_space_manager.get_count_dict()
-          )
-          goal_features = abstract_mdp.policy(tuple(timestep.observation.goals))
-        if goal_features in goal_dict:
-          return OARG(
-            np.asarray(goal_dict[goal_features][0],
-                      dtype=timestep.observation.observation.dtype),
-            action=goal_dict[goal_features][1],
-            reward=goal_dict[goal_features][2],
-            goals=np.asarray(
-              goal_features, dtype=timestep.observation.goals.dtype
-            ))
-        elif goal_dict:  # if goal_dict is not empty, why doesn't it contain goal_features?
-          print(f'[GoalSampler] Warning: {goal_features} not in goal_dict {goal_dict.keys()}')
-    
-    task_goal_img = np.zeros_like(timestep.observation.observation)
-    task_goal_features = np.array(
-      self._task_goal_features,
-      dtype=timestep.observation.goals.dtype)
-    return OARG(
-      task_goal_img,
-      action=timestep.observation.action,  # doesnt matter
-      reward=timestep.observation.reward,  # doesnt matter
-      goals=task_goal_features)
+        return self._amdp.policy(tuple(timestep.observation.goals))
+      elif self.value_dict:
+        return self._amdp.policy(tuple(timestep.observation.goals))
     
   def _construct_oarg(self, obs, action, reward, goal_features):
     """Convert the obs, action, etc from the GSM into an OARG object.
@@ -103,6 +111,7 @@ class GoalSampler:
       goals=np.asarray(goal_features, dtype=np.int16)
     )
 
+  # TODO(ab): Plug in actual alg for picking expansion node
   def select_expansion_node(
     self,
     timestep: dm_env.TimeStep,
