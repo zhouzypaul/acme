@@ -50,7 +50,7 @@ class InferenceServer(Generic[InferenceServerHandler]):
 
   def __init__(self, handler: InferenceServerHandler,
                variable_source: acme.VariableSource,
-               devices: Sequence[jax.xla.Device],
+               devices: Sequence[jax.Device],
                config: InferenceServerConfig):
     """Constructs an inference server object.
 

@@ -25,8 +25,10 @@ from acme.utils import lp_utils
 import dm_env
 import launchpad as lp
 from datetime import datetime
+from local_resources import get_local_resources
+from acme.utils.experiment_utils import make_experiment_logger
+import functools
 start_time = datetime.now()
-
 
 # Flags which modify the behavior of the launcher.
 flags.DEFINE_bool(
@@ -34,17 +36,28 @@ flags.DEFINE_bool(
     'way. If False, will run single-threaded.')
 flags.DEFINE_string('env_name', 'Pong', 'What environment to run.')
 flags.DEFINE_integer('seed', 0, 'Random seed (experiment).')
+flags.DEFINE_integer('num_actors', 64, 'Num actors if running distributed')
+flags.DEFINE_boolean('one_cpu_per_actor', False, 'If we pin each actor to a different CPU')
+flags.DEFINE_integer('num_actors_per_node', 1, 'Actors per node (not sure what this means yet)')
+flags.DEFINE_boolean('multiprocessing_colocate_actors', False, 'Not sure, maybe whether to put actors in different processes?')
+flags.DEFINE_boolean('learner_on_cpu', False, 'For testing whether learner on GPU makes inference faster')
 flags.DEFINE_integer('num_steps', 50_000_000,
-                     'Number of environment steps to run for. Number of frames is 4x this')
-flags.DEFINE_integer('num_actors', 64, 'Number of actors to use')
+                     'Number of environment steps to run for.')
+flags.DEFINE_float('spi', 1.0,
+                     'Number of samples per insert. 0 means does not constrain, other values do.')
+flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
+flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets all")
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
+flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
+flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
+flags.DEFINE_integer('min_replay_size', 10_000, 'When learning starts')
 
 FLAGS = flags.FLAGS
 
 
 def build_experiment_config():
   """Builds R2D2 experiment config which can be executed in different ways."""
-  batch_size = 32
+  batch_size = FLAGS.learner_batch_size
 
   # The env_name must be dereferenced outside the environment factory as FLAGS
   # cannot be pickled and pickling is necessary when launching distributed
@@ -63,48 +76,34 @@ def build_experiment_config():
         flatten_frame_stack=True,
         grayscaling=False)
 
-  # Configure the agent.
+  actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   config = r2d2.R2D2Config(
       burn_in_length=8,
       trace_length=40,
       sequence_period=20,
-      min_replay_size=10_000,
+      min_replay_size=FLAGS.min_replay_size,
       batch_size=batch_size,
       prefetch_size=1,
-      samples_per_insert=0,
+      # samples_per_insert=1.0,
+      samples_per_insert= FLAGS.spi,
       evaluation_epsilon=1e-3,
       learning_rate=1e-4,
       target_update_period=1200,
       variable_update_period=100,
+      actor_jit=True,
+      actor_backend=actor_backend,
   )
+
+  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
 
   return experiments.ExperimentConfig(
       builder=r2d2.R2D2Builder(config),
       network_factory=r2d2.make_atari_networks,
       environment_factory=environment_factory,
       seed=FLAGS.seed,
-      max_num_actor_steps=FLAGS.num_steps)
-
-
-def _get_local_resources(launch_type):
-   assert launch_type in ('local_mp', 'local_mt'), launch_type
-   from launchpad.nodes.python.local_multi_processing import PythonProcess
-   if launch_type == 'local_mp':
-     local_resources = {
-       "learner":PythonProcess(env={
-         "CUDA_VISIBLE_DEVICES": str(0),
-         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-         "TF_FORCE_GPU_ALLOW_GROWTH": "true",
-       }),
-       "actor":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(0)}),
-       "evaluator":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(0)}),
-       "inference_server":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-       "counter":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-       "replay":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-     }
-   else:
-     local_resources = {}
-   return local_resources
+      max_num_actor_steps=FLAGS.num_steps,
+      checkpointing=checkpointing_config,
+      logger_factory=functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir))
 
 
 def sigterm_log_endtime_handler(_signo, _stack_frame):
@@ -114,7 +113,8 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
   """
   end_time = datetime.now()
   # log start and end time 
-  log_dir = os.path.expanduser(os.path.join('~/acme', FLAGS.acme_id))
+  # log_dir = os.path.expanduser(os.path.join('~/acme', FLAGS.acme_id))
+  log_dir = os.path.expanduser(os.path.join(FLAGS.acme_dir, FLAGS.acme_id))
   # don't print because it will be lost, especially because acme stops experiment by throwing an Error when reaching num_steps
   from helpers import save_start_and_end_time
   save_start_and_end_time(log_dir, start_time, end_time)
@@ -130,16 +130,27 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
 
 
 def main(_):
-  FLAGS.append_flags_into_file('/tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
   config = build_experiment_config()
   if FLAGS.run_distributed:
+    num_actors = FLAGS.num_actors
+    num_actors_per_node = FLAGS.num_actors_per_node
+    launch_type = FLAGS.lp_launch_type
+
+    local_resources = get_local_resources(launch_type)
+    print(local_resources)
+
     program = experiments.make_distributed_experiment(
-        experiment=config, num_actors=FLAGS.num_actors if lp_utils.is_local_run() else 80
-    )
-    lp.launch(program, 
+        experiment=config, num_actors=num_actors,
+        num_actors_per_node=num_actors_per_node,
+        multiprocessing_colocate_actors=FLAGS.multiprocessing_colocate_actors,
+        split_actor_specs=True,
+        )
+
+    lp.launch(program,
               xm_resources=lp_utils.make_xm_docker_resources(program),
-              local_resources=_get_local_resources(FLAGS.lp_launch_type),
-              terminal='tmux_session')
+              local_resources=local_resources,
+              # terminal="current_terminal")
+              terminal="tmux_session")
   else:
     experiments.run_experiment(experiment=config)
   

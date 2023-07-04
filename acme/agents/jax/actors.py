@@ -14,7 +14,7 @@
 
 """Simple JAX actors."""
 
-from typing import Generic, Optional
+from typing import Generic, Optional, Callable
 
 from acme import adders
 from acme import core
@@ -43,7 +43,7 @@ class GenericActor(core.Actor, Generic[actor_core.State, actor_core.Extras]):
       adder: Optional[adders.Adder] = None,
       jit: bool = True,
       backend: Optional[str] = 'cpu',
-      per_episode_update: bool = False
+      per_episode_update: bool = False,
   ):
     """Initializes a feed forward actor.
 
@@ -74,10 +74,12 @@ class GenericActor(core.Actor, Generic[actor_core.State, actor_core.Extras]):
 
   @property
   def _params(self):
-    return self._variable_client.params if self._variable_client else []
+    params = self._variable_client.params if self._variable_client else []
+    return params
 
   def select_action(self,
                     observation: network_lib.Observation) -> types.NestedArray:
+
     action, self._state = self._policy(self._params, observation, self._state)
     return utils.to_numpy(action)
 

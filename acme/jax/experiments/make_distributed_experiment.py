@@ -35,12 +35,11 @@ from acme.utils import lp_utils
 import jax
 import launchpad as lp
 import reverb
+import functools
 
 ActorId = int
 InferenceServer = inference_server_lib.InferenceServer[
     actor_core.SelectActionFn]
-
-
 
 
 def make_distributed_experiment(
@@ -60,6 +59,7 @@ def make_distributed_experiment(
     ] = None,
     name: str = 'agent',
     program: Optional[lp.Program] = None,
+    split_actor_specs=False,
 ) -> lp.Program:
   """Builds a Launchpad program for running the experiment.
 
@@ -204,6 +204,7 @@ def make_distributed_experiment(
   def build_inference_server(
       inference_server_config: inference_server_lib.InferenceServerConfig,
       variable_source: core.VariableSource,
+      server_number=0, # to distribute GPUs
   ) -> InferenceServer:
     """Builds an inference server for `ActorCore` policies."""
     dummy_seed = 1
@@ -222,6 +223,7 @@ def make_distributed_experiment(
           f'Using InferenceServer with policy of unsupported type:'
           f'{type(policy)}. InferenceServer only supports `ActorCore` policies.'
       )
+    inference_server_devices = jax.local_devices()
 
     return InferenceServer(
         handler=jax.jit(
@@ -233,7 +235,8 @@ def make_distributed_experiment(
                 # leading axis by the inference server.
             ),),
         variable_source=variable_source,
-        devices=jax.local_devices(),
+        # devices=jax.local_devices(),
+        devices=inference_server_devices,
         config=inference_server_config,
     )
 
@@ -246,6 +249,7 @@ def make_distributed_experiment(
       inference_server: Optional[InferenceServer],
   ) -> environment_loop.EnvironmentLoop:
     """The actor process."""
+
     environment_key, actor_key = jax.random.split(random_key)
     # Create environment and policy core.
 
@@ -355,8 +359,15 @@ def make_distributed_experiment(
   num_actor_nodes, remainder = divmod(num_actors, num_actors_per_node)
   num_actor_nodes += int(remainder > 0)
 
+  # Here we'll want to assign each one to its own CPU somehow.
+  # How should we? I guess we could pass in something like actor-cpu-range
+  # and divide evenly. Question is, how do we instantiate that?
+  # The answer is something along the lines of 
 
-  with program.group('actor'):
+  from contextlib import nullcontext
+  actor_context = nullcontext() if split_actor_specs else program.group('actor')
+  # with program.group('actor'):
+  with actor_context:
     # Create all actor threads.
     *actor_keys, key = jax.random.split(key, num_actors + 1)
 
@@ -366,29 +377,31 @@ def make_distributed_experiment(
         itertools.cycle(variable_sources),
         itertools.cycle(inference_nodes),
     ):
-      colocation_nodes = []
+      actor_node_context = program.group(f'actor_{node_id}') if split_actor_specs else nullcontext()
+      with actor_node_context:
+        colocation_nodes = []
 
-      first_actor_id = node_id * num_actors_per_node
-      for actor_id in range(
-          first_actor_id, min(first_actor_id + num_actors_per_node, num_actors)
-      ):
-        actor = lp.CourierNode(
-            build_actor,
-            actor_keys[actor_id],
-            replay,
-            variable_source,
-            counter,
-            actor_id,
-            inference_node,
-        )
-        colocation_nodes.append(actor)
+        first_actor_id = node_id * num_actors_per_node
+        for actor_id in range(
+            first_actor_id, min(first_actor_id + num_actors_per_node, num_actors)
+        ):
+          actor = lp.CourierNode(
+              build_actor,
+              actor_keys[actor_id],
+              replay,
+              variable_source,
+              counter,
+              actor_id,
+              inference_node,
+          )
+          colocation_nodes.append(actor)
 
-      if len(colocation_nodes) == 1:
-        program.add_node(colocation_nodes[0])
-      elif multiprocessing_colocate_actors:
-        program.add_node(lp.MultiProcessingColocation(colocation_nodes))
-      else:
-        program.add_node(lp.MultiThreadingColocation(colocation_nodes))
+        if len(colocation_nodes) == 1:
+          program.add_node(colocation_nodes[0])
+        elif multiprocessing_colocate_actors:
+          program.add_node(lp.MultiProcessingColocation(colocation_nodes))
+        else:
+          program.add_node(lp.MultiThreadingColocation(colocation_nodes))
 
   for evaluator in experiment.get_evaluator_factories():
     evaluator_key, key = jax.random.split(key)
