@@ -50,7 +50,7 @@ flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
-
+flags.DEFINE_integer('min_replay_size', 10_000, 'When learning starts')
 
 FLAGS = flags.FLAGS
 
@@ -81,8 +81,7 @@ def build_experiment_config():
       burn_in_length=8,
       trace_length=40,
       sequence_period=20,
-      # min_replay_size=10_000,
-      min_replay_size=1000,
+      min_replay_size=FLAGS.min_replay_size,
       batch_size=batch_size,
       prefetch_size=1,
       # samples_per_insert=1.0,
