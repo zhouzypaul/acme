@@ -55,4 +55,3 @@ class R2D2Config:
   # actor options
   actor_jit: bool = True
   actor_backend: str = 'cpu'
-  use_oar_preprocessing: bool = False # Setting to True makes compatible with Inference Server

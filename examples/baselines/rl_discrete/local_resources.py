@@ -91,15 +91,13 @@ def get_local_resources(launch_type):
       cpu_dict = {
         'learner'   : [0, 1, 2, 3],
         'replay'    : [4, 5, 6, 7],
-        'inference_server'   : [8, 9, 10, 11],
-        'counter' : [12, 13],
-        'evaluator': [14],
+        'counter' : [8, 9],
+        'evaluator': [10],
       }
     else:
       cpu_dict = {}
     local_resources = {
       "learner": make_process_dict(",".join(FLAGS.learner_gpu_ids), pin_to=cpu_dict.get('learner')),
-      "inference_server": make_process_dict(",".join(FLAGS.inference_server_gpu_ids), pin_to=cpu_dict.get('inference_server')),
       "counter": make_process_dict(pin_to=cpu_dict.get('counter')),
       "replay": make_process_dict(pin_to=cpu_dict.get('replay')),
       "evaluator": make_process_dict(pin_to=cpu_dict.get('evaluator')),
@@ -109,7 +107,7 @@ def get_local_resources(launch_type):
     local_resources.update(actor_resources)
   else:
     local_resources = {}
-  # import ipdb; ipdb.set_trace()
+
   print('local_resources keys: ', local_resources.keys())
   return local_resources
 
