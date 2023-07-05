@@ -52,7 +52,7 @@ flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
 flags.DEFINE_boolean('use_rnd', False, 'Whether to use RND')
 flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
-flags.DEFINE_integer('min_replay_size', 1000, 'When replay starts')
+flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay starts')
 
 FLAGS = flags.FLAGS
 
