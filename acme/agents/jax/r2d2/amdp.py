@@ -70,11 +70,16 @@ class AMDP:
   def _get_value(self, src_node, dest_node, eps=1e-3, c=0.2) -> float:
     """Get the probability of going from src_node to dest_node."""
     bonus = 0.
+    value = 0.
+
     if self._use_count_bonus:
       bonus = 1. / np.sqrt(self._count_dict[dest_node] + eps)
-    return np.clip(
-      self._value_dict[src_node][dest_node] + (c * bonus), 0., 1.
-    )
+
+    # TODO(ab): Careful - why would a key not be in this dict?
+    if src_node in self._value_dict and dest_node in self._value_dict[src_node]:
+      value = self._value_dict[src_node][dest_node]
+
+    return np.clip(value + (c * bonus), 0., 1.)
   
   def _transition_func(self) -> np.ndarray:
     """Construct the transition matrix for the AMDP.
