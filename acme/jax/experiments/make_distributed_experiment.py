@@ -378,6 +378,8 @@ def make_distributed_experiment(
       gsm_key,
       experiment.network_factory(spec),
       variable_sources[0],
+      # TODO(ab): How to set the number of threads for the GSM?
+      courier_kwargs={'thread_pool_size': num_actors}
       )
     gsm = gsm_node.create_handle()
     program.add_node(gsm_node, label='gsm')
