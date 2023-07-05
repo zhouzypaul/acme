@@ -8,15 +8,16 @@ has spaces, it puts it in quotes, because python is annoying.
 
 """
 import os
+from argparse import ArgumentParser
 
-# vs_extensions = "~/miniconda3/envs/jax_rl/lib/python3.9/site-packages/launchpad/nodes/courier/"
-venv_dir = "../venv" # e.g. /home/sam/Code/ML/acme_testing/acme
-local_run_dir = os.path.join(venv_dir, "lib/python3.8/site-packages/launchpad/launch/run_locally/")
-# vs_extensions = os.path.join(venv_dir, )"~/miniconda3/envs/jax_rl/lib/python3.9/site-packages/launchpad/nodes/courier/"
-# print(os.getcwd())
-# os.chdir(os.path.expanduser(vs_extensions))
-# print(os.getcwd())
-# print(os.listdir())
+parser = ArgumentParser()
+parser.add_argument('--venv_dir', type=str, default="../venv")
+parser.add_argument('--python_version', type=str, default="python3.8", help="in `venv/lib`, helps make path.")
+
+args = parser.parse_args()
+venv_dir = args.venv_dir
+python_version = args.python_version
+local_run_dir = os.path.join(venv_dir, f"lib/{python_version}/site-packages/launchpad/launch/run_locally/")
 
 file_name = os.path.join(local_run_dir, "run_locally.py")
 cached_filename = os.path.join(local_run_dir, "run_locally.py.old")

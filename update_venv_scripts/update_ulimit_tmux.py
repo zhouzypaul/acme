@@ -1,13 +1,18 @@
-import os
+raise Exception("This script works. But, ccv sysadmin were nice enough to raise the ulimit "
+                "for everyone in the gdk group, so should no longer be necessary so long as you "
+                "use the right options")
 
-# vs_extensions = "~/miniconda3/envs/jax_rl/lib/python3.9/site-packages/launchpad/nodes/courier/"
-venv_dir = "../venv" # e.g. /home/sam/Code/ML/acme_testing/acme
-local_run_dir = os.path.join(venv_dir, "lib/python3.8/site-packages/launchpad/launch/run_locally/")
-# vs_extensions = os.path.join(venv_dir, )"~/miniconda3/envs/jax_rl/lib/python3.9/site-packages/launchpad/nodes/courier/"
-# print(os.getcwd())
-# os.chdir(os.path.expanduser(vs_extensions))
-# print(os.getcwd())
-# print(os.listdir())
+import os
+from argparse import ArgumentParser
+
+parser = ArgumentParser()
+parser.add_argument('--venv_dir', type=str, default="../venv")
+parser.add_argument('--python_version', type=str, default="python3.8", help="in `venv/lib`, helps make path.")
+
+args = parser.parse_args()
+venv_dir = args.venv_dir
+python_version = args.python_version
+local_run_dir = os.path.join(venv_dir, f"lib/{python_version}/site-packages/launchpad/launch/run_locally/")
 
 file_name = os.path.join(local_run_dir, "launch_local_tmux.py")
 cached_filename = os.path.join(local_run_dir, "launch_local_tmux.py.old")
@@ -46,7 +51,7 @@ with open(file_name) as f:
 
 with open(cached_filename, "w") as f:
     f.write(contents)
-    print('old version written to courier_utils.py.old')
+    print('old version written to launch_local_tmux.py.old')
 
 for og_txt, new_txt in replace_tuples:
   contents = contents.replace(og_txt, new_txt)
@@ -57,4 +62,4 @@ for og_txt, new_txt in replace_tuples:
 with open(file_name, "w") as f:
   f.write(contents)
 
-print('new version written to courier_utils.py')
+print('new version written to launch_local_tmux.py')

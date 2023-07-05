@@ -42,10 +42,6 @@ InferenceServer = inference_server_lib.InferenceServer[
     actor_core.SelectActionFn]
 
 
-inference_server_count = 0
-
-
-
 def make_distributed_experiment(
     experiment: config.ExperimentConfig[builders.Networks, Any, Any],
     num_actors: int,
@@ -211,8 +207,6 @@ def make_distributed_experiment(
       server_number=0, # to distribute GPUs
   ) -> InferenceServer:
     """Builds an inference server for `ActorCore` policies."""
-    # global inference_server_count
-    print('Doing the inference_server_count thing to use different GPUs for different inference servers')
     dummy_seed = 1
     spec = (
         experiment.environment_spec or
@@ -229,13 +223,7 @@ def make_distributed_experiment(
           f'Using InferenceServer with policy of unsupported type:'
           f'{type(policy)}. InferenceServer only supports `ActorCore` policies.'
       )
-
-    num_devices = len(jax.local_devices())
-    print(f'How many inference devices? {num_devices}')
-    print(f"This is number {server_number}")
-    device = jax.local_devices()[server_number % num_devices]
-    print(f"Using device {device}")
-    # inference_server_count += 1
+    inference_server_devices = jax.local_devices()
 
     return InferenceServer(
         handler=jax.jit(
@@ -248,7 +236,7 @@ def make_distributed_experiment(
             ),),
         variable_source=variable_source,
         # devices=jax.local_devices(),
-        devices=[device],
+        devices=inference_server_devices,
         config=inference_server_config,
     )
 
@@ -261,10 +249,6 @@ def make_distributed_experiment(
       inference_server: Optional[InferenceServer],
   ) -> environment_loop.EnvironmentLoop:
     """The actor process."""
-    import os
-    # print('printing xla_flags')
-    # print(os.environ['XLA_FLAGS'])
-    # print('printed xla_flags')
 
     environment_key, actor_key = jax.random.split(random_key)
     # Create environment and policy core.
@@ -281,21 +265,15 @@ def make_distributed_experiment(
         environment_spec=environment_spec,
         evaluation=False)
     if inference_server is not None:
-      def silly_select_action(*args, **kwargs):
-        to_return = inference_server.handler(*args, **kwargs)
-        return to_return
-        
       policy_network = actor_core.ActorCore(
           init=policy_network.init,
-          # select_action=inference_server.handler,
-          select_action=silly_select_action,
+          select_action=inference_server.handler,
           get_extras=policy_network.get_extras,
       )
       variable_source = variable_utils.ReferenceVariableSource()
 
     adder = experiment.builder.make_adder(replay, environment_spec,
                                           policy_network)
-    # import ipdb; ipdb.set_trace()
     actor = experiment.builder.make_actor(actor_key, policy_network,
                                           environment_spec, variable_source,
                                           adder)
@@ -361,16 +339,15 @@ def make_distributed_experiment(
         # NOTE: Do not pass the counter to the secondary learners to avoid
         # double counting of learner steps.
 
-  # import functools
   if inference_server_config is not None:
     num_actors_per_server = math.ceil(num_actors / num_inference_servers)
     with program.group('inference_server'):
       inference_nodes = []
-      for server_num in range(num_inference_servers):
+      for _ in range(num_inference_servers):
         inference_nodes.append(
             program.add_node(
                 lp.CourierNode(
-                    functools.partial(build_inference_server, server_number=server_num),
+                    build_inference_server,
                     inference_server_config,
                     learner,
                     courier_kwargs={'thread_pool_size': num_actors_per_server
@@ -402,16 +379,12 @@ def make_distributed_experiment(
     ):
       actor_node_context = program.group(f'actor_{node_id}') if split_actor_specs else nullcontext()
       with actor_node_context:
-        # print(f'making actor node for actor id {actor_id}')
         colocation_nodes = []
 
         first_actor_id = node_id * num_actors_per_node
         for actor_id in range(
             first_actor_id, min(first_actor_id + num_actors_per_node, num_actors)
         ):
-          # sub_actor_context = program.group(f'actor_{actor_id}') if split_actor_specs else nullcontext()
-          # with sub_actor_context:
-            # print(f'making actor node for actor id {actor_id}')
           actor = lp.CourierNode(
               build_actor,
               actor_keys[actor_id],
@@ -432,11 +405,8 @@ def make_distributed_experiment(
 
   for evaluator in experiment.get_evaluator_factories():
     evaluator_key, key = jax.random.split(key)
-    print('putting evaluator on CPU always, for now')
-    # make_cpu_actor = functools.partial(experiment.builder.make_actor, backend='cpu')
     program.add_node(
         lp.CourierNode(evaluator, evaluator_key, learner, counter,
-                      # make_cpu_actor),
                        experiment.builder.make_actor),
         label='evaluator')
 

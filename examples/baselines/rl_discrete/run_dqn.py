@@ -22,7 +22,7 @@ from absl import app
 from acme.jax import experiments
 from acme.utils import lp_utils
 import launchpad as lp
-from get_local_resources import _get_local_resources
+from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
 import functools
 
@@ -45,8 +45,6 @@ flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors
 flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets all")
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
-flags.DEFINE_boolean('use_inference_server', False, 'Whether we use inference server (default False, include with no args to be true)')
-flags.DEFINE_list("inference_server_gpu_ids", ["1"], "Which GPUs to use for inference servers. For now, all get all")
 
 FLAGS = flags.FLAGS
 
@@ -91,7 +89,7 @@ def build_experiment_config():
 
 def main(_):
   launch_type = FLAGS.lp_launch_type
-  local_resources = _get_local_resources(launch_type)
+  local_resources = get_local_resources(launch_type)
   experiment_config = build_experiment_config()
   if RUN_DISTRIBUTED.value:
     program = experiments.make_distributed_experiment(

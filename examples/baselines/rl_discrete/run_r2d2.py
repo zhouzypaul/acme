@@ -24,9 +24,8 @@ from acme.jax import experiments
 from acme.utils import lp_utils
 import dm_env
 import launchpad as lp
-from datetime import datetime, timedelta
-from acme.jax import inference_server as inference_server_lib
-from get_local_resources import _get_local_resources
+from datetime import datetime
+from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
 import functools
 start_time = datetime.now()
@@ -38,9 +37,6 @@ flags.DEFINE_bool(
 flags.DEFINE_string('env_name', 'Pong', 'What environment to run.')
 flags.DEFINE_integer('seed', 0, 'Random seed (experiment).')
 flags.DEFINE_integer('num_actors', 64, 'Num actors if running distributed')
-flags.DEFINE_integer('inference_batch_size', 0, 'Inference batch size')
-flags.DEFINE_boolean('use_inference_server', False, 'Whether we use inference server (default False, include with no args to be true)')
-flags.DEFINE_integer('num_inference_servers', 1, 'Number of inference servers (defaults to 1)')
 flags.DEFINE_boolean('one_cpu_per_actor', False, 'If we pin each actor to a different CPU')
 flags.DEFINE_integer('num_actors_per_node', 1, 'Actors per node (not sure what this means yet)')
 flags.DEFINE_boolean('multiprocessing_colocate_actors', False, 'Not sure, maybe whether to put actors in different processes?')
@@ -51,15 +47,12 @@ flags.DEFINE_float('spi', 1.0,
                      'Number of samples per insert. 0 means does not constrain, other values do.')
 flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
 flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets all")
-flags.DEFINE_list("inference_server_gpu_ids", ["1"], "Which GPUs to use for inference servers. For now, all get all")
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
 flags.DEFINE_boolean('use_rnd', False, 'Whether to use RND')
 flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
 flags.DEFINE_integer('min_replay_size', 1000, 'When replay starts')
-
-
 
 FLAGS = flags.FLAGS
 
@@ -98,16 +91,11 @@ def build_experiment_config():
         flatten_frame_stack=True,
         grayscaling=False)
 
-  # Their default config:
-  # TODO: actor GPU ids isn't passed through to subprocesses, so we need to
-  # do something to find it. For example, looking at CUDA_VISIBLE_DEVICES, or passing it through perhaps is easiest.
-  # Yeah we'll modify the config.
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   config = r2d2.R2D2Config(
       burn_in_length=8,
       trace_length=40,
       sequence_period=20,
-      # min_replay_size=10_000,
       min_replay_size=FLAGS.min_replay_size,
       batch_size=batch_size,
       prefetch_size=1,
@@ -117,7 +105,7 @@ def build_experiment_config():
       learning_rate=1e-4,
       target_update_period=1200,
       variable_update_period=100,
-      actor_jit=not FLAGS.use_inference_server, # we don't use this if we're doing inference-server
+      actor_jit=True,
       actor_backend=actor_backend,
   )
 
@@ -143,6 +131,8 @@ def build_experiment_config():
   else:
     network_factory = r2d2.make_atari_networks
 
+
+  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
 
   return experiments.ExperimentConfig(
       # builder=r2d2.R2D2Builder(config),
@@ -180,48 +170,22 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
 
 
 def main(_):
-  # import os
-  # os.makedirs("tmp", exist_ok=True)
-  # FLAGS.append_flags_into_file('tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
   config = build_experiment_config()
-  print(FLAGS.use_inference_server)
   if FLAGS.run_distributed:
     num_actors = FLAGS.num_actors
     num_actors_per_node = FLAGS.num_actors_per_node
-    inference_batch_size = FLAGS.inference_batch_size or int(max(num_actors//FLAGS.num_inference_servers//2, 1)) # defaults flag to 0
     launch_type = FLAGS.lp_launch_type
-    if FLAGS.use_inference_server:
-      print('inference batch size ', inference_batch_size)
-      # print('but not using it')
-      inference_server_config = inference_server_lib.InferenceServerConfig(
-        # batch_size=max(num_actors_per_node // 2, 1),
-        batch_size=inference_batch_size, 
-        update_period=400,
-        # update_period=5,
-        timeout=timedelta(
-            microseconds=999000,
-        ),
-        # timeout=1000,
-        )
-      print(inference_server_config)
-    else:
-      inference_server_config = None
-      print('not using inference server')
-    # import ipdb
-    # ipdb.set_trace(context=10)
-    local_resources = _get_local_resources(launch_type)
+
+    local_resources = get_local_resources(launch_type)
     print(local_resources)
 
     program = experiments.make_distributed_experiment(
         experiment=config, num_actors=num_actors,
-        inference_server_config=inference_server_config,
-        num_inference_servers=FLAGS.num_inference_servers,
         num_actors_per_node=num_actors_per_node,
         multiprocessing_colocate_actors=FLAGS.multiprocessing_colocate_actors,
         split_actor_specs=True,
         )
-    # program = experiments.make_distributed_experiment(
-    #     experiment=config, num_actors=64 if lp_utils.is_local_run() else 80)
+
     lp.launch(program,
               xm_resources=lp_utils.make_xm_docker_resources(program),
               local_resources=local_resources,

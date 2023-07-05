@@ -44,7 +44,6 @@ class GenericActor(core.Actor, Generic[actor_core.State, actor_core.Extras]):
       jit: bool = True,
       backend: Optional[str] = 'cpu',
       per_episode_update: bool = False,
-      obs_map_function: Optional[Callable] = None,
   ):
     """Initializes a feed forward actor.
 
@@ -62,7 +61,6 @@ class GenericActor(core.Actor, Generic[actor_core.State, actor_core.Extras]):
     self._variable_client = variable_client
     self._adder = adder
     self._state = None
-    self._obs_map_function = obs_map_function
 
     # Unpack ActorCore, jitting if requested.
     if jit:
@@ -81,9 +79,6 @@ class GenericActor(core.Actor, Generic[actor_core.State, actor_core.Extras]):
 
   def select_action(self,
                     observation: network_lib.Observation) -> types.NestedArray:
-    
-    if self._obs_map_function:
-      observation = self._obs_map_function(observation)
 
     action, self._state = self._policy(self._params, observation, self._state)
     return utils.to_numpy(action)

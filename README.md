@@ -14,6 +14,8 @@ cd examples/baselines/rl_discrete
 python3 run_r2d2.py --lp_launch_type local_mp --acme_id saving_dir_name  # multiprocessing is much faster than multithreading
 ```
 
+### Special setup instructions
+After all the boring `venv` stuff, there are a few unsavory modifications you need to make to have this work with inference_server, and also to have this work on a cluster where processes_per_user (`ulimit -u`) is limited. Please run the scripts in the `update_venv_scripts` folder, specifying the path to your venv as well as the version of python (both of these are just to locate filepaths). One script lets you use inference server (fixes a Launchpad bug), and another allows for CPU pinning to reduce process count.
 
 <img src="docs/imgs/acme.png" width="50%">
 
