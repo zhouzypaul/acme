@@ -82,7 +82,7 @@ class GoalSampler:
         # TODO(ab): maintain reward_dict in GSM
         reward_dict = {node: 0. for node in self.value_dict}
         
-        target_node = self.select_expansion_node(timestep, goal_dict, method='random')
+        target_node = self.select_expansion_node(timestep, goal_dict, method='novelty')
         print(f'[GoalSampler] TargetNode={target_node}')
         
         self._amdp = AMDP(
@@ -120,4 +120,12 @@ class GoalSampler:
     if method == 'random':
       potential_goals = list(goal_dict.keys())
       return random.choice(potential_goals)
+    if method == 'novelty':
+      potential_goals = list(goal_dict.keys())
+      scores = np.asarray(
+        [1. / np.sqrt(self.count_dict[g] + 1e-3) for g in potential_goals]
+      )
+      probs = scores / scores.sum()
+      idx = np.random.choice(range(len(potential_goals)), p=probs)
+      return potential_goals[idx]
     raise NotImplementedError(method)
