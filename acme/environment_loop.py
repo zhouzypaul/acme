@@ -337,6 +337,7 @@ class EnvironmentLoop(core.Worker):
       'env_reset_duration_sec': env_reset_duration,
       'select_action_duration_sec': np.mean(episode_logs['select_action_durations']),
       'env_step_duration_sec': np.mean(episode_logs['env_step_durations']),
+      'start_state': start_state.goals
     }
     result.update(counts)
     for observer in self._observers:
