@@ -305,28 +305,38 @@ class EnvironmentLoop(core.Worker):
       gsm=self._goal_space_manager,
       task_goal_probability=self._task_goal_probability,
       task_goal=self.task_goal,
-      method='amdp' if self._goal_space_manager else 'task'
+      method='uniform' if self._goal_space_manager else 'task'
     )
+    
+    # State-goal pairs.
+    attempted_edges: List[Tuple[OARG, OARG]] = []
     
     while not needs_reset:
       goal = goal_sampler(timestep)
+      attempted_edges.append((timestep.observation, goal))
       timestep, needs_reset, episode_logs = self.gc_rollout(
         timestep._replace(step_type=dm_env.StepType.FIRST), goal, episode_logs
       )
       assert timestep.last(), timestep
       
     # HER
+    t0 = time.time()
     self.hingsight_experience_replay(start_state, episode_logs['episode_trajectory'])
+    print(f'Took {time.time() - t0}s to do HER')
     
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_logs['episode_steps'])
     
     # Stream the episodic trajectory to the goal space manager.
     if self._goal_space_manager is not None:
-      self.stream_achieved_goals_to_gsm(episode_logs['episode_trajectory'])
+      t0 = time.time()
+      self.stream_achieved_goals_to_gsm(episode_logs['episode_trajectory'], attempted_edges)
+      print(f'Took {time.time() - t0}s to stream achieved goals to the GSM')
       
       # Update the Q-function parameters of the GSM
+      t0 = time.time()
       self._goal_space_manager.update_params()
+      print(f'Took {time.time() - t0}s to update GSM Learner Params')
     
     # Collect the results and combine with counts.
     steps_per_second = episode_logs['episode_steps'] / (time.time() - episode_start_time)
@@ -430,8 +440,11 @@ class EnvironmentLoop(core.Worker):
 
     return timestep, needs_reset, episode_logs
   
-  def stream_achieved_goals_to_gsm(self, trajectory: List) -> None:
+  def stream_achieved_goals_to_gsm(self, trajectory: List, attempted_edges: List) -> None:
     """Send the goals achieved during the episode to the GSM."""
+    def obs2key(obs: OARG) -> Tuple:
+      return tuple([int(g) for g in obs.goals])
+  
     def get_key(ts: dm_env.TimeStep) -> Tuple:
       """Extract a hashable from a transition."""
       return tuple([int(g) for g in ts.observation.goals])
@@ -440,6 +453,10 @@ class EnvironmentLoop(core.Worker):
       """Return a dictionary mapping goal to visit count in episode."""
       achieved_goals = [get_key(trans[-2]) for trans in trajectory]
       return dict(collections.Counter(achieved_goals))
+    
+    def attempted2counts() -> Dict:
+      attempted_hashes = [(obs2key(x), obs2key(y)) for x, y in attempted_edges]
+      return dict(collections.Counter(attempted_hashes))
     
     def extract_goal_to_obs() -> Dict:
       """Return a dictionary mapping goal hash to the OAR when goal was achieved."""
@@ -454,8 +471,9 @@ class EnvironmentLoop(core.Worker):
     
     hash2count = extract_counts()
     hash2obs = extract_goal_to_obs()
+    edge2count = attempted2counts()
     
-    self._goal_space_manager.update(hash2obs, hash2count)
+    self._goal_space_manager.update(hash2obs, hash2count, edge2count)
   
   def replay_trajectory_with_new_goal(
     self, trajectory: List, hindsight_goal: OARG):

@@ -64,7 +64,7 @@ def build_experiment_config():
 
   # Configure the agent.
   config = r2d2.R2D2Config(
-      burn_in_length=0,
+      burn_in_length=0,  # NOTE(ab): got rid of burn_in
       trace_length=40,
       sequence_period=20,
       min_replay_size=1_000,

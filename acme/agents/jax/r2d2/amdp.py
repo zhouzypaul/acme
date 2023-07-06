@@ -1,9 +1,12 @@
 import copy
 import ipdb
 import pickle
+import collections
 import numpy as np
 
 from typing import Tuple
+
+from acme.utils import utils
 
 
 class AMDP:
@@ -28,7 +31,8 @@ class AMDP:
     self._value_dict = value_dict
     self._reward_dict = reward_dict
     self._use_count_bonus = True if count_dict else False
-    self._count_dict = count_dict  # node features -> int count
+    # src node features -> dest node -> int count
+    self._count_dict = utils.defaultify(count_dict)
     
     self._action_space = self._construct_action_space()
     self._state_space = self._construct_state_space()  # ind -> features
@@ -73,7 +77,7 @@ class AMDP:
     value = 0.
 
     if self._use_count_bonus:
-      bonus = 1. / np.sqrt(self._count_dict[dest_node] + eps)
+      bonus = 1. / np.sqrt(self._count_dict[src_node][dest_node] + eps)
 
     # TODO(ab): Careful - why would a key not be in this dict?
     if src_node in self._value_dict and dest_node in self._value_dict[src_node]:
