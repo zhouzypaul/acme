@@ -31,12 +31,15 @@ class GoalSampler:
     self.value_dict = {}
     self.goal_dict = {}
     self.count_dict = {}
+    self.on_policy_edge_count_dict = {}
     
     # TODO(ab): get rid of the copying, rn it prevents them from going out of sync
     if gsm is not None:
       self.value_dict = copy.deepcopy(self._goal_space_manager.get_value_dict())
       self.goal_dict = copy.deepcopy(self._goal_space_manager.get_goal_dict())
       self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
+      self.on_policy_edge_count_dict = copy.deepcopy(
+        self._goal_space_manager.get_on_policy_count_dict())
     
   def get_candidate_goals(self, timestep: dm_env.TimeStep) -> dict:
     """Get the possible goals to pursue at the current state."""
@@ -89,7 +92,7 @@ class GoalSampler:
           value_dict=self.value_dict,
           reward_dict=reward_dict,
           target_node=target_node,
-          count_dict=self.count_dict
+          count_dict=self.on_policy_edge_count_dict
         )
         return self._amdp.policy(tuple(timestep.observation.goals))
       elif self.value_dict:

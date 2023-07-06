@@ -28,6 +28,11 @@ class GoalSpaceManager(object):
     self._hash2counts = collections.defaultdict(int)
     self._count_dict_lock = threading.Lock()
     
+    # Map src node -> dest node -> on policy attempt count
+    self._on_policy_counts = collections.defaultdict(
+      lambda : collections.defaultdict(int))
+    self._on_policy_count_dict_lock = threading.Lock()
+    
     # src goal hash -> dest goal hash -> value
     self._value_matrix = collections.defaultdict(
       lambda : collections.defaultdict(lambda: 1.))
@@ -85,6 +90,9 @@ class GoalSpaceManager(object):
   def get_count_dict(self):
     return self._hash2counts
   
+  def get_on_policy_count_dict(self):
+    return self._default_dict_to_dict(self._on_policy_counts)
+  
   def get_goal_dict(self):
     return self._hash2obs
   
@@ -92,15 +100,22 @@ class GoalSpaceManager(object):
     """Convert to regular dict because courier cannot handle fancy dicts."""
     return self._default_dict_to_dict(self._value_matrix)
     
-  def update(self, hash2obs: Dict, hash2count: Dict):
+  def update(self, hash2obs: Dict, hash2count: Dict, edge2count: Dict):
     """Update based on goals achieved by the different actors."""
     self._hash2obs.update(hash2obs)
     self._update_count_dict(hash2count)
+    self._update_on_policy_count_dict(edge2count)
     
   def _update_count_dict(self, hash2count: Dict):
     with self._count_dict_lock:
       for goal in hash2count:
         self._hash2counts[goal] += hash2count[goal]
+        
+  def _update_on_policy_count_dict(self, hash2count: Dict):
+    with self._on_policy_count_dict_lock:
+      for key in hash2count:
+        src, dest = key
+        self._on_policy_counts[src][dest] += hash2count[key]
   
   def _construct_oarg(self, obs, action, reward, goal_features):
     """Convert the obs, action, etc from the GSM into an OARG object.
@@ -191,4 +206,4 @@ class GoalSpaceManager(object):
         print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
         self._update_value_dict(src_dest_pairs, values)
         if len(src_dest_pairs) > 1000:
-          pprint.pprint(self._value_matrix[(1, 1)])
+          pprint.pprint(self._value_matrix[(8, 16)])
