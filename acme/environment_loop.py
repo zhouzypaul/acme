@@ -305,7 +305,7 @@ class EnvironmentLoop(core.Worker):
       gsm=self._goal_space_manager,
       task_goal_probability=self._task_goal_probability,
       task_goal=self.task_goal,
-      method='amdp' if self._goal_space_manager else 'task'
+      method='uniform' if self._goal_space_manager else 'task'
     )
     
     # State-goal pairs.

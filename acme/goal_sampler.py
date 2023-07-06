@@ -53,6 +53,9 @@ class GoalSampler:
       return self._task_goal
       
     goal_dict = self.get_candidate_goals(timestep)
+    
+    if len(goal_dict) == 0:
+      return self._task_goal
         
     if self._sampling_method == 'amdp':
       goal_hash = self._amdp_goal_sampling(timestep, goal_dict)
