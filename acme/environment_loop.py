@@ -35,6 +35,7 @@ import random
 import copy
 import collections
 import ipdb
+import jax.numpy as jnp
 
 
 class EnvironmentLoop(core.Worker):
@@ -71,7 +72,8 @@ class EnvironmentLoop(core.Worker):
       label: str = 'environment_loop',
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
       goal_space_manager: GoalSpaceManager = None,
-      task_goal_probability: float = 0.1
+      task_goal_probability: float = 0.1,
+      always_learn_about_task_goal: bool = False
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -83,6 +85,15 @@ class EnvironmentLoop(core.Worker):
     self._observers = observers
     self._goal_space_manager = goal_space_manager
     self._task_goal_probability = task_goal_probability
+    self._always_learn_about_task_goal = always_learn_about_task_goal
+
+    self._goal_sampler = GoalSampler(
+      goal_space_manager, task_goal_probability, self.task_goal,
+      method='amdp' if self._goal_space_manager else 'task'
+    )
+
+    self._goal_achievement_rates = collections.defaultdict(float)
+    self._goal_pursual_counts = collections.defaultdict(int)
     
   @property
   def task_goal(self) -> OARG:
@@ -301,23 +312,27 @@ class EnvironmentLoop(core.Worker):
     env_reset_duration = time.time() - env_reset_start
     start_state = copy.deepcopy(timestep.observation)
     
-    goal_sampler = GoalSampler(
-      gsm=self._goal_space_manager,
-      task_goal_probability=self._task_goal_probability,
-      task_goal=self.task_goal,
-      method='uniform' if self._goal_space_manager else 'task'
-    )
+    self._goal_sampler.begin_episode(timestep)
     
     # State-goal pairs.
     attempted_edges: List[Tuple[OARG, OARG]] = []
     
     while not needs_reset:
-      goal = goal_sampler(timestep)
+      goal = self._goal_sampler(timestep)
+
       attempted_edges.append((timestep.observation, goal))
+
       timestep, needs_reset, episode_logs = self.gc_rollout(
         timestep._replace(step_type=dm_env.StepType.FIRST), goal, episode_logs
       )
+      
       assert timestep.last(), timestep
+
+      key = tuple(goal.goals)
+      delta = timestep.reward - self._goal_achievement_rates[key]
+      self._goal_pursual_counts[key] += 1
+      self._goal_achievement_rates[key] += (delta / self._goal_pursual_counts[key])
+      print(f'Success rate for {key} is {self._goal_achievement_rates[key]} ({self._goal_pursual_counts[key]})')
       
     # HER
     t0 = time.time()
@@ -462,7 +477,8 @@ class EnvironmentLoop(core.Worker):
       """Return a dictionary mapping goal hash to the OAR when goal was achieved."""
       return {
         get_key(transition[-2]): 
-        (transition[-2].observation.observation[:, :, :3].tolist(),
+        # We convert to jnp b/c courier cannot handle np arrays
+        (jnp.asarray(transition[-2].observation.observation[:, :, :3]),
          int(transition[-2].observation.action),
          float(transition[-2].observation.reward)  # TODO(ab): is this the correct reward?
         ) 
@@ -472,8 +488,9 @@ class EnvironmentLoop(core.Worker):
     hash2count = extract_counts()
     hash2obs = extract_goal_to_obs()
     edge2count = attempted2counts()
-    
-    self._goal_space_manager.update(hash2obs, hash2count, edge2count)
+
+    # futures allows us to update() asynchronously
+    self._goal_space_manager.futures.update(hash2obs, hash2count, edge2count)
   
   def replay_trajectory_with_new_goal(
     self, trajectory: List, hindsight_goal: OARG):
@@ -549,8 +566,9 @@ class EnvironmentLoop(core.Worker):
       self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
       
       task_goal = self.task_goal
-      if not (hindsight_goal.goals == task_goal.goals).all():
-        print(f'[HER] Replay wrt task goal {task_goal.goals}')
+
+      if self._always_learn_about_task_goal and \
+        not (hindsight_goal.goals == task_goal.goals).all():
         self.replay_trajectory_with_new_goal(trajectory, task_goal)
 
   def run(
