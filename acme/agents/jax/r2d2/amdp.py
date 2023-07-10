@@ -9,6 +9,9 @@ from typing import Tuple
 from acme.utils import utils
 
 
+# TODO(ab): AMDP needs knowledge of terminal states in the ground MDP
+
+
 class AMDP:
   """Abstract MDP over the skill-graph."""
   
@@ -71,7 +74,7 @@ class AMDP:
     states[len(states)] = 'death'
     return states  
   
-  def _get_value(self, src_node, dest_node, eps=1e-3, c=0.2) -> float:
+  def _get_value(self, src_node, dest_node, eps=1e-3, c=0.) -> float:
     """Get the probability of going from src_node to dest_node."""
     bonus = 0.
     value = 0.
@@ -143,6 +146,10 @@ class AMDP:
     return rewards, discounts
 
   def solve_abstract_mdp(self, n_iterations, tol):
+    def randargmax(b, **kw):
+      """A random tie-breaking argmax."""
+      return np.argmax(np.random.random(b.shape) * (b == b.max()), **kw)
+
     num_states, num_actions, _ = self._transition_matrix.shape
     values = np.zeros((num_states,), dtype=np.float32)
     
@@ -161,7 +168,12 @@ class AMDP:
       if np.max(np.abs(values - prev_values)) < tol:
         break
     
-    policy = np.argmax(Q, axis=1)
+    if (values == 0).all():
+      policy = np.random.randint(
+        low=0, high=len(self._action_space) - 1, size=values.shape
+      )
+    else:
+      policy = np.argmax(Q, axis=1)
     print('Values: ', values)
     print('Policy: ', policy)
     return values, policy
