@@ -3,9 +3,9 @@ from collections import defaultdict
 
 def defaultify(d):
   """Convert a nested dictionary to a defaultdict."""
-  dd = defaultdict(lambda: defaultdict(int))
+  dd = defaultdict(lambda: defaultdict(lambda: 1))
   for key1 in d:
-    dd[key1] = defaultdict(int, d[key1])
+    dd[key1] = defaultdict(lambda: 1, d[key1])
   return dd
 
 
