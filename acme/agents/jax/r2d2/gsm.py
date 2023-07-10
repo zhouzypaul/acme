@@ -1,11 +1,14 @@
 import time
 import ipdb
+import copy
 import pickle
 import pprint
+import random
 import itertools
 import threading
 import collections
 import numpy as np
+import jax.numpy as jnp
 
 from typing import Dict, Optional, Tuple
 
@@ -102,7 +105,7 @@ class GoalSpaceManager(object):
     
   def update(self, hash2obs: Dict, hash2count: Dict, edge2count: Dict):
     """Update based on goals achieved by the different actors."""
-    self._hash2obs.update(hash2obs)
+    self._update_obs_dict(hash2obs)
     self._update_count_dict(hash2count)
     self._update_on_policy_count_dict(edge2count)
     
@@ -110,6 +113,11 @@ class GoalSpaceManager(object):
     with self._count_dict_lock:
       for goal in hash2count:
         self._hash2counts[goal] += hash2count[goal]
+
+  def _update_obs_dict(self, hash2obs: Dict):
+    for goal in hash2obs:
+      oarg = self._construct_oarg(*hash2obs[goal], goal)
+      self._hash2obs[goal] = oarg
         
   def _update_on_policy_count_dict(self, hash2count: Dict):
     with self._on_policy_count_dict_lock:
@@ -141,9 +149,13 @@ class GoalSpaceManager(object):
   def _construct_obs_matrix(self):
     def get_nodes():
       hash2oar = self.get_goal_dict()
-      return {k: self._construct_oarg(*v, k) for k, v in list(hash2oar.items())}
+      return {k: v for k, v in list(hash2oar.items())}
     
     nodes = get_nodes()
+
+    if len(nodes) > 50:
+      sub_keys = random.sample(nodes.keys(), 50)
+      nodes = {key: nodes[key] for key in sub_keys}
     
     augmented_observations = []
     actions = []
@@ -163,11 +175,12 @@ class GoalSpaceManager(object):
         src_dest_pairs.append((src, dest))
         
     if augmented_observations:
-      augmented_observations = np.asarray(
-        augmented_observations)[np.newaxis, ...]
-      actions = np.asarray(actions)[np.newaxis, ...]
-      rewards = np.asarray(rewards)[np.newaxis, ...]
-      goals = np.asarray(goals)[np.newaxis, ...]
+      augmented_observations = jnp.asarray(
+        augmented_observations)[jnp.newaxis, ...]
+      augmented_observations = jnp.asarray(augmented_observations)
+      actions = jnp.asarray(actions)[jnp.newaxis, ...]
+      rewards = jnp.asarray(rewards)[jnp.newaxis, ...]
+      goals = jnp.asarray(goals)[jnp.newaxis, ...]
       print(f'Created OARG with {len(augmented_observations)} observations, {len(nodes)} nodes')
       return src_dest_pairs, OARG(augmented_observations, actions, rewards, goals)
     
@@ -176,8 +189,8 @@ class GoalSpaceManager(object):
   @staticmethod
   def _default_dict_to_dict(dd):
     d = {}
-    for key in dd:
-      d[key] = {k: v for k, v in dd[key].items()}
+    for key, val in dd.items():
+      d[key] = dict(val)
     return d
     
   def _save_value_dict(self, iteration):   
@@ -195,15 +208,21 @@ class GoalSpaceManager(object):
         
         lstm_state = self.get_recurrent_state(batch_oarg.observation.shape[1])
         
+        t1 = time.time()
         values, _ = self._networks.unroll(
           self._params,
           self._rng_key,
           batch_oarg,
           lstm_state
         )  # (1, B, |A|)
+        print(f'Took {time.time() - t1}s to forward pass through {values.shape} values')
         values = values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
         
         print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
         self._update_value_dict(src_dest_pairs, values)
+
+        if iteration > 0 and iteration % 100 == 0:
+          self._save_value_dict(iteration)
+
         if len(src_dest_pairs) > 1000:
           pprint.pprint(self._value_matrix[(8, 16)])
