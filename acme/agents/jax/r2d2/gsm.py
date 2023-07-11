@@ -35,6 +35,10 @@ class GoalSpaceManager(object):
     self._on_policy_counts = collections.defaultdict(
       lambda : collections.defaultdict(int))
     self._on_policy_count_dict_lock = threading.Lock()
+
+    # Extrinsic reward function
+    self._hash2reward = {}
+    self._hash2discount = {}
     
     # src goal hash -> dest goal hash -> value
     self._value_matrix = collections.defaultdict(
@@ -102,12 +106,22 @@ class GoalSpaceManager(object):
   def get_value_dict(self) -> dict:
     """Convert to regular dict because courier cannot handle fancy dicts."""
     return self._default_dict_to_dict(self._value_matrix)
+  
+  def get_extrinsic_reward_dicts(self) -> Tuple[Dict, Dict]:
+    return self._hash2reward, self._hash2discount
     
-  def update(self, hash2obs: Dict, hash2count: Dict, edge2count: Dict):
+  def update(
+    self,
+    hash2obs: Dict,
+    hash2count: Dict,
+    edge2count: Dict,
+    hash2discount: Dict
+  ):
     """Update based on goals achieved by the different actors."""
     self._update_obs_dict(hash2obs)
     self._update_count_dict(hash2count)
     self._update_on_policy_count_dict(edge2count)
+    self._hash2discount.update(hash2discount)
     
   def _update_count_dict(self, hash2count: Dict):
     with self._count_dict_lock:
@@ -118,6 +132,7 @@ class GoalSpaceManager(object):
     for goal in hash2obs:
       oarg = self._construct_oarg(*hash2obs[goal], goal)
       self._hash2obs[goal] = oarg
+      self._hash2reward[goal] = oarg.reward
         
   def _update_on_policy_count_dict(self, hash2count: Dict):
     with self._on_policy_count_dict_lock:
@@ -125,7 +140,7 @@ class GoalSpaceManager(object):
         src, dest = key
         self._on_policy_counts[src][dest] += hash2count[key]
   
-  def _construct_oarg(self, obs, action, reward, goal_features):
+  def _construct_oarg(self, obs, action, reward, goal_features) -> OARG:
     """Convert the obs, action, etc from the GSM into an OARG object.
 
     Args:
