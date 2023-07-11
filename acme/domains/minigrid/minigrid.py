@@ -43,6 +43,7 @@ class MinigridInfoWrapper(Wrapper):
     info['truncated'] = truncated
     info['terminated'] = terminated
     info['needs_reset'] = truncated  # pfrl needs this flag
+    info['TimeLimit.truncated'] = truncated  # acme needs this flag
     info['timestep'] = self._timestep # total number of timesteps in env
     info['has_key'] = self.env.unwrapped.carrying is not None
     if info['has_key']:
