@@ -1,3 +1,8 @@
+import dm_env
+import dataclasses
+
+from typing import Tuple
+
 from collections import defaultdict
 
 
@@ -7,6 +12,17 @@ def defaultify(d):
   for key1 in d:
     dd[key1] = defaultdict(lambda: 1, d[key1])
   return dd
+
+
+@dataclasses.dataclass
+class GoalBasedTransition:
+  """Struct for keeping track of transitions during an episode."""
+  ts: dm_env.TimeStep
+  action: int
+  reward: float  # extrinsic reward
+  discount: float  # whether next_ts is a terminal state
+  next_ts: dm_env.TimeStep
+  pursued_goal: Tuple
 
 
 if __name__ == '__main__':
