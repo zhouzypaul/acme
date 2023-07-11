@@ -31,6 +31,8 @@ class GoalSampler:
     self.value_dict = {}
     self.goal_dict = {}
     self.count_dict = {}
+    self.reward_dict = {}
+    self.discount_dict = {}
     self.on_policy_edge_count_dict = {}
     
     self._n_courier_errors = 0
@@ -45,6 +47,9 @@ class GoalSampler:
         self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
         self.on_policy_edge_count_dict = copy.deepcopy(
           self._goal_space_manager.get_on_policy_count_dict())
+        extrinsics = self._goal_space_manager.get_extrinsic_reward_dicts()
+        self.reward_dict = copy.deepcopy(extrinsics[0])
+        self.discount_dict = copy.deepcopy(extrinsics[1])
         print('[GoalSampler] Updated all GSM Dicts successfully.')
       except Exception as e:  # If error, keep the old stale copy of the dicts
         self._n_courier_errors += 1
@@ -56,18 +61,16 @@ class GoalSampler:
     print(f'[GoalSampler] Took {time.time() - t0}s to update GSM dicts.')
     
     if self._sampling_method == 'amdp':
-      # TODO(ab): maintain reward_dict in GSM
-      reward_dict = {node: 0. for node in self.value_dict}
-      discount_dict = {node: 1 for node in self.value_dict}  # TODO(ab)
       goal_dict = self.get_candidate_goals(timestep)
       if len(goal_dict) > 1 and len(self.value_dict) > 1:
         target_node = self.select_expansion_node(
-          timestep, goal_dict, method='random')
+          timestep, goal_dict, method='novelty')
         print(f'[GoalSampler] Target Node = {target_node}')
         t0 = time.time()
         self._amdp = AMDP(
           value_dict=self.value_dict,
-          reward_dict=reward_dict,
+          reward_dict=self.reward_dict,
+          discount_dict=self.discount_dict,
           target_node=target_node,
           count_dict=self.on_policy_edge_count_dict)
         print(f'[GoalSampler] Took {time.time() - t0}s to create & solve AMDP.')
@@ -148,11 +151,10 @@ class GoalSampler:
       potential_goals = list(goal_dict.keys())
       return random.choice(potential_goals)
     if method == 'novelty':
-      potential_goals = list(goal_dict.keys())
-      scores = np.asarray(
-        [1. / np.sqrt(self.count_dict[g] + 1e-3) for g in potential_goals]
-      )
+      goals = list(goal_dict.keys())
+      scores = [1. / np.sqrt(self.count_dict[g] + 1) for g in goals]
+      scores = np.asarray(scores)
       probs = scores / scores.sum()
-      idx = np.random.choice(range(len(potential_goals)), p=probs)
-      return potential_goals[idx]
+      idx = np.random.choice(range(len(goals)), p=probs)
+      return goals[idx]
     raise NotImplementedError(method)
