@@ -26,6 +26,7 @@ from acme.utils import signals
 from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2.gsm import GoalSpaceManager
 from acme.goal_sampler import GoalSampler
+from acme.utils.utils import GoalBasedTransition
 
 import dm_env
 from dm_env import specs
@@ -386,7 +387,7 @@ class EnvironmentLoop(core.Worker):
     """
     reached = False
     needs_reset = False
-    trajectory = []
+    trajectory: List[GoalBasedTransition] = []
     
     timestep = self.augment_ts_with_goal(
       timestep,
@@ -416,12 +417,22 @@ class EnvironmentLoop(core.Worker):
       episode_logs['env_step_durations'].append(time.time() - env_step_start)
       
       needs_reset = next_timestep.last()  # timeout or terminal state
+
+      # Save terminal states for transmitting to GSM later.
+      extrinsic_reward = next_timestep.reward.copy()
+      extrinsic_discount = next_timestep.discount.copy()
       
       # Augment the ts with the current goal being pursued
       next_timestep = self.augment_ts_with_goal(next_timestep, goal, 'concat')
       
-      trajectory.append((
-        timestep, action, next_timestep, goal
+      trajectory.append(
+        GoalBasedTransition(
+          ts=timestep,
+          action=action,
+          reward=extrinsic_reward,
+          discount=extrinsic_discount,
+          next_ts=next_timestep,
+          pursued_goal=goal
       ))
 
       # Have the agent and observers observe the timestep.
@@ -455,7 +466,11 @@ class EnvironmentLoop(core.Worker):
 
     return timestep, needs_reset, episode_logs
   
-  def stream_achieved_goals_to_gsm(self, trajectory: List, attempted_edges: List) -> None:
+  def stream_achieved_goals_to_gsm(
+    self,
+    trajectory: List[GoalBasedTransition],
+    attempted_edges: List[Tuple[OARG, OARG]]
+  ):
     """Send the goals achieved during the episode to the GSM."""
     def obs2key(obs: OARG) -> Tuple:
       return tuple([int(g) for g in obs.goals])
@@ -466,21 +481,26 @@ class EnvironmentLoop(core.Worker):
     
     def extract_counts() -> Dict:
       """Return a dictionary mapping goal to visit count in episode."""
-      achieved_goals = [get_key(trans[-2]) for trans in trajectory]
+      achieved_goals = [get_key(trans.next_ts) for trans in trajectory]
       return dict(collections.Counter(achieved_goals))
     
     def attempted2counts() -> Dict:
       attempted_hashes = [(obs2key(x), obs2key(y)) for x, y in attempted_edges]
       return dict(collections.Counter(attempted_hashes))
     
+    def extract_discounts() -> Dict:
+      """Terminal states in the MDP have a discount of 0."""
+      return {get_key(trans.next_ts): trans.discount.item() for trans in trajectory}
+    
     def extract_goal_to_obs() -> Dict:
       """Return a dictionary mapping goal hash to the OAR when goal was achieved."""
       return {
-        get_key(transition[-2]): 
+        get_key(transition.next_ts): 
         # We convert to jnp b/c courier cannot handle np arrays
-        (jnp.asarray(transition[-2].observation.observation[:, :, :3]),
-         int(transition[-2].observation.action),
-         float(transition[-2].observation.reward)  # TODO(ab): is this the correct reward?
+        # TODO(ab): This assumes that the 1st 3 channels are the obs
+        (jnp.asarray(transition.next_ts.observation.observation[:, :, :3]),
+         int(transition.next_ts.observation.action),
+         float(transition.reward.item())  # TODO(ab): is this the correct reward?
         ) 
         for transition in trajectory
       }
@@ -488,12 +508,15 @@ class EnvironmentLoop(core.Worker):
     hash2count = extract_counts()
     hash2obs = extract_goal_to_obs()
     edge2count = attempted2counts()
+    hash2discount = extract_discounts()
 
     # futures allows us to update() asynchronously
-    self._goal_space_manager.futures.update(hash2obs, hash2count, edge2count)
+    self._goal_space_manager.futures.update(
+      hash2obs, hash2count, edge2count, hash2discount
+    )
   
   def replay_trajectory_with_new_goal(
-    self, trajectory: List, hindsight_goal: OARG):
+    self, trajectory: List[GoalBasedTransition], hindsight_goal: OARG):
     """Replay the same trajectory with a goal achieved in hindsight.
 
     Args:
@@ -518,7 +541,7 @@ class EnvironmentLoop(core.Worker):
       
       return ts._replace(discount=discount, step_type=step_type)
       
-    ts0 = trajectory[0][0]
+    ts0 = trajectory[0].ts
     augmented_ts0 = self.augment_ts_with_goal(ts0, hindsight_goal, 'relabel')
     
     # terminate early if the 1st transition achieves the goal
@@ -527,22 +550,22 @@ class EnvironmentLoop(core.Worker):
     
     self._actor.observe_first(augmented_ts0._replace(step_type=dm_env.StepType.FIRST))
     
-    for i, (ts, action, next_ts, pursued_goal) in enumerate(trajectory):
-      augmented_ts = self.augment_ts_with_goal(ts, hindsight_goal, 'relabel')
+    for i, transition in enumerate(trajectory):
+      augmented_ts = self.augment_ts_with_goal(transition.ts, hindsight_goal, 'relabel')
       hindsight_action = self._actor.select_action(augmented_ts.observation)  # updates h_t
-      augmented_next_ts = self.augment_ts_with_goal(next_ts, hindsight_goal, 'relabel')
-      reached = self.goal_reward_func(next_ts.observation, hindsight_goal)[0]
+      augmented_next_ts = self.augment_ts_with_goal(transition.next_ts, hindsight_goal, 'relabel')
+      reached = self.goal_reward_func(transition.next_ts.observation, hindsight_goal)[0]
       
       if reached:
-        self._actor.observe(action, termination(augmented_next_ts))
+        self._actor.observe(transition.action, termination(augmented_next_ts))
         break
       elif i == len(trajectory) - 1:
-        self._actor.observe(action, truncation(augmented_next_ts))
+        self._actor.observe(transition.action, truncation(augmented_next_ts))
       else:
-        self._actor.observe(action, continuation(augmented_next_ts))
+        self._actor.observe(transition.action, continuation(augmented_next_ts))
       
   def hingsight_experience_replay(
-    self, start_state: OARG, trajectory: List):
+    self, start_state: OARG, trajectory: List[GoalBasedTransition]):
     """Learn about goal(s) achieved when following a diff goal."""
     def pick_hindsight_goal(traj: List[dm_env.TimeStep]) -> OARG:
       start_idx = len(traj) // 2
@@ -553,10 +576,11 @@ class EnvironmentLoop(core.Worker):
     
     def get_achieved_goals() -> List[dm_env.TimeStep]:
       """Filter out goals that are satisfied at s_t."""
-      feasible_goals = []
-      for _, _, ts, _ in trajectory:
-        if not self.goal_reward_func(start_state, ts.observation)[0]:
-          feasible_goals.append(ts)
+      feasible_goals: List[dm_env.TimeStep] = []
+      for transition in trajectory:
+        if not self.goal_reward_func(
+          start_state, transition.next_ts.observation)[0]:
+          feasible_goals.append(transition.next_ts)
       return feasible_goals
     
     filtered_trajectory = get_achieved_goals()
