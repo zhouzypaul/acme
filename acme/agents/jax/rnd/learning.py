@@ -120,14 +120,17 @@ def rnd_loss(
   Returns:
     The MSE loss as a float.
   """
+
   safe_observation_var = jnp.maximum(observation_var, 1e-6)
-  whitened_observation = (transitions.observation - observation_mean) / jnp.sqrt(safe_observation_var) # really should be sqrt of this...
+  # We're going to normalize by std because its obviously right
+  whitened_observation = (transitions.observation - observation_mean) / jnp.sqrt(safe_observation_var)
+  whitened_clipped_observation = jnp.clip(whitened_observation, -5., 5.)
 
   target_output = networks.target.apply(target_params,
-                                        whitened_observation,
+                                        whitened_clipped_observation,
                                         transitions.action)
   predictor_output = networks.predictor.apply(predictor_params,
-                                              whitened_observation,
+                                              whitened_clipped_observation,
                                               transitions.action)
   return jnp.mean(jnp.square(target_output - predictor_output))
 
@@ -195,6 +198,13 @@ class RNDLearner(acme.Learner):
     self._update_obs_and_reward_norm = jax.jit(
       self._update_obs_and_reward_norm_prejit)
 
+    # There's some logic to breaking it up like this so the first batch is normalized, etc.
+    # We don't do it yet but its a possibility for later.
+    self._update_obs_norm_and_count = jax.jit(
+      self._update_obs_norm_and_count_prejit)
+    self._update_reward_norm = jax.jit(
+      self._update_reward_norm_prejit)
+
     # Generator expression that works the same as an iterator.
     # https://pymbook.readthedocs.io/en/latest/igd.html#generator-expressions
     updated_iterator = (self._process_sample(sample) for sample in iterator)
@@ -210,6 +220,57 @@ class RNDLearner(acme.Learner):
     # set weightings
     self.intrinsic_reward_coefficient = intrinsic_reward_coefficient
     self.extrinsic_reward_coefficient = extrinsic_reward_coefficient
+
+  def _update_obs_norm_and_count_prejit(self, state, transitions) -> RNDTrainingState:
+    num_transitions = jnp.prod(jnp.array(transitions.observation.shape[3:]))
+    new_states_updated_on = state.states_updated_on + num_transitions
+    delta_observation_entries = (transitions.observation - state.observation_mean)
+    new_observation_mean = state.observation_mean + (num_transitions * delta_observation_entries.mean(axis=(0,1,2)) / new_states_updated_on)
+    delta_observation_squared_entries = (transitions.observation**2 - state.observation_squared_mean)
+    new_observation_squared_mean = state.observation_squared_mean + (num_transitions*delta_observation_squared_entries.mean(axis=(0,1,2)) / new_states_updated_on)
+    new_observation_var = new_observation_squared_mean - new_observation_mean**2
+
+    new_state = RNDTrainingState(
+        optimizer_state=state.optimizer_state,
+        params=state.params,
+        target_params=state.target_params,
+        steps=state.steps,
+        reward_mean=state.reward_mean,
+        reward_var=state.reward_var,
+        reward_squared_mean=state.reward_squared_mean,
+        observation_mean=new_observation_mean,
+        observation_var=new_observation_var,
+        observation_squared_mean=new_observation_squared_mean,
+        states_updated_on=new_states_updated_on,
+    )
+
+    return new_state
+  
+  def _update_reward_norm_prejit(self, state, unscaled_intrinsic_reward) -> RNDTrainingState:
+    num_transitions = jnp.prod(jnp.array(unscaled_intrinsic_reward.shape))
+    # new_states_updated_on = state.states_updated_on + num_transitions # This has already been done
+    delta_reward_entries = (unscaled_intrinsic_reward - state.reward_mean)
+    delta_reward = delta_reward_entries.mean()
+    new_reward_mean = state.reward_mean + (num_transitions * delta_reward / state.states_updated_on)
+    delta_reward_squared_entries = (unscaled_intrinsic_reward**2 - state.reward_squared_mean)
+    new_reward_squared_mean = state.reward_squared_mean + (num_transitions*delta_reward_squared_entries.mean() / state.states_updated_on)
+    new_reward_var = new_reward_squared_mean - new_reward_mean**2
+
+    new_state = RNDTrainingState(
+        optimizer_state=state.optimizer_state,
+        params=state.params,
+        target_params=state.target_params,
+        steps=state.steps,
+        reward_mean=new_reward_mean,
+        reward_var=new_reward_var,
+        reward_squared_mean=new_reward_squared_mean,
+        observation_mean=state.observation_mean,
+        observation_var=state.observation_var,
+        observation_squared_mean=state.observation_squared_mean,
+        states_updated_on=state.states_updated_on,
+    )
+
+    return new_state
 
   def _update_obs_and_reward_norm_prejit(self, state, transitions, unscaled_intrinsic_reward) -> RNDTrainingState:
 
@@ -235,10 +296,10 @@ class RNDLearner(acme.Learner):
     new_observation_var = new_observation_squared_mean - new_observation_mean**2
 
     new_state = RNDTrainingState(
-        optimizer_state=self._state.optimizer_state,
-        params=self._state.params,
-        target_params=self._state.target_params,
-        steps=self._state.steps,
+        optimizer_state=state.optimizer_state,
+        params=state.params,
+        target_params=state.target_params,
+        steps=state.steps,
         reward_mean=new_reward_mean,
         reward_var=new_reward_var,
         reward_squared_mean=new_reward_squared_mean,
@@ -273,18 +334,35 @@ class RNDLearner(acme.Learner):
     if hasattr(transitions.observation, 'observation'):
       transitions = transitions.observation # its already an OAR.
 
+    # Update obs norm before doing grads
+    # self._state = self._update_obs_norm_and_count(self._state, transitions)
+
+    # Ideally we do a decent number of steps before starting this part, so that normalization is correct. We could skip reward for a bit as well.
     self._state, metrics = self._update(self._state, transitions)
     # combined inrtinsic extrinsic
     unscaled_intrinsic_rewards = self._get_unscaled_intrinsic_reward(self._state.params, self._state.target_params,
                                transitions,
                                observation_mean=self._state.observation_mean, observation_var=self._state.observation_var)
 
+    # Update reward norm before scaling rewards
+    # self._state = self._update_reward_norm(self._state, unscaled_intrinsic_rewards)
 
-    normalized_intrinsic_rewards = (unscaled_intrinsic_rewards - self._state.reward_mean) / self._state.reward_var
+    # Not using safe reward_var because it'll never drop to zero, but can be very small sometimes.
+    normalized_intrinsic_rewards = (unscaled_intrinsic_rewards - self._state.reward_mean) / jnp.sqrt(self._state.reward_var) # doing sqrt because it seems more reasonable, and that's what paper says
 
     combined_rewards = normalized_intrinsic_rewards * self.intrinsic_reward_coefficient + transitions.reward * self.extrinsic_reward_coefficient
 
+    rewards_logging_dict = {
+      'unscaled_rnd_batch_mean': unscaled_intrinsic_rewards.mean().item(),
+      'normalized_rnd_batch_mean': normalized_intrinsic_rewards.mean().item(),
+      'unscaled_rnd_batch_var': unscaled_intrinsic_rewards.var().item(),
+      'normalized_rnd_batch_var': normalized_intrinsic_rewards.var().item(),
+    }
 
+    # Update of rewards has to happen after calculated, but maybe observation can happen before.
+    # Possibly we should have a bleed in time as well. Definitely.
+    # Just going to do them at the same time because that's how it used to be,
+    # and it doesn't seem like it should matter after a certain point.
     self._state = self._update_obs_and_reward_norm(self._state, transitions, unscaled_intrinsic_rewards)
 
     # Compute elapsed time.
@@ -296,7 +374,7 @@ class RNDLearner(acme.Learner):
     counts = self._counter.increment(steps=1, walltime=elapsed_time)
 
     # Attempts to write the logs.
-    self._logger.write({**metrics, **counts})
+    self._logger.write({**metrics, **counts, **rewards_logging_dict})
 
     # sample = sample._replace(data=sample.data._replace(reward=rewards))
     sample = sample._replace(data=sample.data._replace(reward=combined_rewards))

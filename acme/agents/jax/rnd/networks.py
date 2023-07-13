@@ -157,13 +157,13 @@ def compute_rnd_reward(predictor_params: networks_lib.Params,
     The rewards as an ndarray.
   """
   safe_observation_var = jnp.maximum(observation_var, 1e-6)
-  whitened_observation = (transitions.observation - observation_mean) / jnp.sqrt(safe_observation_var) # really should be sqrt of this...
-  # though BBE doesn't
+  whitened_observation = (transitions.observation - observation_mean) / jnp.sqrt(safe_observation_var) # sqrt not var...
+  whitened_clipped_observation = jnp.clip(whitened_observation, -5., 5.)
 
-  target_output = networks.target.apply(target_params, whitened_observation,
+  target_output = networks.target.apply(target_params, whitened_clipped_observation,
                                         transitions.action)
   predictor_output = networks.predictor.apply(predictor_params,
-                                              whitened_observation,
+                                              whitened_clipped_observation,
                                               transitions.action)
   return networks.get_reward(predictor_output, target_output,
                              transitions.reward)
