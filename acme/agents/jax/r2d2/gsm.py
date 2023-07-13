@@ -61,7 +61,8 @@ class GoalSpaceManager(object):
       
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
-    reached = (current.goals == goal.goals).all()
+    dims = np.where(goal.goals >= 0)
+    reached = (current.goals[dims] == goal.goals[dims]).all()
     return reached, float(reached)
       
   def obs_augment_fn(
@@ -240,4 +241,6 @@ class GoalSpaceManager(object):
           self._save_value_dict(iteration)
 
         if len(src_dest_pairs) > 1000:
-          pprint.pprint(self._value_matrix[(8, 16)])
+          # start_state_features = (1, 5, 0, 0)  # TODO(ab): get from env and pass around
+          start_state_features = (2, 10, 0, 0)
+          pprint.pprint(self._value_matrix[start_state_features])
