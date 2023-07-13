@@ -77,7 +77,8 @@ class GoalSampler:
     
   def get_candidate_goals(self, timestep: dm_env.TimeStep) -> dict:
     """Get the possible goals to pursue at the current state."""
-    at_goal = lambda g: (timestep.observation.goals == g).all()
+    # at_goal = lambda g: (timestep.observation.goals == g).all()
+    at_goal = lambda g: all([g1 == g2 for g1, g2 in zip(timestep.observation.goals, g) if g2 >= 0])
     return {goal: oar for (goal, oar) in self.goal_dict.items() if not at_goal(goal)}
     
   def __call__(self, timestep: dm_env.TimeStep) -> OARG:
