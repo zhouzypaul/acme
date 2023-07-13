@@ -48,7 +48,8 @@ class MinigridInfoWrapper(Wrapper):
     info['has_key'] = self.env.unwrapped.carrying is not None
     if info['has_key']:
       assert self.unwrapped.carrying.type == 'key', self.env.unwrapped.carrying
-    info['door_open'] = determine_is_door_open(self)
+    door_open = determine_is_door_open(self)
+    info['door_open'] = door_open is not None and door_open
     return info
 
 
@@ -190,11 +191,16 @@ def determine_is_door_open(env):
 
 
 def info2goals(info):
-  return np.array([info['player_x'], info['player_y']], dtype=np.int16)
+  return np.array([
+    info['player_x'],
+    info['player_y'],
+    info['has_key'],
+    info['door_open']
+    ], dtype=np.int16)
 
 
 def environment_builder(
-  level_name='MiniGrid-Empty-16x16-v0',
+  level_name='MiniGrid-Empty-16x16-v0',  # MiniGrid-DoorKey-16x16-v0
   reward_fn='sparse',
   add_count_based_bonus=True,
   exploration_reward_scale=0,
@@ -207,7 +213,9 @@ def environment_builder(
     env = gym.make(level_name, max_steps=max_steps)  #, goal_pos=(11, 11))
   else:
     env = gym.make(level_name)
-  env = ReseedWrapper(env, seeds=[seed])  # To fix the start-goal config
+  
+  # To fix the start-goal config across episodes
+  env = ReseedWrapper(env, seeds=[seed])
   env = RGBImgObsWrapper(env) # Get pixel observations
 
   env = ImgObsWrapper(env) # Get rid of the 'mission' field
@@ -228,7 +236,13 @@ def environment_builder(
   # Convert the gym environment to a dm_env
   env = GymnasiumWrapper(env)
   goal_pos = determine_goal_pos(env)
-  print(f'[MiniGrid-Environment] GoalPos: {goal_pos}')
+  n_goal_dims = 4
+  n_padding_dims = n_goal_dims - len(goal_pos)
+  task_goal_features = np.concatenate((
+    goal_pos,
+    # NOTE: -1 features mean that they don't matter
+    -np.ones((n_padding_dims,), dtype=np.int16)))
+  print(f'[MiniGrid-Environment] GoalFeatures: {task_goal_features}')
   
   env = MiniGridWrapper(
     env,
@@ -239,10 +253,18 @@ def environment_builder(
     pooled_frames=1,
     to_float=True,
     goal_conditioned=goal_conditioned,
-    task_goal_features=goal_pos
+    task_goal_features=task_goal_features
   )
   
   # Use the OARG Wrapper
-  env = ObservationActionRewardGoalWrapper(env, info2goals, n_goal_dims=2)
-  # env = ObservationActionRewardWrapper(env)
+  env = ObservationActionRewardGoalWrapper(
+    env,
+    info2goals,
+    n_goal_dims=n_goal_dims
+  )
+
+  ts0 = env.reset()
+  print(env.environment.env)
+  print(f's0 = {ts0.observation.goals}')
+
   return env
