@@ -94,6 +94,8 @@ class RNDBuilder(Generic[rnd_networks.DirectRLNetworks, Policy],
         is_sequence_based=self._config.is_sequence_based,
         grad_updates_per_batch=self._config.num_sgd_steps_per_step,
         counter=counter,
+        intrinsic_reward_coefficient=self._config.intrinsic_reward_coefficient,
+        extrinsic_reward_coefficient=self._config.extrinsic_reward_coefficient,
         logger=logger_fn('learner'))
 
   def make_replay_tables(

@@ -28,3 +28,6 @@ class RNDConfig:
 
   # How many gradient updates to perform per step.
   num_sgd_steps_per_step: int = 1
+
+  intrinsic_reward_coefficient: float = 0.001
+  extrinsic_reward_coefficient: float = 1.0

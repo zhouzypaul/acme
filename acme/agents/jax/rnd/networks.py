@@ -75,6 +75,9 @@ def make_networks(
     The RND networks.
   """
 
+  assert intrinsic_reward_coefficient == 1.0, 'we do scaling elsewhere'
+  assert extrinsic_reward_coefficient == 0.0, 'we do scaling elsewhere'
+
   def _rnd_fn(obs, act):
     # RND does not use the action but other variants like RED do.
     del act
@@ -139,7 +142,9 @@ def make_networks(
 def compute_rnd_reward(predictor_params: networks_lib.Params,
                        target_params: networks_lib.Params,
                        transitions: types.Transition,
-                       networks: RNDNetworks) -> jnp.ndarray:
+                       networks: RNDNetworks,
+                       observation_mean: jnp.ndarray,
+                       observation_var: jnp.ndarray) -> jnp.ndarray:
   """Computes the intrinsic RND reward for a given transition.
 
   Args:
@@ -151,10 +156,14 @@ def compute_rnd_reward(predictor_params: networks_lib.Params,
   Returns:
     The rewards as an ndarray.
   """
-  target_output = networks.target.apply(target_params, transitions.observation,
+  safe_observation_var = jnp.maximum(observation_var, 1e-6)
+  whitened_observation = (transitions.observation - observation_mean) / jnp.sqrt(safe_observation_var) # really should be sqrt of this...
+  # though BBE doesn't
+
+  target_output = networks.target.apply(target_params, whitened_observation,
                                         transitions.action)
   predictor_output = networks.predictor.apply(predictor_params,
-                                              transitions.observation,
+                                              whitened_observation,
                                               transitions.action)
   return networks.get_reward(predictor_output, target_output,
                              transitions.reward)

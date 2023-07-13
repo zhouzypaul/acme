@@ -39,6 +39,13 @@ class RNDTrainingState(NamedTuple):
   params: networks_lib.Params
   target_params: networks_lib.Params
   steps: int
+  reward_mean: float
+  reward_var: float
+  reward_squared_mean: float
+  observation_mean: jnp.ndarray
+  observation_var: jnp.ndarray
+  observation_squared_mean: jnp.ndarray
+  states_updated_on: int
 
 
 class GlobalTrainingState(NamedTuple):
@@ -69,7 +76,9 @@ def rnd_update_step(
   loss, grads = jax.value_and_grad(loss_fn)(
       state.params,
       state.target_params,
-      transitions=transitions)
+      transitions=transitions,
+      observation_mean=state.observation_mean,
+      observation_var=state.observation_var,)
 
   update, optimizer_state = optimizer.update(grads, state.optimizer_state)
   params = optax.apply_updates(state.params, update)
@@ -79,8 +88,15 @@ def rnd_update_step(
       params=params,
       target_params=state.target_params,
       steps=state.steps + 1,
+      reward_mean=state.reward_mean,
+      reward_var=state.reward_var,
+      reward_squared_mean=state.reward_squared_mean,
+      observation_mean=state.observation_mean,
+      observation_var=state.observation_var,
+      observation_squared_mean=state.observation_squared_mean,
+      states_updated_on=state.states_updated_on,
   )
-  return new_state, {'rnd_loss': loss}
+  return new_state, {'rnd_loss': loss, 'rnd_reward_mean': state.reward_mean, 'rnd_reward_var': state.reward_var}
 
 
 def rnd_loss(
@@ -88,6 +104,8 @@ def rnd_loss(
     target_params: networks_lib.Params,
     transitions: types.Transition,
     networks: rnd_networks.RNDNetworks,
+    observation_mean: jnp.ndarray,
+    observation_var: jnp.ndarray,
 ) -> float:
   """The Random Network Distillation loss.
 
@@ -102,11 +120,14 @@ def rnd_loss(
   Returns:
     The MSE loss as a float.
   """
+  safe_observation_var = jnp.maximum(observation_var, 1e-6)
+  whitened_observation = (transitions.observation - observation_mean) / jnp.sqrt(safe_observation_var) # really should be sqrt of this...
+
   target_output = networks.target.apply(target_params,
-                                        transitions.observation,
+                                        whitened_observation,
                                         transitions.action)
   predictor_output = networks.predictor.apply(predictor_params,
-                                              transitions.observation,
+                                              whitened_observation,
                                               transitions.action)
   return jnp.mean(jnp.square(target_output - predictor_output))
 
@@ -125,7 +146,10 @@ class RNDLearner(acme.Learner):
       grad_updates_per_batch: int,
       is_sequence_based: bool,
       counter: Optional[counting.Counter] = None,
-      logger: Optional[loggers.Logger] = None):
+      logger: Optional[loggers.Logger] = None,
+      intrinsic_reward_coefficient=0.001,
+      extrinsic_reward_coefficient=1.0):
+
     self._is_sequence_based = is_sequence_based
 
     target_key, predictor_key = jax.random.split(rng_key)
@@ -137,7 +161,15 @@ class RNDLearner(acme.Learner):
         optimizer_state=optimizer_state,
         params=predictor_params,
         target_params=target_params,
-        steps=0)
+        steps=0,
+        reward_mean=0,
+        reward_var=1,
+        reward_squared_mean=0,
+        observation_mean=0,
+        observation_var=1,
+        observation_squared_mean=0,
+        states_updated_on=0,
+        )
 
     # General learner book-keeping and loggers.
     self._counter = counter or counting.Counter()
@@ -155,9 +187,13 @@ class RNDLearner(acme.Learner):
                                                   grad_updates_per_batch)
     self._update = jax.jit(self._update)
 
-    self._get_reward = jax.jit(
+    # self._get_reward = jax.jit(
+    self._get_unscaled_intrinsic_reward = jax.jit(
         functools.partial(
             rnd_networks.compute_rnd_reward, networks=rnd_network))
+
+    self._update_obs_and_reward_norm = jax.jit(
+      self._update_obs_and_reward_norm_prejit)
 
     # Generator expression that works the same as an iterator.
     # https://pymbook.readthedocs.io/en/latest/igd.html#generator-expressions
@@ -170,6 +206,50 @@ class RNDLearner(acme.Learner):
     # This is to avoid including the time it takes for actors to come online and
     # fill the replay buffer.
     self._timestamp = None
+
+    # set weightings
+    self.intrinsic_reward_coefficient = intrinsic_reward_coefficient
+    self.extrinsic_reward_coefficient = extrinsic_reward_coefficient
+
+  def _update_obs_and_reward_norm_prejit(self, state, transitions, unscaled_intrinsic_reward) -> RNDTrainingState:
+
+    # Updates reward_norm
+    num_transitions = jnp.prod(jnp.array(unscaled_intrinsic_reward.shape))
+    new_states_updated_on = state.states_updated_on + num_transitions
+    delta_reward_entries = (unscaled_intrinsic_reward - state.reward_mean)
+    delta_reward = delta_reward_entries.mean()
+    new_reward_mean = state.reward_mean + (num_transitions * delta_reward / new_states_updated_on)
+    delta_reward_squared_entries = (unscaled_intrinsic_reward**2 - state.reward_squared_mean)
+    new_reward_squared_mean = state.reward_squared_mean + (num_transitions*delta_reward_squared_entries.mean() / new_states_updated_on)
+    new_reward_var = new_reward_squared_mean - new_reward_mean**2
+
+    # For now lets not do obs norm. I'll need access to the shape maybe?
+    # I don't know, I'll at least need to know which are the batch elements.
+    # shape is (1, batch_size, 49, 84, 84, 3). So, average over first 3.
+    # Should I broadcast manually or trust it to do it? Let's trust it.
+    assert len(transitions.observation.shape) == 6
+    delta_observation_entries = (transitions.observation - state.observation_mean)
+    new_observation_mean = state.observation_mean + (num_transitions * delta_observation_entries.mean(axis=(0,1,2)) / new_states_updated_on)
+    delta_observation_squared_entries = (transitions.observation**2 - state.observation_squared_mean)
+    new_observation_squared_mean = state.observation_squared_mean + (num_transitions*delta_observation_squared_entries.mean(axis=(0,1,2)) / new_states_updated_on)
+    new_observation_var = new_observation_squared_mean - new_observation_mean**2
+
+    new_state = RNDTrainingState(
+        optimizer_state=self._state.optimizer_state,
+        params=self._state.params,
+        target_params=self._state.target_params,
+        steps=self._state.steps,
+        reward_mean=new_reward_mean,
+        reward_var=new_reward_var,
+        reward_squared_mean=new_reward_squared_mean,
+        observation_mean=new_observation_mean,
+        observation_var=new_observation_var,
+        observation_squared_mean=new_observation_squared_mean,
+        states_updated_on=new_states_updated_on,
+    )
+
+    return new_state
+
 
   def _process_sample(self, sample: reverb.ReplaySample) -> reverb.ReplaySample:
     """Uses the replay sample to train and update its reward.
@@ -194,8 +274,18 @@ class RNDLearner(acme.Learner):
       transitions = transitions.observation # its already an OAR.
 
     self._state, metrics = self._update(self._state, transitions)
-    rewards = self._get_reward(self._state.params, self._state.target_params,
-                               transitions)
+    # combined inrtinsic extrinsic
+    unscaled_intrinsic_rewards = self._get_unscaled_intrinsic_reward(self._state.params, self._state.target_params,
+                               transitions,
+                               observation_mean=self._state.observation_mean, observation_var=self._state.observation_var)
+
+
+    normalized_intrinsic_rewards = (unscaled_intrinsic_rewards - self._state.reward_mean) / self._state.reward_var
+
+    combined_rewards = normalized_intrinsic_rewards * self.intrinsic_reward_coefficient + transitions.reward * self.extrinsic_reward_coefficient
+
+
+    self._state = self._update_obs_and_reward_norm(self._state, transitions, unscaled_intrinsic_rewards)
 
     # Compute elapsed time.
     timestamp = time.time()
@@ -208,7 +298,8 @@ class RNDLearner(acme.Learner):
     # Attempts to write the logs.
     self._logger.write({**metrics, **counts})
 
-    sample = sample._replace(data=sample.data._replace(reward=rewards))
+    # sample = sample._replace(data=sample.data._replace(reward=rewards))
+    sample = sample._replace(data=sample.data._replace(reward=combined_rewards))
     if is_prefetch:
       sample = PrefetchingSplit(device=sample, host=prefetch_split_sample.host) # its a NamedTuple
 

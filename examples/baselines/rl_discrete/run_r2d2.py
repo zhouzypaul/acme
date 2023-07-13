@@ -54,6 +54,9 @@ flags.DEFINE_boolean('use_rnd', False, 'Whether to use RND')
 flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
 flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay starts')
 
+flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 1.0, 'weight given to intrinsic reward for RND')
+flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 0.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
+
 FLAGS = flags.FLAGS
 
 def make_rnd_builder(r2d2_builder):
@@ -61,6 +64,8 @@ def make_rnd_builder(r2d2_builder):
     # import ipdb; ipdb.set_trace()
     rnd_config = rnd.RNDConfig(
         is_sequence_based=True, # Probably
+        intrinsic_reward_coefficient=FLAGS.rnd_intrinsic_reward_coefficient,
+        extrinsic_reward_coefficient=FLAGS.rnd_extrinsic_reward_coefficient,
     )
     logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
     builder = rnd.RNDBuilder(
@@ -123,6 +128,7 @@ def build_experiment_config():
   agent_builder = r2d2.R2D2Builder(config)
   if FLAGS.use_rnd:
     agent_builder = make_rnd_builder(agent_builder)
+
     def network_factory(env_spec):
       from acme.agents.jax import rnd
       r2d2_networks = r2d2.make_atari_networks(env_spec)
