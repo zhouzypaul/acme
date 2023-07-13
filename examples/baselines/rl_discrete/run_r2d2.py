@@ -56,6 +56,7 @@ flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay start
 
 flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 1.0, 'weight given to intrinsic reward for RND')
 flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 0.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
+flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
 
 FLAGS = flags.FLAGS
 
@@ -195,8 +196,7 @@ def main(_):
     lp.launch(program,
               xm_resources=lp_utils.make_xm_docker_resources(program),
               local_resources=local_resources,
-              # terminal="current_terminal")
-              terminal="tmux_session")
+              terminal=FLAGS.terminal)
   else:
     experiments.run_experiment(experiment=config)
   
