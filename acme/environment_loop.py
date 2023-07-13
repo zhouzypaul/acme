@@ -109,7 +109,8 @@ class EnvironmentLoop(core.Worker):
     
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
-    reached = (current.goals == goal.goals).all()
+    dims = np.where(goal.goals >= 0)
+    reached = (current.goals[dims] == goal.goals[dims]).all()
     return reached, float(reached)
     
   def select_goal(self, timestep, method='uniform') -> OARG:
@@ -592,7 +593,7 @@ class EnvironmentLoop(core.Worker):
       task_goal = self.task_goal
 
       if self._always_learn_about_task_goal and \
-        not (hindsight_goal.goals == task_goal.goals).all():
+        not self.goal_reward_func(hindsight_goal, task_goal)[0]:
         self.replay_trajectory_with_new_goal(trajectory, task_goal)
 
   def run(
