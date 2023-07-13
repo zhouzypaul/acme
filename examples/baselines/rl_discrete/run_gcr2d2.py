@@ -101,7 +101,11 @@ def _get_local_resources(launch_type):
        "inference_server":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
        "counter":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
        "replay":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-       "gsm": PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)})
+       "gsm": PythonProcess(env={
+         "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
+         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+         "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+        })
      }
    else:
      local_resources = {}
