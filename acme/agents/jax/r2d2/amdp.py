@@ -125,6 +125,21 @@ class AMDP:
 
     return transition_matrix
 
+  def _get_reward(self, node) -> float:
+    """Reward for reaching an abstract node."""
+    # value_dict and reward/discount dict can go out of sync.
+    if node == 'death' or node not in self._reward_dict:
+      return 0.
+    return self._reward_dict[node]
+  
+  def _get_discount(self, node) -> float:
+    """Discount corresponding to an abstract node."""
+    if node == 'death':
+      return 0.
+    if node not in self._discount_dict:
+      return 1.
+    return self._discount_dict[node]
+
   def _reward_func(
     self,
     target_node: Tuple[int, int],
@@ -146,15 +161,15 @@ class AMDP:
     for state in self._state_space:
       node = self._state_space[state]
       is_goal_node = node == target_node
-      rewards[state] = 0. if node == 'death' else self._reward_dict[node]
+      rewards[state] = self._get_reward(node)
       rewards[state] += (target_node_reward * int(is_goal_node))
 
       int_discount = int(not is_goal_node)
-      ext_discount = self._discount_dict[node] if node != 'death' else 0.
+      ext_discount = self._get_discount(node)
       discounts[state] = int_discount * ext_discount * self._gamma
 
-      if discounts[state] == 0:
-        print(f'[AMDP] State {node} has discount==0 & rew={rewards[state]}')
+      if discounts[state] == 0 or rewards[state] > 0:
+        print(f'[AMDP] State {node} has discount={discounts[state]} & rew={rewards[state]}')
 
     return rewards, discounts
 
