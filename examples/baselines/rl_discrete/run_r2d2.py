@@ -54,9 +54,13 @@ flags.DEFINE_boolean('use_rnd', False, 'Whether to use RND')
 flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
 flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay starts')
 
-flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 1.0, 'weight given to intrinsic reward for RND')
-flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 0.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
+flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
+flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
 flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
+flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')
+# These are different from paper to here, so will add as hypers
+flags.DEFINE_float('target_update_period', 1200, 'How often to update target network') # paper is 2500
+flags.DEFINE_float('variable_update_period', 100, 'How often to update actor variables') # paper is 400
 
 FLAGS = flags.FLAGS
 
@@ -108,9 +112,9 @@ def build_experiment_config():
       # samples_per_insert=1.0,
       samples_per_insert= FLAGS.spi,
       evaluation_epsilon=1e-3,
-      learning_rate=1e-4,
-      target_update_period=1200,
-      variable_update_period=100,
+      learning_rate=FLAGS.r2d2_learning_rate,
+      target_update_period=FLAGS.variable_update_period,
+      variable_update_period=FLAGS.variable_update_period,
       actor_jit=True,
       actor_backend=actor_backend,
   )
