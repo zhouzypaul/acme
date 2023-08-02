@@ -56,6 +56,7 @@ flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay start
 
 flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
 flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
+flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')
 flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
 flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')
 # These are different from paper to here, so will add as hypers
@@ -71,6 +72,7 @@ def make_rnd_builder(r2d2_builder):
         is_sequence_based=True, # Probably
         intrinsic_reward_coefficient=FLAGS.rnd_intrinsic_reward_coefficient,
         extrinsic_reward_coefficient=FLAGS.rnd_extrinsic_reward_coefficient,
+        predictor_learning_rate=FLAGS.rnd_learning_rate,
     )
     logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
     builder = rnd.RNDBuilder(
