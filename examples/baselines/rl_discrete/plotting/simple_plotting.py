@@ -42,7 +42,11 @@ def plot_all_learning_curves(id_to_csv):
     for acme_id, csv_path in id_to_csv.items():
         print(f"Plotting {acme_id}")
         df = pd.read_csv(csv_path)
-        steps = df['actor_steps']
+        try:
+            steps = df['actor_steps']
+        except:
+            print('failed for id', acme_id)
+            continue
         frames = 4 * steps
         returns = df['episode_return']
         
@@ -52,7 +56,7 @@ def plot_all_learning_curves(id_to_csv):
         returns = returns[returns.index % every_n == 0]
         
         plt.plot(frames, returns, label=acme_id)
-    plt.legend()
+    # plt.legend()
     plt.show()
     save_path = os.path.expanduser('~/acme/learning_curves.png')
     print(f"Saving to {save_path}")
