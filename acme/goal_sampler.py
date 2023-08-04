@@ -19,14 +19,18 @@ class GoalSampler:
                gsm: GoalSpaceManager,
                task_goal_probability: float,
                task_goal: OARG,
+               exploration_goal: OARG,
+               exploration_goal_probability: float = 0.1,
                method='amdp'):
-    assert method in ('task', 'amdp', 'uniform'), method
+    assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
     self._amdp = None
     self._goal_space_manager = gsm
     self._sampling_method = method
     self._task_goal = task_goal
+    self._exploration_goal = exploration_goal
     self._task_goal_probability = task_goal_probability
+    self._exploration_goal_probability = exploration_goal_probability
     
     self.value_dict = {}
     self.goal_dict = {}
@@ -74,6 +78,9 @@ class GoalSampler:
           target_node=target_node,
           count_dict=self.on_policy_edge_count_dict)
         print(f'[GoalSampler] Took {time.time() - t0}s to create & solve AMDP.')
+        goal_sequence = self._amdp.get_goal_sequence(
+          start_node=tuple(timestep.observation.goals), goal_node=target_node)
+        print(f'[GoalSampler] Goal Sequence: {goal_sequence}')
     
   def get_candidate_goals(self, timestep: dm_env.TimeStep) -> dict:
     """Get the possible goals to pursue at the current state."""
@@ -86,6 +93,10 @@ class GoalSampler:
     if self._sampling_method == 'task' or \
       random.random() < self._task_goal_probability:
       return self._task_goal
+    
+    if self._sampling_method == 'exploration' or \
+      random.random() < self._exploration_goal_probability:
+      return self._exploration_goal
       
     goal_hash = None
     goal_dict = self.get_candidate_goals(timestep)
