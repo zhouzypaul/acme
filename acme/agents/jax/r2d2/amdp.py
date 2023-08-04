@@ -4,7 +4,7 @@ import pickle
 import collections
 import numpy as np
 
-from typing import Tuple
+from typing import Tuple, List
 
 from acme.utils import utils
 
@@ -63,7 +63,20 @@ class AMDP:
   def print_abstract_policy(self):
     for key in self._reverse_state_space:
       print(f'Abstract Policy at {key}: {self.policy(key)}')
-      
+
+  def get_goal_sequence(
+    self, start_node: Tuple, goal_node: Tuple, max_len: int = 10
+  ) -> List[Tuple]:
+    """Get the sequence of subgoals from start -> goal."""
+    i = 0
+    current = start_node
+    path = [start_node]
+    while goal_node not in path and i < max_len:
+      current = self.policy(current)
+      path.append(current)
+      i += 1
+    return path
+
   def print_abstract_rf(self):
     for key in self._reverse_state_space:
       idx = self._reverse_state_space[key]
