@@ -292,7 +292,8 @@ def make_distributed_experiment(
         variable_source,
         key='actor_variables',
         update_period=400)
-    return GoalSpaceManager(rng_num, networks, variable_client)
+    env = experiment.environment_factory(rng_num)
+    return GoalSpaceManager(env, rng_num, networks, variable_client)
 
   if not program:
     program = lp.Program(name=name)
