@@ -16,6 +16,7 @@
 
 import operator
 import time
+import math
 from typing import List, Optional, Sequence, Tuple, Dict
 
 from acme import core
@@ -27,6 +28,7 @@ from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2.gsm import GoalSpaceManager
 from acme.goal_sampler import GoalSampler
 from acme.utils.utils import GoalBasedTransition
+from acme.utils.utils import termination, truncation, continuation
 
 import dm_env
 from dm_env import specs
@@ -74,7 +76,8 @@ class EnvironmentLoop(core.Worker):
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
       goal_space_manager: GoalSpaceManager = None,
       task_goal_probability: float = 0.1,
-      always_learn_about_task_goal: bool = False
+      always_learn_about_task_goal: bool = False,
+      always_learn_about_exploration_goal: bool = False
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -87,11 +90,17 @@ class EnvironmentLoop(core.Worker):
     self._goal_space_manager = goal_space_manager
     self._task_goal_probability = task_goal_probability
     self._always_learn_about_task_goal = always_learn_about_task_goal
+    self._always_learn_about_exploration_goal = always_learn_about_exploration_goal
 
     self._goal_sampler = GoalSampler(
-      goal_space_manager, task_goal_probability, self.task_goal,
+      goal_space_manager,
+      task_goal_probability,
+      self.task_goal,
+      self.exploration_goal,
       method='amdp' if self._goal_space_manager else 'task'
     )
+
+    self.count_dict = {}
 
     self._goal_achievement_rates = collections.defaultdict(float)
     self._goal_pursual_counts = collections.defaultdict(int)
@@ -106,21 +115,40 @@ class EnvironmentLoop(core.Worker):
       reward=np.zeros(obs.reward.shape, dtype=obs.reward.dtype),  # doesnt matter
       goals=np.asarray(self._environment.task_goal_features, dtype=obs.goals.dtype)
     )
+  
+  @property
+  def exploration_goal(self) -> OARG:
+    obs = self._environment.observation_spec()
+    obs_shape = (84, 84, 3)  # TODO(ab)
+    exploration_goal_feats = -1 * np.ones(
+      self._environment.task_goal_features.shape, dtype=obs.goals.dtype)
+    return OARG(
+      observation=np.ones(obs_shape, dtype=obs.observation.dtype),
+      action=np.zeros(obs.action.shape, dtype=obs.action.dtype),  # doesnt matter
+      reward=np.zeros(obs.reward.shape, dtype=obs.reward.dtype),  # doesnt matter
+      # TODO(ab): assign it a goal that is not achievable
+      goals=exploration_goal_feats
+    )
     
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
+
+    # Exploration mode
+    if (goal.goals == -1).all():
+      state_key = tuple(current.goals)
+      r_int = 1.
+      if state_key in self.count_dict:
+        count = self.count_dict[state_key]
+        r_int = 1. / math.sqrt(count) if count > 0 else 1.
+      return False, r_int
+    
     dims = np.where(goal.goals >= 0)
+
+    if np.any(current.goals == -1):
+      ipdb.set_trace()
+
     reached = (current.goals[dims] == goal.goals[dims]).all()
     return reached, float(reached)
-    
-  def select_goal(self, timestep, method='uniform') -> OARG:
-    """Select a goal to pursue in the upcoming episode."""
-
-    return GoalSampler(
-      self._goal_space_manager,
-      task_goal_features=self._environment.task_goal_features)(
-      timestep, method=method
-    )
 
   def augment_ts_with_goal(
     self, timestep: dm_env.TimeStep, goal: OARG, method: str
@@ -167,126 +195,6 @@ class EnvironmentLoop(core.Worker):
          goal[:, :, :n_goal_dims]), axis=-1)
     raise NotImplementedError(method)
 
-  def old_run_episode(self) -> loggers.LoggingData:
-    """Run one episode.
-
-    Each episode is a loop which interacts first with the environment to get an
-    observation and then give that observation to the agent in order to retrieve
-    an action.
-
-    Returns:
-      An instance of `loggers.LoggingData`.
-    """
-    # Reset any counts and start the environment.
-    episode_start_time = time.time()
-    select_action_durations: List[float] = []
-    env_step_durations: List[float] = []
-    episode_steps: int = 0
-    episode_trajectory : List = []
-
-    # For evaluation, this keeps track of the total undiscounted reward
-    # accumulated during the episode.
-    episode_return = tree.map_structure(_generate_zeros_from_spec,
-                                        self._environment.reward_spec())
-    # TODO(ab): only do this if we timed out, not if we achieved the goal
-    env_reset_start = time.time()
-    timestep = self._environment.reset()
-    env_reset_duration = time.time() - env_reset_start
-    
-    start_state = copy.deepcopy(timestep.observation)
-          
-    # Evaluator always picks task goal and actors do with some prob
-    goal = self.select_goal(
-      timestep,
-      method='task' if self._goal_space_manager is None or \
-        random.random() < self._task_goal_probability else 'amdp'
-    )
-    timestep = self.augment_ts_with_goal(timestep, goal, 'concat')
-    
-    # Make the first observation.
-    self._actor.observe_first(timestep)
-    for observer in self._observers:
-      # Initialize the observer with the current state of the env after reset
-      # and the initial timestep.
-      observer.observe_first(self._environment, timestep)
-      
-    print(f'V({timestep.observation.goals}, {goal.goals})={self._actor.get_value(timestep.observation)}')
-
-    # Run an episode; terminate on goal achievement or timeout
-    while not timestep.last():
-      # Book-keeping.
-      episode_steps += 1
-
-      # Generate an action from the agent's policy.
-      select_action_start = time.time()
-      action = self._actor.select_action(timestep.observation)
-      select_action_durations.append(time.time() - select_action_start)
-      
-      # print(f'V({timestep.observation.goals}, {goal.goals})={self._actor.get_value(timestep.observation)}')
-
-      # Step the environment with the agent's selected action.
-      env_step_start = time.time()
-      next_timestep = self._environment.step(action)
-      env_step_durations.append(time.time() - env_step_start)
-      
-      # Augment the ts with the current goal being pursued
-      next_timestep = self.augment_ts_with_goal(next_timestep, goal, 'concat')
-      
-      episode_trajectory.append((
-        timestep, action, next_timestep, goal
-      ))
-
-      # Have the agent and observers observe the timestep.
-      self._actor.observe(action, next_timestep=next_timestep)
-      for observer in self._observers:
-        # One environment step was completed. Observe the current state of the
-        # environment, the current timestep and the action.
-        observer.observe(self._environment, next_timestep, action)
-
-      # Give the actor the opportunity to update itself.
-      if self._should_update:
-        self._actor.update()
-
-      # Equivalent to: episode_return += timestep.reward
-      # We capture the return value because if timestep.reward is a JAX
-      # DeviceArray, episode_return will not be mutated in-place. (In all other
-      # cases, the returned episode_return will be the same object as the
-      # argument episode_return.)
-      episode_return = tree.map_structure(operator.iadd,
-                                          episode_return,
-                                          next_timestep.reward)
-      timestep = next_timestep
-      
-    # HER
-    self.hingsight_experience_replay(start_state, episode_trajectory)
-
-    # Record counts.
-    counts = self._counter.increment(episodes=1, steps=episode_steps)
-    
-    # Stream the episodic trajectory to the goal space manager.
-    if self._goal_space_manager is not None:
-      self.stream_achieved_goals_to_gsm(episode_trajectory)
-      
-      # Update the Q-function parameters of the GSM
-      self._goal_space_manager.update_params() 
-    
-    print(f'Goal={goal.goals} Achieved={next_timestep.observation.goals} R={next_timestep.reward}')
-
-    # Collect the results and combine with counts.
-    steps_per_second = episode_steps / (time.time() - episode_start_time)
-    result = {
-        'episode_length': episode_steps,
-        'episode_return': episode_return,
-        'steps_per_second': steps_per_second,
-        'env_reset_duration_sec': env_reset_duration,
-        'select_action_duration_sec': np.mean(select_action_durations),
-        'env_step_duration_sec': np.mean(env_step_durations),
-    }
-    result.update(counts)
-    for observer in self._observers:
-      result.update(observer.get_metrics())
-    return result
-  
   def run_episode(self) -> loggers.LoggingData:
     """Run one episode.
 
@@ -315,6 +223,7 @@ class EnvironmentLoop(core.Worker):
     start_state = copy.deepcopy(timestep.observation)
     
     self._goal_sampler.begin_episode(timestep)
+    self.count_dict = copy.deepcopy(self._goal_sampler.count_dict)
     
     # State-goal pairs.
     attempted_edges: List[Tuple[OARG, OARG]] = []
@@ -460,6 +369,14 @@ class EnvironmentLoop(core.Worker):
       timestep = next_timestep
       
       reached = timestep.last() and timestep.reward > 0
+
+      # Update the episode count dict
+      key = tuple(timestep.observation.goals)
+      
+      if self.count_dict and key in self.count_dict:
+        self.count_dict[key] += 1
+      else:
+        self.count_dict[key] = 1
       
     episode_logs['episode_trajectory'].extend(trajectory)
     
@@ -524,23 +441,6 @@ class EnvironmentLoop(core.Worker):
         trajectory (List): trajectory from pursuing one goal.
         hindsight_goal (OARG): hindsight goal for learning.
     """
-    def truncation(ts: dm_env.TimeStep):
-      discount = np.array(1, dtype=np.float32)
-      step_type = dm_env.StepType.LAST
-      
-      return ts._replace(discount=discount, step_type=step_type)
-    
-    def termination(ts: dm_env.TimeStep):
-      discount = np.array(0, dtype=np.float32)
-      step_type = dm_env.StepType.LAST
-      
-      return ts._replace(discount=discount, step_type=step_type)
-      
-    def continuation(ts: dm_env.TimeStep):
-      discount = np.array(1, dtype=np.float32)
-      step_type = dm_env.StepType.MID
-      
-      return ts._replace(discount=discount, step_type=step_type)
       
     ts0 = trajectory[0].ts
     augmented_ts0 = self.augment_ts_with_goal(ts0, hindsight_goal, 'relabel')
@@ -561,6 +461,26 @@ class EnvironmentLoop(core.Worker):
         self._actor.observe(transition.action, termination(augmented_next_ts))
         break
       elif i == len(trajectory) - 1:
+        self._actor.observe(transition.action, truncation(augmented_next_ts))
+      else:
+        self._actor.observe(transition.action, continuation(augmented_next_ts))
+
+  def replay_trajectory_for_exploration_reward(self, trajectory: List[GoalBasedTransition]):
+
+    prev_reward = 0.
+    ts0 = trajectory[0].ts
+    augmented_ts0 = self.exploration_goal_augment(ts0, prev_reward)
+
+    self._actor.observe_first(augmented_ts0._replace(step_type=dm_env.StepType.FIRST))
+
+    for i, transition in enumerate(trajectory):
+      augmented_ts: dm_env.TimeStep = self.exploration_goal_augment(
+        transition.ts, prev_reward)
+      self._actor.select_action(augmented_ts.observation)  # updates h_t
+      augmented_next_ts: dm_env.TimeStep = self.exploration_goal_augment(
+        transition.next_ts, transition.intrinsic_reward)
+      prev_reward = transition.intrinsic_reward
+      if i == len(trajectory) - 1:
         self._actor.observe(transition.action, truncation(augmented_next_ts))
       else:
         self._actor.observe(transition.action, continuation(augmented_next_ts))
@@ -595,6 +515,11 @@ class EnvironmentLoop(core.Worker):
       if self._always_learn_about_task_goal and \
         not self.goal_reward_func(hindsight_goal, task_goal)[0]:
         self.replay_trajectory_with_new_goal(trajectory, task_goal)
+
+      if self._always_learn_about_exploration_goal:
+        t0 = time.time()
+        self.replay_trajectory_for_exploration_reward(trajectory)
+        print(f'[HER] Took {time.time() - t0}s to replay for exploration rewards.')
 
   def run(
       self,
