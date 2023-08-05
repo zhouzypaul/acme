@@ -4,8 +4,9 @@ import copy
 import dm_env
 import random
 import numpy as np
+import networkx as nx
 
-from typing import Tuple
+from typing import Tuple, List
 
 from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2.gsm import GoalSpaceManager
@@ -40,6 +41,9 @@ class GoalSampler:
     self.on_policy_edge_count_dict = {}
     
     self._n_courier_errors = 0
+    
+    self._task_goal_hash = tuple(task_goal.goals)
+    self._exploration_goal_hash = tuple(exploration_goal.goals)
       
   def _update_gsm_dicts(self):
     """Update GSM dicts using try-except to account for GSM erroring b/c of threads."""
@@ -90,19 +94,12 @@ class GoalSampler:
     
   def __call__(self, timestep: dm_env.TimeStep) -> OARG:
     """Select a goal to pursue in the current episode."""
-    if self._sampling_method == 'task' or \
-      random.random() < self._task_goal_probability:
-      return self._task_goal
-    
-    if self._sampling_method == 'exploration' or \
-      random.random() < self._exploration_goal_probability:
-      return self._exploration_goal
-      
+
     goal_hash = None
     goal_dict = self.get_candidate_goals(timestep)
     
     if len(goal_dict) == 0:
-      return self._task_goal
+      return self._exploration_goal
     
     if len(goal_dict) == 1:
       goal_hash = list(goal_dict.keys())[0]
@@ -123,7 +120,7 @@ class GoalSampler:
           goal_hash, dtype=timestep.observation.goals.dtype
         ))
       
-    return self._task_goal
+    return self._task_goal if random.random() < 0.5 else self._exploration_goal
     
   def _amdp_goal_sampling(self, timestep: dm_env.TimeStep, goal_dict: dict) -> Tuple:
     """Solve the abstract MDP to pick the hash of the goal to pursue at s_t."""
@@ -158,15 +155,47 @@ class GoalSampler:
     self,
     timestep: dm_env.TimeStep,
     goal_dict: dict,
-    method: str) -> Tuple:
+    method: str
+  ) -> Tuple:
+    if self._sampling_method == 'task' or \
+      random.random() < self._task_goal_probability:
+      return self._task_goal_hash
+    
+    if self._sampling_method == 'exploration' or \
+      random.random() < self._exploration_goal_probability:
+      return self._exploration_goal_hash
+    
     if method == 'random':
       potential_goals = list(goal_dict.keys())
       return random.choice(potential_goals)
+
     if method == 'novelty':
-      goals = list(goal_dict.keys())
-      scores = [1. / np.sqrt(self.count_dict[g] + 1) for g in goals]
+      current_node = tuple(timestep.observation.goals)
+      reachable_goals = self.get_descendants(current_node)
+      print(f'Reachable goals from {current_node}: {reachable_goals}')
+      if len(reachable_goals) == 0:
+        return self._exploration_goal_hash
+      scores = [1. / np.sqrt(self.count_dict[g] + 1) for g in reachable_goals]
       scores = np.asarray(scores)
       probs = scores / scores.sum()
-      idx = np.random.choice(range(len(goals)), p=probs)
-      return goals[idx]
+      idx = np.random.choice(range(len(reachable_goals)), p=probs)
+      return reachable_goals[idx]
     raise NotImplementedError(method)
+
+  def _construct_skill_graph(self) -> nx.DiGraph:
+    graph = nx.DiGraph()
+    for src in self.value_dict:
+      for dest in self.value_dict[src]:
+        if self.value_dict[src][dest] > 0:
+          graph.add_edge(src, dest)
+    return graph
+
+  def get_descendants(self, src_node: Tuple) -> List:
+    graph = self._construct_skill_graph()
+    if src_node not in graph.nodes:
+      return []
+    reachable_goals = nx.algorithms.dag.descendants(graph, src_node)
+    reachable_goals = list(reachable_goals)
+    if self._exploration_goal_hash in reachable_goals:
+      reachable_goals.remove(self._exploration_goal_hash)
+    return reachable_goals
