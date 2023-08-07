@@ -34,7 +34,7 @@ start_time = datetime.now()
 flags.DEFINE_bool(
     'run_distributed', True, 'Should an agent be executed in a distributed '
     'way. If False, will run single-threaded.')
-flags.DEFINE_string('env_name', 'Pong', 'What environment to run.')
+flags.DEFINE_string('env_name', 'MontezumaRevenge', 'What environment to run.')
 flags.DEFINE_integer('seed', 0, 'Random seed (experiment).')
 flags.DEFINE_integer('num_actors', 64, 'Num actors if running distributed')
 flags.DEFINE_boolean('one_cpu_per_actor', False, 'If we pin each actor to a different CPU')
@@ -62,6 +62,7 @@ flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')
 # These are different from paper to here, so will add as hypers
 flags.DEFINE_float('target_update_period', 1200, 'How often to update target network') # paper is 2500
 flags.DEFINE_float('variable_update_period', 100, 'How often to update actor variables') # paper is 400
+flags.DEFINE_boolean('use_stale_rewards', False, 'Use stale rewards for RND')
 
 FLAGS = flags.FLAGS
 
@@ -73,6 +74,7 @@ def make_rnd_builder(r2d2_builder):
         intrinsic_reward_coefficient=FLAGS.rnd_intrinsic_reward_coefficient,
         extrinsic_reward_coefficient=FLAGS.rnd_extrinsic_reward_coefficient,
         predictor_learning_rate=FLAGS.rnd_learning_rate,
+        use_stale_rewards=FLAGS.use_stale_rewards
     )
     logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
     builder = rnd.RNDBuilder(

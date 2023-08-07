@@ -134,6 +134,7 @@ def rnd_loss(
                                               transitions.action)
   return jnp.mean(jnp.square(target_output - predictor_output))
 
+# TODO(ab/sl): Verify that RND learning is using GPU.
 
 class RNDLearner(acme.Learner):
   """RND learner."""
@@ -151,9 +152,13 @@ class RNDLearner(acme.Learner):
       counter: Optional[counting.Counter] = None,
       logger: Optional[loggers.Logger] = None,
       intrinsic_reward_coefficient=0.001,
-      extrinsic_reward_coefficient=1.0):
+      extrinsic_reward_coefficient=1.0,
+      use_stale_rewards: bool = False):
 
     self._is_sequence_based = is_sequence_based
+
+    # No need to recompute intrinsic rewards when this is true.
+    self._use_stale_rewards = use_stale_rewards
 
     target_key, predictor_key = jax.random.split(rng_key)
     target_params = rnd_network.target.init(target_key)
@@ -327,8 +332,16 @@ class RNDLearner(acme.Learner):
       prefetch_split_sample = sample
       sample = sample.device
 
+    # transitions = (
+    #   s_t = <o_t, a_{t-1}, r_{t-1}>,
+    #   a_t,
+    #   r_t = R_ext(o_{t+1}) + R_int(o_t),
+    #   s_{t+1} = <o_{t+1}, a_t, r_t>
+    # )
     transitions = reverb_utils.replay_sample_to_sars_transition(
         sample, is_sequence=self._is_sequence_based)
+
+    extrinsic_reward = transitions.reward
 
     # We might be dealing with an OAR tuple, in which case
     if hasattr(transitions.observation, 'observation'):
@@ -339,7 +352,9 @@ class RNDLearner(acme.Learner):
 
     # Ideally we do a decent number of steps before starting this part, so that normalization is correct. We could skip reward for a bit as well.
     self._state, metrics = self._update(self._state, transitions)
+    
     # combined inrtinsic extrinsic
+    # TODO(sam): refactor so it doesn't look like we are adding r_ext twice.
     unscaled_intrinsic_rewards = self._get_unscaled_intrinsic_reward(self._state.params, self._state.target_params,
                                transitions,
                                observation_mean=self._state.observation_mean, observation_var=self._state.observation_var)
@@ -349,8 +364,6 @@ class RNDLearner(acme.Learner):
 
     # Not using safe reward_var because it'll never drop to zero, but can be very small sometimes.
     normalized_intrinsic_rewards = (unscaled_intrinsic_rewards - self._state.reward_mean) / jnp.sqrt(self._state.reward_var) # doing sqrt because it seems more reasonable, and that's what paper says
-
-    combined_rewards = normalized_intrinsic_rewards * self.intrinsic_reward_coefficient + transitions.reward * self.extrinsic_reward_coefficient
 
     rewards_logging_dict = {
       'unscaled_rnd_batch_mean': unscaled_intrinsic_rewards.mean().item(),
@@ -377,7 +390,11 @@ class RNDLearner(acme.Learner):
     self._logger.write({**metrics, **counts, **rewards_logging_dict})
 
     # sample = sample._replace(data=sample.data._replace(reward=rewards))
-    sample = sample._replace(data=sample.data._replace(reward=combined_rewards))
+    if not self._use_stale_rewards:
+      combined_rewards = (normalized_intrinsic_rewards * self.intrinsic_reward_coefficient) + \
+        (extrinsic_reward * self.extrinsic_reward_coefficient)
+      sample = sample._replace(data=sample.data._replace(reward=combined_rewards))
+    
     if is_prefetch:
       sample = PrefetchingSplit(device=sample, host=prefetch_split_sample.host) # its a NamedTuple
 
@@ -388,8 +405,7 @@ class RNDLearner(acme.Learner):
 
   def get_variables(self, names: List[str]) -> List[Any]:
     rnd_variables = {
-        'target_params': self._state.target_params,
-        'predictor_params': self._state.params
+      'rnd_training_state': self._state
     }
 
     learner_names = [name for name in names if name not in rnd_variables]

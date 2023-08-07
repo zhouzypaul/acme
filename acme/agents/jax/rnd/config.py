@@ -31,3 +31,7 @@ class RNDConfig:
 
   intrinsic_reward_coefficient: float = 0.001
   extrinsic_reward_coefficient: float = 1.0
+  
+  # When using stale_rewards, we compute intrinsic rewards during acting
+  # and don't modify them during learning.
+  use_stale_rewards: bool = False

@@ -25,9 +25,12 @@ from acme.agents.jax.rnd import config as rnd_config
 from acme.agents.jax.rnd import learning as rnd_learning
 from acme.agents.jax.rnd import networks as rnd_networks
 from acme.jax import networks as networks_lib
+from acme.agents.jax.actors import GenericIntrinsicActor
+from acme.agents.jax.rnd.actor import get_actor_core as get_rnd_actor_core
 from acme.jax.types import Policy
 from acme.utils import counting
 from acme.utils import loggers
+from acme.jax import variable_utils
 import jax
 import optax
 import reverb
@@ -96,7 +99,8 @@ class RNDBuilder(Generic[rnd_networks.DirectRLNetworks, Policy],
         counter=counter,
         intrinsic_reward_coefficient=self._config.intrinsic_reward_coefficient,
         extrinsic_reward_coefficient=self._config.extrinsic_reward_coefficient,
-        logger=logger_fn('learner'))
+        logger=logger_fn('learner'),
+        use_stale_rewards=self._config.use_stale_rewards)
 
   def make_replay_tables(
       self,
@@ -122,7 +126,25 @@ class RNDBuilder(Generic[rnd_networks.DirectRLNetworks, Policy],
       environment_spec: specs.EnvironmentSpec,
       variable_source: Optional[core.VariableSource] = None,
       adder: Optional[adders.Adder] = None,
+      force_cpu: bool = False
   ) -> core.Actor:
+    if self._config.use_stale_rewards:
+      variable_client = variable_utils.VariableClient(
+        variable_source,
+        key=['actor_variables', 'rnd_training_state'],
+        update_period=self._rl_agent._config.variable_update_period)
+
+      actor_backend = 'cpu' if force_cpu else self._rl_agent._config.actor_backend
+      print('actor backend', actor_backend)
+
+      return GenericIntrinsicActor(
+        self._config.intrinsic_reward_coefficient,
+        self._config.extrinsic_reward_coefficient,
+        actor=policy,
+        random_key=random_key,
+        variable_client=variable_client,
+        adder=adder
+      )
     return self._rl_agent.make_actor(random_key, policy, environment_spec,
                                      variable_source, adder)
 
@@ -131,5 +153,12 @@ class RNDBuilder(Generic[rnd_networks.DirectRLNetworks, Policy],
                   environment_spec: specs.EnvironmentSpec,
                   evaluation: bool = False) -> actor_core_lib.FeedForwardPolicy:
     """Construct the policy."""
-    return self._rl_agent.make_policy(networks.direct_rl_networks,
-                                      environment_spec, evaluation)
+    rl_actor_core = self._rl_agent.make_policy(
+      networks.direct_rl_networks, environment_spec, evaluation)
+    if self._config.use_stale_rewards:
+      return get_rnd_actor_core(
+        networks,
+        rl_actor_core,
+        self._config.intrinsic_reward_coefficient,
+        self._config.extrinsic_reward_coefficient)
+    return rl_actor_core

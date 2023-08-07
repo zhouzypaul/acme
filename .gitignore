@@ -150,3 +150,8 @@ cython_debug/
 # static files generated from Django application using `collectstatic`
 media
 static
+*.pkl
+*.png
+*.csv
+examples/baselines/rl_discrete/acme
+examples/baselines/rl_discrete/local_results
