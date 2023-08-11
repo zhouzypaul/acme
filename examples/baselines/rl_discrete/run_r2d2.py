@@ -115,7 +115,7 @@ def build_experiment_config():
       samples_per_insert= FLAGS.spi,
       evaluation_epsilon=1e-3,
       learning_rate=FLAGS.r2d2_learning_rate,
-      target_update_period=FLAGS.variable_update_period,
+      target_update_period=FLAGS.target_update_period,
       variable_update_period=FLAGS.variable_update_period,
       actor_jit=True,
       actor_backend=actor_backend,
