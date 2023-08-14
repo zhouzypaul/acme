@@ -49,7 +49,7 @@ def make_process_dict(gpu_str="-1", pin_to=None):
 
     
 
-def make_actor_resources(num_actors, one_cpu_per_actor=False):
+def make_actor_resources(num_actors, one_cpu_per_actor=False, used_cpu_list=()):
   # If you don't specify CPU range, then just do them all like before I guess.
   # What if I always modify it? I think that's better actually.
   actor_gpu_ids = FLAGS.actor_gpu_ids
@@ -61,6 +61,10 @@ def make_actor_resources(num_actors, one_cpu_per_actor=False):
     p = psutil.Process()
     cpu_ids = p.cpu_affinity()
     print('cpu_ids: ', cpu_ids)
+    assert max(used_cpu_list) < len(cpu_ids), "Can't have used all the CPUs on the other guys!"
+    # Now, filter out ones already used by index.
+    cpu_ids = [cpu_id for i, cpu_id in enumerate(cpu_ids) if i not in used_cpu_list]
+    print("CPU IDs for actors:", cpu_ids)
 
   process_dict = {}
   for actor_num in range(num_actors):
@@ -76,6 +80,24 @@ def make_actor_resources(num_actors, one_cpu_per_actor=False):
 
   return process_dict
 
+def get_base_cpu_dicts():
+  if FLAGS.colocate_reverb_and_learner:
+    cpu_dict = {
+      'learner': [0, 1, 2, 3, 4, 5, ],
+      'counter': [6, ],
+      'evaluator': [7, ],
+    }
+    cpu_list = list(range(8))
+  else:
+    cpu_dict = {
+      'learner': [0, 1, 2, 3, ],
+      'replay': [4, 5, 6, 7, ],
+      'counter': [8, ],
+      'evaluator': [9, ],
+    }
+    cpu_list = list(range(10))
+  return cpu_dict, cpu_list
+
 
 def get_local_resources(launch_type):
   num_actors = FLAGS.num_actors
@@ -87,23 +109,25 @@ def get_local_resources(launch_type):
   assert launch_type in ('local_mp', 'local_mt'), launch_type
   from launchpad.nodes.python.local_multi_processing import PythonProcess
   if launch_type == 'local_mp':
+    reserved_cpus = []
     if FLAGS.limit_all_cpus:
-      cpu_dict = {
-        'learner'   : [0, 1, 2, 3],
-        'replay'    : [4, 5, 6, 7],
-        'counter' : [8, 9],
-        'evaluator': [10],
-      }
+      cpu_dict, used_cpu_list = get_base_cpu_dicts()
+      # cpu_dict = {
+      #   'learner'   : [0, 1, 2, 3],
+      #   'replay'    : [4, 5, 6, 7],
+      #   'counter' : [8, ],
+      #   'evaluator': [9, ],
+      # }
     else:
-      cpu_dict = {}
+      cpu_dict, used_cpu_list = {}, []
     local_resources = {
       "learner": make_process_dict(",".join(FLAGS.learner_gpu_ids), pin_to=cpu_dict.get('learner')),
       "counter": make_process_dict(pin_to=cpu_dict.get('counter')),
-      "replay": make_process_dict(pin_to=cpu_dict.get('replay')),
+      "replay": make_process_dict(pin_to=cpu_dict.get('replay')), # Fine, might not be used depending on options.
       "evaluator": make_process_dict(pin_to=cpu_dict.get('evaluator')),
     }
     # TODO: Be able to choose actor GPU so that we can compare 1 and 2 GPU utilization etc.
-    actor_resources = make_actor_resources(num_actors=num_actors, one_cpu_per_actor=one_cpu_per_actor)
+    actor_resources = make_actor_resources(num_actors=num_actors, one_cpu_per_actor=one_cpu_per_actor, used_cpu_list=used_cpu_list)
     local_resources.update(actor_resources)
   else:
     local_resources = {}

@@ -66,6 +66,7 @@ flags.DEFINE_float('variable_update_period', 100, 'How often to update actor var
 flags.DEFINE_integer('burn_in_length', 8, 'How long to burn in in replay to get good core state (paper is 20/40)')
 flags.DEFINE_integer('trace_length', 40, 'Length of sequence to fetch/train on (paper is 80)')
 flags.DEFINE_integer('sequence_period', 20, 'How often to start a new sequence. Sequences are repeated in dataset. Should be half of trace_length (paper is 40)')
+flags.DEFINE_boolean('colocate_reverb_and_learner', False, 'Puts learner and reverb in same process')
 
 
 FLAGS = flags.FLAGS
@@ -202,6 +203,7 @@ def main(_):
         num_actors_per_node=num_actors_per_node,
         multiprocessing_colocate_actors=FLAGS.multiprocessing_colocate_actors,
         split_actor_specs=True,
+        multithreading_colocate_learner_and_reverb=FLAGS.colocate_reverb_and_learner,
         )
 
     lp.launch(program,
