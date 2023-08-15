@@ -49,7 +49,7 @@ flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors
 flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets all")
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
-flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090')
+flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090. Paper is 64')
 flags.DEFINE_boolean('use_rnd', False, 'Whether to use RND')
 flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
 flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay starts')
@@ -63,6 +63,11 @@ flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')
 flags.DEFINE_float('target_update_period', 1200, 'How often to update target network') # paper is 2500
 flags.DEFINE_float('variable_update_period', 100, 'How often to update actor variables') # paper is 400
 flags.DEFINE_boolean('use_stale_rewards', False, 'Use stale rewards for RND')
+
+flags.DEFINE_integer('burn_in_length', 8, 'How long to burn in in replay to get good core state (paper is 20/40)')
+flags.DEFINE_integer('trace_length', 40, 'Length of sequence to fetch/train on (paper is 80)')
+flags.DEFINE_integer('sequence_period', 20, 'How often to start a new sequence. Sequences are repeated in dataset. Should be half of trace_length (paper is 40)')
+
 
 FLAGS = flags.FLAGS
 
@@ -107,9 +112,9 @@ def build_experiment_config():
 
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   config = r2d2.R2D2Config(
-      burn_in_length=8,
-      trace_length=40,
-      sequence_period=20,
+      burn_in_length=FLAGS.burn_in_length,
+      trace_length=FLAGS.trace_length,
+      sequence_period=FLAGS.sequence_period,
       min_replay_size=FLAGS.min_replay_size,
       batch_size=batch_size,
       prefetch_size=1,
@@ -117,7 +122,7 @@ def build_experiment_config():
       samples_per_insert= FLAGS.spi,
       evaluation_epsilon=1e-3,
       learning_rate=FLAGS.r2d2_learning_rate,
-      target_update_period=FLAGS.variable_update_period,
+      target_update_period=FLAGS.target_update_period,
       variable_update_period=FLAGS.variable_update_period,
       actor_jit=True,
       actor_backend=actor_backend,
