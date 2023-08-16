@@ -285,7 +285,7 @@ def make_distributed_experiment(
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
         environment, actor, counter, logger, observers=experiment.observers,
-        goal_space_manager=gsm)
+        goal_space_manager=gsm, actor_id=actor_id)
     
   def _gsm_node(rng_num, networks, variable_source):
     variable_client = variable_utils.VariableClient(
