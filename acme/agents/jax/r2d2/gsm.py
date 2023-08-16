@@ -271,6 +271,10 @@ class GoalSpaceManager(object):
     assert n_goal_subplots % 2 == 0, 'Ask for even number of subplots.'
 
     starts = list(value_dict.keys())
+    
+    if len(starts) < n_goal_subplots:
+      return
+    
     selected_starts = random.sample(starts, k=n_goal_subplots)
 
     plt.figure(figsize=(14, 14))
@@ -315,7 +319,7 @@ class GoalSpaceManager(object):
       plt.colorbar()
       plt.title(f'Exploration Goal ({explore_goal_feats})')
 
-    plt.savefig(f'plots/four_rooms_uvfa_episode_{episode}.png')
+    plt.savefig(f'plots/uvfa_plots/four_rooms_uvfa_episode_{episode}.png')
     plt.close()
 
   def run(self):
@@ -339,7 +343,7 @@ class GoalSpaceManager(object):
         print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
         self._update_value_dict(src_dest_pairs, values)
 
-        if iteration > 0 and iteration % 50 == 0:
+        if iteration > 0 and iteration % 100 == 0:
           # self._save_value_dict(iteration)
           self.visualize_value_function(self._value_matrix, iteration)
 
@@ -348,3 +352,5 @@ class GoalSpaceManager(object):
           # start_state_features = (2, 10, 0, 0)
           start_state_features = (8, 16, 0, 0)
           pprint.pprint(self._value_matrix[start_state_features])
+
+        print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)}')
