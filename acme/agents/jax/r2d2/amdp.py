@@ -71,10 +71,11 @@ class AMDP:
     i = 0
     current = start_node
     path = [start_node]
-    while goal_node not in path and i < max_len:
-      current = self.policy(current)
-      path.append(current)
-      i += 1
+    if current in self._reverse_state_space:
+      while goal_node not in path and i < max_len:
+        current = self.policy(current)
+        path.append(current)
+        i += 1
     return path
 
   def print_abstract_rf(self):
