@@ -1,3 +1,4 @@
+import os
 import dm_env
 import dataclasses
 import numpy as np
@@ -45,6 +46,17 @@ def continuation(ts: dm_env.TimeStep) -> dm_env.TimeStep:
   step_type = dm_env.StepType.MID
   
   return ts._replace(discount=discount, step_type=step_type)
+
+
+def create_log_dir(experiment_name):
+  path = os.path.join(os.getcwd(), experiment_name)
+  try:
+      os.makedirs(path, exist_ok=True)
+  except OSError:
+      pass
+  else:
+      print("Successfully created the directory %s " % path)
+  return path
 
 
 if __name__ == '__main__':

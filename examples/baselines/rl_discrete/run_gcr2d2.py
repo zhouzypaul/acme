@@ -22,6 +22,7 @@ import helpers
 from absl import app
 from acme.jax import experiments
 from acme.utils import lp_utils
+from acme.utils import utils
 import dm_env
 import launchpad as lp
 from datetime import datetime
@@ -137,6 +138,11 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
 def main(_):
   FLAGS.append_flags_into_file('/tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
   config = build_experiment_config()
+
+  utils.create_log_dir('plots')
+  utils.create_log_dir(os.path.join('plots', 'uvfa_plots'))
+  utils.create_log_dir(os.path.join('plots', 'target_nodes'))
+
   if FLAGS.run_distributed:
     program = experiments.make_distributed_experiment(
         experiment=config, num_actors=FLAGS.num_actors if lp_utils.is_local_run() else 80,

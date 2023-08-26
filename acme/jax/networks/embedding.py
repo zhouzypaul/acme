@@ -59,3 +59,24 @@ class OAREmbedding(hk.Module):
         [features, action, reward], axis=-1)  # [T?, B, D+A+1]
 
     return embedding
+
+@dataclasses.dataclass
+class GoalEmbedding(hk.Module):
+  """Module for embedding the goal observation by passing through a conv torso."""
+
+  torso: hk.SupportsCall
+
+  def __call__(self, observation: jnp.ndarray) -> jnp.ndarray:
+    """Embed each of the (observation, action, reward) inputs & concatenate."""
+
+    # Add dummy batch dimension to observation if necessary.
+    # This is needed because Conv2D assumes a leading batch dimension, i.e.
+    # that inputs are in [B, H, W, C] format.
+    expand_obs = len(observation.shape) == 3
+    if expand_obs:
+      observation = jnp.expand_dims(observation, axis=0)
+    features = self.torso(observation)  # [T?, B, D]
+    if expand_obs:
+      features = jnp.squeeze(features, axis=0)
+
+    return features

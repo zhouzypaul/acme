@@ -143,7 +143,7 @@ class DeepIMPALAAtariNetwork(hk.RNNCore):
     return (logits, values), new_states
 
 
-class R2D2AtariNetwork(hk.RNNCore):
+class OldR2D2AtariNetwork(hk.RNNCore):
   """A duelling recurrent network for use with Atari observations as seen in R2D2.
 
   See https://openreview.net/forum?id=r1lyTjAqYX for more information.
@@ -180,4 +180,73 @@ class R2D2AtariNetwork(hk.RNNCore):
     embeddings = hk.BatchApply(self._embed)(inputs)  # [T, B, D+A+1]
     core_outputs, new_states = hk.static_unroll(self._core, embeddings, state)
     q_values = hk.BatchApply(self._duelling_head)(core_outputs)  # [T, B, A]
+    return q_values, new_states
+
+
+class R2D2AtariNetwork(hk.RNNCore):
+  """A duelling recurrent network for use with Atari observations as seen in R2D2.
+
+  See https://openreview.net/forum?id=r1lyTjAqYX for more information.
+  """
+
+  def __init__(self, num_actions: int):
+    super().__init__(name='r2d2_atari_network')
+    self._embed = embedding.OAREmbedding(
+        DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True), num_actions)
+    self._goal_embed = embedding.GoalEmbedding(
+      DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True))
+    self._core = hk.LSTM(512)
+    self._duelling_head = duelling.DuellingMLP(num_actions, hidden_sizes=[512, 512])
+    self._num_actions = num_actions
+
+  def __call__(
+      self,
+      inputs: observation_action_reward.OAR,  # [B, ...]
+      state: hk.LSTMState  # [B, ...]
+  ) -> Tuple[base.QValues, hk.LSTMState]:
+
+    # Split the input into obs and goal, only _embed obs.
+    assert inputs.observation.shape[-1] == 6, inputs.observation.shape
+    obs_img = inputs.observation[..., :3]
+    goal_img = inputs.observation[..., 3:]
+    inputs = inputs._replace(observation=obs_img)
+  
+    embeddings = self._embed(inputs)  # [B, D+A+1]
+    core_outputs, new_state = self._core(embeddings, state)
+    
+    # Pass the goal through the DeepAtariTorso.
+    goal_embeddings = self._goal_embed(goal_img)
+
+    # Concat the goal embeddings to the core_outputs.
+    augmented_core_outputs = jnp.concatenate(
+      [core_outputs, goal_embeddings], axis=-1
+    )
+
+    # Pass the augmented_core_outputs to the duelling head.
+    q_values = self._duelling_head(augmented_core_outputs)
+    return q_values, new_state
+
+  def initial_state(self, batch_size: Optional[int],
+                    **unused_kwargs) -> hk.LSTMState:
+    return self._core.initial_state(batch_size)
+
+  def unroll(
+      self,
+      inputs: observation_action_reward.OAR,  # [T, B, ...]
+      state: hk.LSTMState  # [T, ...]
+  ) -> Tuple[base.QValues, hk.LSTMState]:
+    """Efficient unroll that applies torso, core, and duelling mlp in one pass."""
+    obs_tensor = inputs.observation[..., :3]
+    embeddings = hk.BatchApply(self._embed)(
+      inputs._replace(observation=obs_tensor))  # [T, B, D+A+1]
+    core_outputs, new_states = hk.static_unroll(self._core, embeddings, state)
+    
+    goal_tensor = inputs.observation[..., 3:]
+    goal_embeddings = hk.BatchApply(self._goal_embed)(goal_tensor)
+  
+    augmented_core_outputs = jnp.concatenate(
+      [core_outputs, goal_embeddings], axis=-1
+    )
+
+    q_values = hk.BatchApply(self._duelling_head)(augmented_core_outputs)  # [T, B, A]
     return q_values, new_states

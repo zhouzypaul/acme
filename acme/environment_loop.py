@@ -78,11 +78,11 @@ class EnvironmentLoop(core.Worker):
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
       goal_space_manager: GoalSpaceManager = None,
       task_goal_probability: float = 0.1,
-      always_learn_about_task_goal: bool = False,
+      always_learn_about_task_goal: bool = True,
       always_learn_about_exploration_goal: bool = False,
       actor_id: int = 0,
       use_random_policy_for_exploration: bool = True,
-      pure_exploration_probability: float = 0.
+      pure_exploration_probability: float = 1.
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -602,12 +602,18 @@ class EnvironmentLoop(core.Worker):
     )
   
   def replay_trajectory_with_new_goal(
-    self, trajectory: List[GoalBasedTransition], hindsight_goal: OARG):
+    self,
+    trajectory: List[GoalBasedTransition],
+    hindsight_goal: OARG,
+    update_hidden_state: bool = False
+  ):
     """Replay the same trajectory with a goal achieved in hindsight.
 
     Args:
         trajectory (List): trajectory from pursuing one goal.
         hindsight_goal (OARG): hindsight goal for learning.
+        update_hidden_state (bool): whether to forward pass through pi(s,g).
+          Need to update h_t if NOT using a GoalBasedQNetowork architecture.
     """
       
     ts0 = trajectory[0].ts
@@ -621,7 +627,8 @@ class EnvironmentLoop(core.Worker):
     
     for i, transition in enumerate(trajectory):
       augmented_ts = self.augment_ts_with_goal(transition.ts, hindsight_goal, 'relabel')
-      hindsight_action = self._actor.select_action(augmented_ts.observation)  # updates h_t
+      if update_hidden_state:
+        hindsight_action = self._actor.select_action(augmented_ts.observation)  # updates h_t
       augmented_next_ts = self.augment_ts_with_goal(transition.next_ts, hindsight_goal, 'relabel')
       reached = self.goal_reward_func(transition.next_ts.observation, hindsight_goal)[0]
       
@@ -656,12 +663,32 @@ class EnvironmentLoop(core.Worker):
   def hingsight_experience_replay(
     self, start_state: OARG, trajectory: List[GoalBasedTransition]):
     """Learn about goal(s) achieved when following a diff goal."""
-    def pick_hindsight_goal(traj: List[dm_env.TimeStep]) -> OARG:
+    def goal_space_novelty_selection(
+      traj: List[GoalBasedTransition],
+      num_goals_to_replay: int = 5
+    ) -> List[OARG]:
+      achieved_goals = {
+        tuple(trans.next_ts.observation.goals): trans.next_ts.observation
+        for trans in traj
+      }
+      goal_hashes = list(achieved_goals.keys())
+      counts = [self.count_dict[g] for g in goal_hashes]
+      scores = np.asarray([1. / (1 + count) for count in counts])
+      probs = scores / scores.sum()
+      selected_indices = np.random.choice(
+        range(len(goal_hashes)),
+        p=probs,
+        size=min(num_goals_to_replay, len(goal_hashes)),
+        replace=False
+      )
+      return [achieved_goals[goal_hashes[i]] for i in selected_indices]
+
+    def future_selection(traj: List[dm_env.TimeStep]) -> List[OARG]:
       start_idx = len(traj) // 2
       goal_idx = random.randint(start_idx, len(traj) - 1)
       goal_ts = traj[goal_idx]
       assert isinstance(goal_ts, dm_env.TimeStep)
-      return goal_ts.observation
+      return [goal_ts.observation]
     
     def get_achieved_goals() -> List[dm_env.TimeStep]:
       """Filter out goals that are satisfied at s_t."""
@@ -676,14 +703,16 @@ class EnvironmentLoop(core.Worker):
     
     filtered_trajectory = get_achieved_goals()
     if filtered_trajectory:
-      hindsight_goal = pick_hindsight_goal(filtered_trajectory)
-      print(f'[HER] replaying wrt to {hindsight_goal.goals}')
-      self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
+      hindsight_goals = goal_space_novelty_selection(trajectory)
+      for hindsight_goal in hindsight_goals:
+        print(f'[HER] replaying wrt to {hindsight_goal.goals}')
+        self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
       
       task_goal = self.task_goal
 
       if self._always_learn_about_task_goal and \
         not self.goal_reward_func(hindsight_goal, task_goal)[0]:
+        print(f'[HER] replaying wrt to task goal {task_goal.goals}')
         self.replay_trajectory_with_new_goal(trajectory, task_goal)
 
       if self._always_learn_about_exploration_goal:
