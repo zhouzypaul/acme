@@ -137,7 +137,7 @@ def make_distributed_experiment(
         add_uid=experiment.checkpointing.add_uid)
 
   def build_counter():
-    counter = counting.Counter()
+    counter = counting.Counter(known_fields=('actor_steps', 'actor_episodes', 'learner_steps', )) # Various things we'd like in all
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       counter = savers.CheckpointingRunner(

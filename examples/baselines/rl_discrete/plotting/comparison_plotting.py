@@ -55,7 +55,8 @@ def extract_log_dirs_group_func(id_to_csv, group_func=lambda x: x, xkey='actor_s
             if key is None:
                 continue
             # key = get_config(log_dir, group_key)
-            frames, returns = get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return')
+            # frames, returns = get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return')
+            frames, returns = get_summary_data(csv_path, xkey=xkey, ykey=ykey)
             log_dir_map[key].append((frames, returns))
         except:
             print(f"Could not extract from {acme_id}")

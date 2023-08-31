@@ -30,7 +30,8 @@ class Counter(core.Saveable):
                parent: Optional['Counter'] = None,
                prefix: str = '',
                time_delta: float = 1.0,
-               return_only_prefixed: bool = False):
+               return_only_prefixed: bool = False,
+               known_fields: tuple = ()):
     """Initialize the counter.
 
     Args:
@@ -41,6 +42,9 @@ class Counter(core.Saveable):
       return_only_prefixed: if True, and if `prefix` isn't empty, return counts
         restricted to the given `prefix` on each call to `increment` and
         `get_counts`. The `prefix` is stripped from returned count names.
+      known_fields: tuple of fields you know will be there eventually. Annoyingly,
+        there's a race condition where this isn't updated before the evaluator logs
+        sometimes, and because of that actor_steps doesn't appear in that file.
     """
 
     self._parent = parent
@@ -56,6 +60,10 @@ class Counter(core.Saveable):
     # seconds ago.)
     self._cache = {}
     self._last_sync_time = 0.0
+    self._known_fields = known_fields
+    for field in self._known_fields:
+      self._counts[field] = 0
+      self._cache[field] = 0 # I think this is the important one actually
 
     self._return_only_prefixed = return_only_prefixed
 
