@@ -13,18 +13,23 @@ except ImportError:
     print("Could not import seaborn. Plotting will not be as pretty.")
 
 
-def get_summary_data(csv_path):
+def get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return'):
     # Returns XY of summary data. We need some fancy averaging process now, as opposed to before
     # because they may have different x axes.
     df = pd.read_csv(csv_path)
     try:
-        steps = df['actor_steps']
+        # steps = df['actor_steps']
+        x_axis = df[xkey]
     except:
         print('failed for id', csv_path)
         return
-    frames = 4 * steps
-    returns = df['episode_return']
-    return frames, returns
+    if xkey == 'actor_steps':
+        x_axis = 4 * x_axis
+    # returns = df['episode_return']
+    y_axis = df[ykey]
+
+    # import ipdb; ipdb.set_trace()
+    return x_axis, y_axis
 
 def plot_statistic(csv_path, save_path=None, show=True, legend_name=None):
     # 'train_episode_lengths', 'train_episode_returns', 'train_average_return', 'train_average_steps_per_second', 'eval_episode_lengths', 'eval_episode_returns', 'eval_average_return'

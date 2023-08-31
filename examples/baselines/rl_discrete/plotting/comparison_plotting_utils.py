@@ -14,7 +14,8 @@ import os
     
 #     return truncated_scores
 
-def gather_evaluator_csv_files_from_base_dir(base_dir=None, selected_acme_ids=None):
+# def gather_evaluator_csv_files_from_base_dir(base_dir=None, selected_acme_ids=None):
+def gather_csv_files_from_base_dir(base_dir=None, selected_acme_ids=None, log_type='evaluator'):
     """
     Here the base_dir is assumed to be ~/acme, and under the base_dir are the dirs
     named with `acme_id`, under which has `logs/evaluator/logs.csv`.
@@ -37,7 +38,8 @@ def gather_evaluator_csv_files_from_base_dir(base_dir=None, selected_acme_ids=No
         exp_dir = os.path.join(base_dir, acme_id)
         if not os.path.isdir(exp_dir):
             continue
-        csv_path = os.path.join(exp_dir, 'logs', 'evaluator', 'logs.csv')
+        # csv_path = os.path.join(exp_dir, 'logs', 'evaluator', 'logs.csv')
+        csv_path = os.path.join(exp_dir, 'logs', log_type, 'logs.csv')
         id_to_csv[acme_id] = csv_path
 
     return id_to_csv

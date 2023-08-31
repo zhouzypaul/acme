@@ -21,7 +21,7 @@ def default_make_key(log_dir_name, group_keys):
     return key
 
 
-def extract_log_dirs(id_to_csv, group_keys=("rewardscale",)):
+def extract_log_dirs(id_to_csv, group_keys=("rewardscale",), xkey='actor_steps', ykey='episode_return'):
 
     # Map config to a list of curves
     log_dir_map = defaultdict(list)
@@ -32,7 +32,7 @@ def extract_log_dirs(id_to_csv, group_keys=("rewardscale",)):
             key = "_".join(keys)
             key = default_make_key(acme_id, group_keys)
             # key = get_config(log_dir, group_key)
-            frames, returns = get_summary_data(csv_path)
+            frames, returns = get_summary_data(csv_path, xkey=xkey, ykey=ykey)
             log_dir_map[key].append((frames, returns))
         except Exception as e:
             print(f"Could not extract {acme_id}")
@@ -44,7 +44,7 @@ def extract_log_dirs(id_to_csv, group_keys=("rewardscale",)):
 
     return log_dir_map
 
-def extract_log_dirs_group_func(id_to_csv, group_func=lambda x: x):
+def extract_log_dirs_group_func(id_to_csv, group_func=lambda x: x, xkey='actor_steps', ykey='episode_return'):
 
     # Map config to a list of curves
     log_dir_map = defaultdict(list)
@@ -55,7 +55,7 @@ def extract_log_dirs_group_func(id_to_csv, group_func=lambda x: x):
             if key is None:
                 continue
             # key = get_config(log_dir, group_key)
-            frames, returns = get_summary_data(csv_path)
+            frames, returns = get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return')
             log_dir_map[key].append((frames, returns))
         except:
             print(f"Could not extract from {acme_id}")
@@ -84,13 +84,16 @@ def plot_comparison_learning_curves(
     min_seeds=1,
     all_seeds=False,
     title=None,
-    min_final_val=None):
+    min_final_val=None,
+    log_file_type='evaluator',
+    xkey='actor_steps',
+    ykey='episode_return'):
 
     # import seaborn as sns
     # NUM_COLORS=100
     # clrs = sns.color_palette('husl', n_colors=NUM_COLORS)
     # sns.set_palette(clrs)
-    id_to_csv = gather_evaluator_csv_files_from_base_dir(base_dir=base_dir, selected_acme_ids=selected_acme_ids)
+    id_to_csv = gather_csv_files_from_base_dir(base_dir=base_dir, selected_acme_ids=selected_acme_ids, log_type=log_file_type)
 
     assert isinstance(group_keys, (tuple, list)), f"{type(group_keys)} should be tuple or list"
     if save_path is not None:
@@ -101,9 +104,9 @@ def plot_comparison_learning_curves(
 
     if log_dir_path_map is None:
         if group_func is not None:
-            log_dir_path_map = extract_log_dirs_group_func(id_to_csv=id_to_csv, group_func=group_func)
+            log_dir_path_map = extract_log_dirs_group_func(id_to_csv=id_to_csv, group_func=group_func, xkey=xkey, ykey=ykey)
         else:
-            log_dir_path_map = extract_log_dirs(id_to_csv=id_to_csv, group_keys=group_keys)
+            log_dir_path_map = extract_log_dirs(id_to_csv=id_to_csv, group_keys=group_keys, xkey=xkey, ykey=ykey)
 
     for config in log_dir_path_map:
         if config is None:
@@ -132,7 +135,7 @@ def plot_comparison_learning_curves(
             all_seeds=all_seeds)
     
     # plt.grid()
-    plt.xlabel("Iteration")
+    plt.xlabel("Frames")
     plt.ylabel(ylabel)
     if title:
         plt.title(title)
