@@ -293,7 +293,21 @@ def make_distributed_experiment(
         key='actor_variables',
         update_period=400)
     env = experiment.environment_factory(rng_num)
-    return GoalSpaceManager(env, rng_num, networks, variable_client)
+    gsm = GoalSpaceManager(env, rng_num, networks, variable_client)
+    if experiment.checkpointing:
+      checkpointing = experiment.checkpointing
+      gsm = savers.CheckpointingRunner(
+        gsm,
+        key='gsm',
+        subdirectory='gsm',
+        time_delta_minutes=checkpointing.time_delta_minutes,
+        directory=checkpointing.directory,
+        add_uid=checkpointing.add_uid,
+        max_to_keep=checkpointing.max_to_keep,
+        keep_checkpoint_every_n_hours=checkpointing.keep_checkpoint_every_n_hours,
+        checkpoint_ttl_seconds=checkpointing.checkpoint_ttl_seconds
+      )
+    return gsm
 
   if not program:
     program = lp.Program(name=name)

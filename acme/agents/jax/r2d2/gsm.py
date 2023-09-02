@@ -18,9 +18,10 @@ from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2 import networks as r2d2_networks
 from acme.jax import variable_utils
 from acme.jax import networks as networks_lib
+from acme.core import VariableSource, Saveable
 
 
-class GoalSpaceManager(object):
+class GoalSpaceManager(VariableSource, Saveable):
   """Worker that maintains the skill-graph."""
 
   def __init__(
@@ -53,6 +54,15 @@ class GoalSpaceManager(object):
     self._variable_client = variable_client
     self._networks = networks
     self._n_parameter_updates = 0
+    self._iteration_iterator = itertools.count()
+
+  def get_variables(self, names):
+    del names
+    return self.get_value_dict(),\
+          self.get_goal_dict(),\
+          self.get_count_dict(),\
+          self.get_on_policy_count_dict(),\
+          *self.get_extrinsic_reward_dicts()
 
   @property
   def task_goal(self) -> OARG:
@@ -205,17 +215,23 @@ class GoalSpaceManager(object):
       task_goal = self.task_goal
       return {tuple(task_goal.goals): task_goal}
     
+    t0 = time.time()
     nodes = get_nodes()
+    t1 = time.time()
 
     if len(nodes) > 50:
       sub_keys = random.sample(nodes.keys(), 50)
       nodes = {key: nodes[key] for key in sub_keys}
+    
+    t2 = time.time()
 
     dest_nodes = {
       **nodes, 
       **get_exploitation_node(), 
       **get_exploration_node()
     }
+
+    t3 = time.time()
     
     augmented_observations = []
     actions = []
@@ -233,6 +249,8 @@ class GoalSpaceManager(object):
         rewards.append(oarg.reward)
         goals.append(oarg.goals)
         src_dest_pairs.append((src, dest))
+
+    t4 = time.time()
         
     if augmented_observations:
       augmented_observations = jnp.asarray(
@@ -242,6 +260,14 @@ class GoalSpaceManager(object):
       rewards = jnp.asarray(rewards)[jnp.newaxis, ...]
       goals = jnp.asarray(goals)[jnp.newaxis, ...]
       print(f'Created OARG with {len(augmented_observations)} observations, {len(nodes)} nodes')
+      
+      t5 = time.time()
+      print(f'[GSM-Profiling] Took {t1 - t0}s to get_nodes().')
+      print(f'[GSM-Profiling] Took {t2 - t1}s to subsample nodes.')
+      print(f'[GSM-Profiling] Took {t3 - t2}s to create dest_nodes.')
+      print(f'[GSM-Profiling] Took {t4 - t3}s to create goal pairs.')
+      print(f'[GSM-Profiling] Took {t5 - t4}s to create goal tensors.')
+
       return src_dest_pairs, OARG(augmented_observations, actions, rewards, goals)
     
     return None, None
@@ -252,6 +278,15 @@ class GoalSpaceManager(object):
     for key, val in dd.items():
       d[key] = dict(val)
     return d
+  
+  @staticmethod
+  def _dict_to_default_dict(nested_dict, inner_default):
+    dd = collections.defaultdict(
+      lambda: collections.defaultdict(inner_default))
+    for key in nested_dict:
+      dd[key] = collections.defaultdict(
+        inner_default, nested_dict[key])
+    return dd
     
   def _save_value_dict(self, iteration):   
     t0 = time.time()
@@ -322,35 +357,63 @@ class GoalSpaceManager(object):
     plt.savefig(f'plots/uvfa_plots/four_rooms_uvfa_episode_{episode}.png')
     plt.close()
 
+  def step(self):
+    t0 = time.time()
+    iteration: int = next(self._iteration_iterator)
+
+    src_dest_pairs, batch_oarg = self._construct_obs_matrix()
+    if batch_oarg is not None:
+      
+      lstm_state = self.get_recurrent_state(batch_oarg.observation.shape[1])
+      
+      t1 = time.time()
+      values, _ = self._networks.unroll(
+        self._params,
+        self._rng_key,
+        batch_oarg,
+        lstm_state
+      )  # (1, B, |A|)
+      print(f'Took {time.time() - t1}s to forward pass through {values.shape} values')
+      values = values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
+      
+      print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
+      self._update_value_dict(src_dest_pairs, values)
+
+      if iteration > 0 and iteration % 100 == 0:
+        # self._save_value_dict(iteration)
+        self.visualize_value_function(self._value_matrix, iteration)
+
+      if len(src_dest_pairs) > 1000:
+        # start_state_features = (1, 5, 0, 0)  # TODO(ab): get from env and pass around
+        start_state_features = (2, 10, 0, 0)
+        # start_state_features = (8, 16, 0, 0)
+        pprint.pprint(self._value_matrix[start_state_features])
+
+      print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)}')
+
   def run(self):
-    for iteration in itertools.count():
-      t0 = time.time()
-      src_dest_pairs, batch_oarg = self._construct_obs_matrix()
-      if batch_oarg is not None:
-        
-        lstm_state = self.get_recurrent_state(batch_oarg.observation.shape[1])
-        
-        t1 = time.time()
-        values, _ = self._networks.unroll(
-          self._params,
-          self._rng_key,
-          batch_oarg,
-          lstm_state
-        )  # (1, B, |A|)
-        print(f'Took {time.time() - t1}s to forward pass through {values.shape} values')
-        values = values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
-        
-        print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
-        self._update_value_dict(src_dest_pairs, values)
+    for iteration in self._iteration_iterator:
+      self.step()
+      print(f'[GSM-RunLoop] Iteration {iteration} Goal Space Size {len(self._hash2obs)}')
 
-        if iteration > 0 and iteration % 100 == 0:
-          # self._save_value_dict(iteration)
-          self.visualize_value_function(self._value_matrix, iteration)
+  def save(self) -> Tuple[Dict]:
+    t0 = time.time()
+    print('[GSM] Checkpointing..')
+    to_return = self.get_variables(names=[])
+    assert len(to_return) == 6, len(to_return)
+    print(f'[GSM] Checkpointing took {time.time() - t0}s.')
+    return to_return
 
-        if len(src_dest_pairs) > 1000:
-          # start_state_features = (1, 5, 0, 0)  # TODO(ab): get from env and pass around
-          # start_state_features = (2, 10, 0, 0)
-          start_state_features = (8, 16, 0, 0)
-          pprint.pprint(self._value_matrix[start_state_features])
-
-        print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)}')
+  def restore(self, state: Tuple[Dict]):
+    t0 = time.time()
+    print('About to start restoring GSM from checkpoint.')
+    assert len(state) == 6, len(state)
+    ipdb.set_trace()
+    self._value_matrix = collections.defaultdict(
+      lambda : collections.defaultdict(lambda: 1.), state[0])
+    self._hash2obs = state[1]
+    self._hash2counts = state[2]
+    self._on_policy_counts = self._dict_to_default_dict(state[3], int)
+    self._hash2reward = state[4]
+    self._hash2discount = state[5]
+    print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
