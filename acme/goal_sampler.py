@@ -8,6 +8,7 @@ import networkx as nx
 
 from typing import Tuple, List
 
+from acme.jax import variable_utils
 from acme.wrappers.oar_goal import OARG
 from acme.agents.jax.r2d2.gsm import GoalSpaceManager
 from acme.agents.jax.r2d2.amdp import AMDP
@@ -44,20 +45,26 @@ class GoalSampler:
     
     self._task_goal_hash = tuple(task_goal.goals)
     self._exploration_goal_hash = tuple(exploration_goal.goals)
+
+    self.gsm_variable_client = variable_utils.VariableClient(
+      gsm, key='gsm_variables', update_period=1500) if gsm else None
+
+    if gsm:
+      self.fetch_gsm_dictionaries()
+
+  def fetch_gsm_dictionaries(self):
+    self.value_dict, \
+    self.goal_dict, \
+    self.count_dict, \
+    self.on_policy_edge_count_dict, \
+    self.reward_dict, \
+    self.discount_dict = self.gsm_variable_client.params
       
   def _update_gsm_dicts(self):
     """Update GSM dicts using try-except to account for GSM erroring b/c of threads."""
     if self._goal_space_manager is not None:
       try:
-        # TODO(ab): get rid of the copying, rn it prevents them from going out of sync
-        self.value_dict = copy.deepcopy(self._goal_space_manager.get_value_dict())
-        self.goal_dict = copy.deepcopy(self._goal_space_manager.get_goal_dict())
-        self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
-        self.on_policy_edge_count_dict = copy.deepcopy(
-          self._goal_space_manager.get_on_policy_count_dict())
-        extrinsics = self._goal_space_manager.get_extrinsic_reward_dicts()
-        self.reward_dict = copy.deepcopy(extrinsics[0])
-        self.discount_dict = copy.deepcopy(extrinsics[1])
+        self.fetch_gsm_dictionaries()
         print('[GoalSampler] Updated all GSM Dicts successfully.')
       except Exception as e:  # If error, keep the old stale copy of the dicts
         self._n_courier_errors += 1

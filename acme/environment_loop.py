@@ -245,10 +245,12 @@ class EnvironmentLoop(core.Worker):
     while not needs_reset:
       expansion_node = self._goal_sampler.begin_episode(timestep)
       self.count_dict = copy.deepcopy(self._goal_sampler.count_dict)
-    
+
+      t0 = time.time()
       timestep, needs_reset, attempted_edges, episode_logs = self.in_graph_rollout(
         timestep, expansion_node, episode_logs, reached_expansion_node
       )
+      print(f'[EnvironmentLoop] In-Graph Rollout took {time.time() - t0}s.')
 
       reached_target = reached_expansion_node(timestep, expansion_node)
       self._node2successes[expansion_node].append(reached_target)
@@ -509,6 +511,9 @@ class EnvironmentLoop(core.Worker):
       # Give the actor the opportunity to update itself.
       if self._should_update:
         self._actor.update()
+
+        if self._goal_space_manager:
+          self._goal_sampler.gsm_variable_client.update(wait=False)
 
       # Equivalent to: episode_return += timestep.reward
       # We capture the return value because if timestep.reward is a JAX
