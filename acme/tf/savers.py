@@ -207,7 +207,8 @@ class CheckpointingRunner(core.Worker):
     self._checkpointer.save(force=True)
 
   def step(self):
-    if isinstance(self._wrapped, core.Learner):
+    # if isinstance(self._wrapped, core.Learner):
+    if hasattr(self._wrapped, 'step'):
       # Learners have a step() method, so alternate between that and ckpt call.
       self._wrapped.step()
       self._checkpointer.save()
