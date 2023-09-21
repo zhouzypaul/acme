@@ -11,7 +11,7 @@ from typing import List, Tuple, Dict
 
 from acme.wrappers.oar_goal import OARG
 # from acme.agents.jax.r2d2.amdp import AMDP
-from acme.agents.jax.r2d2.amdp3 import AMDP
+from acme.agents.jax.r2d2.amdp import AMDP
 
 
 class GoalSampler:
