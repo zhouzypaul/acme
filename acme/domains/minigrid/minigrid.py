@@ -14,6 +14,15 @@ from acme.wrappers.oar_goal import ObservationActionRewardGoalWrapper
 from acme.wrappers.observation_action_reward import ObservationActionRewardWrapper
 from acme.wrappers.minigrid_wrapper import MiniGridWrapper
 
+
+# NOTE: we are assuming a max number of keys and doors
+N_POS_DIMS = 2  # player (x, y) location
+N_KEY_DIMS = 1  # has_key or not
+N_DOOR_DIMS = 7 # number of possible doors in the puzzle
+N_OBJECT_DIMS = 1  # is object being carried or not
+N_GOAL_DIMS = N_POS_DIMS + N_KEY_DIMS + N_DOOR_DIMS + N_OBJECT_DIMS
+
+
 class MinigridInfoWrapper(Wrapper):
   """Include extra information in the info dict for debugging/visualizations."""
 
@@ -45,11 +54,22 @@ class MinigridInfoWrapper(Wrapper):
     info['needs_reset'] = truncated  # pfrl needs this flag
     info['TimeLimit.truncated'] = truncated  # acme needs this flag
     info['timestep'] = self._timestep # total number of timesteps in env
-    info['has_key'] = self.env.unwrapped.carrying is not None
+    
+    carrying = self.unwrapped.carrying
+
+    if carrying is not None:
+      assert carrying.type in ('key', 'ball'), carrying
+
+    info['has_key'] = carrying is not None and carrying.type == 'key'
+    info['has_ball'] = carrying is not None and carrying.type == 'ball'
+    
     if info['has_key']:
-      assert self.unwrapped.carrying.type == 'key', self.env.unwrapped.carrying
-    door_open = determine_is_door_open(self)
-    info['door_open'] = door_open is not None and door_open
+      assert carrying.type == 'key', self.env.unwrapped.carrying
+
+    door_states = get_all_door_states(self)
+    for i, door_state in enumerate(door_states):
+      info[f'door{i}'] = door_state
+    
     return info
 
 
@@ -190,13 +210,63 @@ def determine_is_door_open(env):
         return tile.is_open
 
 
+def determine_task_goal_features(env):
+  def navigational_task_goal():
+    """Task goal: (goal_x, goal_y, ...don't cares...)."""
+    goal_pos = determine_goal_pos(env)
+    if goal_pos:
+      n_padding_dims = N_GOAL_DIMS - len(goal_pos)
+      return np.concatenate((
+        goal_pos,
+        # NOTE: -1 features mean that they don't matter
+        -np.ones((n_padding_dims,), dtype=np.int16)))
+  
+  def pickup_ball_task_goal():
+    """Task goal: (...don't cares..., has_ball=1)."""
+    n_padding_dims = N_GOAL_DIMS - 1
+    return np.concatenate((
+      -np.ones((n_padding_dims,), dtype=np.int16),
+      np.asarray([1], dtype=np.int16)
+    ))
+
+  nav_goal = navigational_task_goal()
+  task_goal_features = nav_goal if nav_goal is not None \
+    else pickup_ball_task_goal()
+
+  print(f'[MiniGrid-Environment] GoalFeatures: {task_goal_features}')
+  return task_goal_features
+
+
+# TODO(ab): Consider using MiniGridEnv::hash()
 def info2goals(info):
+  door_info = extract_door_info(info)
+  door_array = [0] * N_DOOR_DIMS
+  if door_info:
+    door_array[:len(door_info)] = door_info
   return np.array([
     info['player_x'],
     info['player_y'],
     info['has_key'],
-    info['door_open']
+    *door_array,
+    info['has_ball']
     ], dtype=np.int16)
+
+
+def get_all_door_states(env):
+  from minigrid.core.world_object import Door
+  # State 0: open, 1: closed, 2: locked
+  door_states = []
+  for i in range(env.grid.width):
+    for j in range(env.grid.height):
+      tile = env.grid.get(i, j)
+      if isinstance(tile, Door):
+        obj_type, color, state = tile.encode()
+        door_states.append(state)
+  return door_states
+
+
+def extract_door_info(info):
+  return [info[var_name] for var_name in info if 'door' in var_name]
 
 
 def environment_builder(
@@ -235,15 +305,6 @@ def environment_builder(
   
   # Convert the gym environment to a dm_env
   env = GymnasiumWrapper(env)
-  goal_pos = determine_goal_pos(env)
-  n_goal_dims = 4
-  n_padding_dims = n_goal_dims - len(goal_pos)
-  task_goal_features = np.concatenate((
-    goal_pos,
-    # NOTE: -1 features mean that they don't matter
-    -np.ones((n_padding_dims,), dtype=np.int16)))
-  print(f'[MiniGrid-Environment] GoalFeatures: {task_goal_features}')
-  
   env = MiniGridWrapper(
     env,
     num_stacked_frames=1,
@@ -253,14 +314,14 @@ def environment_builder(
     pooled_frames=1,
     to_float=True,
     goal_conditioned=goal_conditioned,
-    task_goal_features=task_goal_features
+    task_goal_features=determine_task_goal_features(env)
   )
   
   # Use the OARG Wrapper
   env = ObservationActionRewardGoalWrapper(
     env,
     info2goals,
-    n_goal_dims=n_goal_dims
+    n_goal_dims=N_GOAL_DIMS
   )
 
   ts0 = env.reset()
