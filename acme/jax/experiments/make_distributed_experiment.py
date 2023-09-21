@@ -16,6 +16,7 @@
 
 import itertools
 import math
+import datetime
 from typing import Any, List, Optional
 
 from acme import core
@@ -291,7 +292,7 @@ def make_distributed_experiment(
     variable_client = variable_utils.VariableClient(
         variable_source,
         key='actor_variables',
-        update_period=400)
+        update_period=datetime.timedelta(minutes=1))
     env = experiment.environment_factory(rng_num)
     gsm = GoalSpaceManager(env, rng_num, networks, variable_client)
     if experiment.checkpointing:
