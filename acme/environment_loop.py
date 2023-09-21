@@ -26,8 +26,8 @@ from acme.utils import loggers
 from acme.utils import observers as observers_lib
 from acme.utils import signals
 from acme.wrappers.oar_goal import OARG
-from acme.agents.jax.r2d2.gsm import GoalSpaceManager
-from acme.goal_sampler import GoalSampler
+from acme.agents.jax.r2d2.gsm4 import GoalSpaceManager
+from acme.agents.jax.r2d2.subgoal_sampler import SubgoalSampler
 from acme.utils.utils import GoalBasedTransition
 from acme.utils.utils import termination, truncation, continuation
 from acme import specs as env_specs
@@ -100,15 +100,9 @@ class EnvironmentLoop(core.Worker):
     self._use_random_policy_for_exploration = use_random_policy_for_exploration
     self._pure_exploration_probability = pure_exploration_probability
 
-    self._goal_sampler = GoalSampler(
-      goal_space_manager,
-      task_goal_probability,
-      self.task_goal,
-      self.exploration_goal,
-      method='amdp' if self._goal_space_manager else 'task'
-    )
-
+    self.goal_dict = {}
     self.count_dict = {}
+    self._n_courier_errors = 0
 
     self._goal_achievement_rates = collections.defaultdict(float)
     self._goal_pursual_counts = collections.defaultdict(int)
@@ -225,6 +219,18 @@ class EnvironmentLoop(core.Worker):
         (obs[:, :, :n_obs_dims],
          goal[:, :, :n_goal_dims]), axis=-1)
     raise NotImplementedError(method)
+
+  # TODO(ab): this should be based on which options are available at s_t?
+  def _get_current_node(self, timestep: dm_env.TimeStep) -> Tuple:
+    return tuple([int(g) for g in timestep.observation.goals])
+
+  def _update_dicts_from_gsm(self):
+    try:
+      self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
+      self.goal_dict = self._goal_space_manager.get_goal_dict()
+    except Exception as e:  # If error, keep the old stale copy of the dicts
+      self._n_courier_errors += 1
+      print(f'[GoalSampler] Warning: Courier error # {self._n_courier_errors}. Exception: {e}')
   
   def episodic_rollout(
     self,
@@ -242,13 +248,34 @@ class EnvironmentLoop(core.Worker):
     needs_reset = False
     overall_attempted_edges: List[Tuple[OARG, OARG]] = []
     
+    if self._goal_space_manager:
+      self._update_dicts_from_gsm()
+    
     while not needs_reset:
-      expansion_node = self._goal_sampler.begin_episode(timestep)
-      self.count_dict = copy.deepcopy(self._goal_sampler.count_dict)
+      t0 = time.time()
+      abstract_policy = {}
+      expansion_node = tuple(self.task_goal.goals)
+      current_node = self._get_current_node(timestep)
+      if self._goal_space_manager:
+        expansion_node, abstract_policy = self._goal_space_manager.begin_episode(current_node)
+      print(f'[EnvironmentLoop] Expansion Node: {expansion_node}')
+      print(f'[EnvironmentLoop] begin_episode() took {time.time() - t0}s.')
+
+      subgoal_sampler = SubgoalSampler(
+        abstract_policy,
+        self.goal_dict,
+        task_goal_probability=self._task_goal_probability,
+        task_goal=self.task_goal,
+        exploration_goal_probability=0.,
+        exploration_goal=self.exploration_goal,
+        sampling_method='amdp' if self._goal_space_manager else 'task')
+
+      subgoal_seq = subgoal_sampler.get_subgoal_sequence(current_node, expansion_node)
+      print(f'[EnvironmentLoop] Subgoal seq to {expansion_node}: {subgoal_seq}')
 
       t0 = time.time()
       timestep, needs_reset, attempted_edges, episode_logs = self.in_graph_rollout(
-        timestep, expansion_node, episode_logs, reached_expansion_node
+        timestep, expansion_node, subgoal_sampler, episode_logs, reached_expansion_node
       )
       print(f'[EnvironmentLoop] In-Graph Rollout took {time.time() - t0}s.')
 
@@ -260,7 +287,7 @@ class EnvironmentLoop(core.Worker):
       if not needs_reset and reached_target and \
         random.random() < self._pure_exploration_probability:
         
-        overall_attempted_edges.append((timestep.observation, self._goal_sampler._exploration_goal))
+        overall_attempted_edges.append((timestep.observation, self.exploration_goal))
         print(f'[EnvironmentLoop] Reached {expansion_node}; starting pure exploration rollout.')
         timestep, needs_reset, episode_logs = self.exploration_rollout(timestep, episode_logs)
     
@@ -301,8 +328,9 @@ class EnvironmentLoop(core.Worker):
     if not is_warmup_episode:
       episode_logs, attempted_edges = self.episodic_rollout(timestep, episode_logs)
     else:
-      self._goal_sampler.begin_episode(timestep)
-      self.count_dict = copy.deepcopy(self._goal_sampler.count_dict)
+      t0 = time.time()
+      if self._goal_space_manager:
+        self._update_dicts_from_gsm()
       attempted_edges = [(timestep.observation, self.exploration_goal)]
       _, _, episode_logs = self.exploration_rollout(timestep, episode_logs)
 
@@ -325,11 +353,6 @@ class EnvironmentLoop(core.Worker):
       self.stream_achieved_goals_to_gsm(filtered_trajectory, attempted_edges)
       print(f'Took {t1 - t0}s to filter achieved goals')
       print(f'Took {time.time() - t1}s to stream achieved goals to the GSM')
-      
-      # Update the Q-function parameters of the GSM
-      t0 = time.time()
-      self._goal_space_manager.update_params()
-      print(f'Took {time.time() - t0}s to update GSM Learner Params')
     
     # Collect the results and combine with counts.
     steps_per_second = episode_logs['episode_steps'] / (time.time() - episode_start_time)
@@ -351,6 +374,7 @@ class EnvironmentLoop(core.Worker):
     self,
     timestep: dm_env.TimeStep,
     target_node: Tuple,
+    subgoal_sampler: SubgoalSampler,
     episode_logs: Dict,
     termination_func: Callable[[dm_env.TimeStep, Tuple], bool],
   ) -> Tuple[dm_env.TimeStep, bool, List[Tuple[OARG, OARG]], Dict]:
@@ -361,7 +385,7 @@ class EnvironmentLoop(core.Worker):
     needs_reset = False
 
     while not needs_reset and not termination_func(timestep, target_node):
-      goal = self._goal_sampler(timestep)
+      goal = subgoal_sampler(self._get_current_node(timestep))
 
       attempted_edges.append((timestep.observation, goal))
 
@@ -405,7 +429,7 @@ class EnvironmentLoop(core.Worker):
     return timestep, needs_reset, episode_logs
   
   def extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
-    goal_space = self._goal_sampler.goal_dict
+    goal_space = self.goal_dict
 
     visited_states = {
       tuple(trans.next_ts.observation.goals): trans.next_ts.observation 
@@ -512,9 +536,6 @@ class EnvironmentLoop(core.Worker):
       if self._should_update:
         self._actor.update()
 
-        if self._goal_space_manager:
-          self._goal_sampler.gsm_variable_client.update(wait=False)
-
       # Equivalent to: episode_return += timestep.reward
       # We capture the return value because if timestep.reward is a JAX
       # DeviceArray, episode_return will not be mutated in-place. (In all other
@@ -550,7 +571,7 @@ class EnvironmentLoop(core.Worker):
   ) -> List[GoalBasedTransition]:
     """Filter the trajectory based on goals in the old + new goal space."""
 
-    goal_space = {**self._goal_sampler.goal_dict, **discovered_goals}
+    goal_space = {**self.goal_dict, **discovered_goals}
     filtered_transitions: List[GoalBasedTransition] = []
     for transition in trajectory:
       if tuple(transition.next_ts.observation.goals) in goal_space:
@@ -727,6 +748,7 @@ class EnvironmentLoop(core.Worker):
 
       print(f'HER took {time.time() - start_time}s')
 
+  # TODO(ab): fix this function and move to the GSM.
   def visualize_goal_space(
       self, ts0: dm_env.TimeStep, node2success: Dict, current_episode: int):
     node2rate = {}
@@ -746,17 +768,15 @@ class EnvironmentLoop(core.Worker):
       num_attempts.append(node2attempts[node])
 
     # Visualize all graph nodes, not just descendants.
-    start_node = tuple(ts0.observation.goals)
-    hash2oarg = self._goal_sampler.goal_dict
-    descendants = self._goal_sampler.get_descendants(start_node)
+    start_node = tuple([int(g) for g in ts0.observation.goals])
+    hash2oarg = self.goal_dict
+    
+    descendants = self._goal_space_manager.get_descendants(start_node)
+    
     graph_x = [goal_hash[0] for goal_hash in hash2oarg]
     graph_y = [goal_hash[1] for goal_hash in hash2oarg]
     descendants_x = [goal_hash[0] for goal_hash in descendants]
     descendants_y = [goal_hash[1] for goal_hash in descendants]
-
-    reachables, probs = self._goal_sampler.get_target_node_probability_dist(ts0, 'task')
-    reachables_x = [node[0] for node in reachables]
-    reachables_y = [node[1] for node in reachables]
 
     filename = f'actor_{self._actor_id}_expansion_nodes_episode_{current_episode}.png'
 
@@ -776,11 +796,6 @@ class EnvironmentLoop(core.Worker):
     plt.scatter(descendants_x, descendants_y, label='Descendants', c='red')
     plt.title('Global and Local Graph')
     plt.legend()
-
-    plt.subplot(224)
-    plt.scatter(reachables_x, reachables_y, c=probs)
-    plt.colorbar()
-    plt.title('Target Node Sampling Probs')
 
     plt.suptitle(f'Episode {current_episode}')
     plt.savefig(f'plots/target_nodes/{filename}')
