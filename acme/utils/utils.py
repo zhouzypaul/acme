@@ -2,10 +2,12 @@ import os
 import dm_env
 import dataclasses
 import numpy as np
+import matplotlib.pyplot as plt
 
-from typing import Tuple
-
+from typing import Tuple, List
 from collections import defaultdict
+
+from acme.wrappers.oar_goal import OARG
 
 
 def defaultify(d):
@@ -58,6 +60,22 @@ def create_log_dir(experiment_name):
       print("Successfully created the directory %s " % path)
   return path
 
+
+def debug_visualize_trajectory(
+    trajectory: List[GoalBasedTransition], folder_name: str):
+  
+  def dump_oarg(filename: str, oarg: OARG, pursued_goal: Tuple):
+    plt.subplot(121)
+    plt.imshow((oarg.observation[:,:,:3] * 255).astype(np.uint8))
+    plt.title(f'R={oarg.reward} G={tuple(oarg.goals)}')
+    plt.subplot(122)
+    plt.imshow((oarg.observation[:,:,3:] * 255).astype(np.uint8))
+    plt.title(f'R={oarg.reward} G={pursued_goal}')
+    plt.savefig(f'plots/{folder_name}/{filename}.png')
+
+  for i, transition in enumerate(trajectory):
+    obs = transition.next_ts.observation
+    dump_oarg(f'state_{i}', obs, transition.pursued_goal)
 
 if __name__ == '__main__':
   dictionary = {1: {1: 2, 2: 3}, 2: {1: 1}}
