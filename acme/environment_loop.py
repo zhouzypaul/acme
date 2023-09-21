@@ -26,7 +26,7 @@ from acme.utils import loggers
 from acme.utils import observers as observers_lib
 from acme.utils import signals
 from acme.wrappers.oar_goal import OARG
-from acme.agents.jax.r2d2.gsm4 import GoalSpaceManager
+from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.r2d2.subgoal_sampler import SubgoalSampler
 from acme.utils.utils import GoalBasedTransition
 from acme.utils.utils import termination, truncation, continuation
