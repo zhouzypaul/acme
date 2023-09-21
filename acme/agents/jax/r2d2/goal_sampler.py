@@ -1,6 +1,7 @@
 """To pick expansion node in the graph and an abstract policy that reaches it."""
 
 import time
+import ipdb
 import random
 import numpy as np
 import jax.numpy as jnp
@@ -29,7 +30,8 @@ class GoalSampler:
       task_goal: OARG,
       exploration_goal: OARG,
       exploration_goal_probability: float = 0.,
-      method: str = 'amdp'):
+      method: str = 'amdp',
+      ignore_non_rewarding_terminal_nodes: bool = True):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -53,6 +55,10 @@ class GoalSampler:
     
     self._task_goal_hash = tuple(task_goal.goals)
     self._exploration_goal_hash = tuple(exploration_goal.goals)
+
+    # This is to avoid picking death nodes as expansion nodes b/c 
+    # the exploration policy can't be run from there anyway.
+    self._ignore_non_rewarding_terminal_nodes = ignore_non_rewarding_terminal_nodes
 
   def begin_episode(self, current_node: Tuple) -> Tuple:
     goal_dict = self.get_candidate_goals(current_node)
@@ -79,14 +85,18 @@ class GoalSampler:
       print(f'[GoalSampler] Goal Sequence: {goal_sequence}')
       return target_node
 
+  def is_death_node(self, g):
+    return self.reward_dict[g] <= 0 and self.discount_dict[g] == 0
+
   def get_candidate_goals(self, current_node: Tuple) -> Dict:
     """Get the possible goals to pursue at the current state."""
     # at_goal = lambda g: (timestep.observation.goals == g).all()
     at_goal = lambda g: all([g1 == g2 for g1, g2 in zip(current_node, g) if g2 >= 0])
     not_special_context = lambda g: g != self._exploration_goal_hash and g != self._task_goal_hash
+    is_death = lambda g: self._ignore_non_rewarding_terminal_nodes and self.is_death_node(g)
     return {
       goal: oar for (goal, oar) in self.goal_dict.items()
-        if not at_goal(goal) and not_special_context(goal)
+        if not at_goal(goal) and not_special_context(goal) and not is_death(goal)
     }
   
   def _select_expansion_node(
@@ -104,6 +114,8 @@ class GoalSampler:
       return random.choice(potential_goals)
 
     if method == 'novelty':
+      if any([self.is_death_node(g) for g in goal_dict]):
+        print(f'Death node made it into candidate goals: {goal_dict}')
       dist = self._get_target_node_probability_dist(current_node)
       reachables = dist[0] if dist is not None else list(goal_dict.keys())
       probs = dist[1] if dist is not None else np.ones((len(reachables),)) / len(reachables)
@@ -169,7 +181,9 @@ class GoalSampler:
     adjacency = (self.transition_tensor > threshold).astype(bool)
     reachable_idx = bfs(adjacency, row)
     reachable_nodes = [self.idx2hash[idx] for idx in reachable_idx]
-    print(f'[GoalSampler] Nodes reachable from {src_node}: {reachable_nodes}')
+    if self._ignore_non_rewarding_terminal_nodes:
+      reachable_nodes = [node for node in reachable_nodes if not self.is_death_node(node)]
+    # print(f'[GoalSampler] Nodes reachable from {src_node}: {reachable_nodes}')
     return reachable_nodes
 
   def _get_descendants(
