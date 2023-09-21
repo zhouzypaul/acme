@@ -13,6 +13,7 @@ from acme.wrappers.gymnasium_wrapper import GymnasiumWrapper
 from acme.wrappers.oar_goal import ObservationActionRewardGoalWrapper
 from acme.wrappers.observation_action_reward import ObservationActionRewardWrapper
 from acme.wrappers.minigrid_wrapper import MiniGridWrapper
+from minigrid.core.world_object import Lava
 
 
 # NOTE: we are assuming a max number of keys and doors
@@ -20,7 +21,8 @@ N_POS_DIMS = 2  # player (x, y) location
 N_KEY_DIMS = 1  # has_key or not
 N_DOOR_DIMS = 7 # number of possible doors in the puzzle
 N_OBJECT_DIMS = 1  # is object being carried or not
-N_GOAL_DIMS = N_POS_DIMS + N_KEY_DIMS + N_DOOR_DIMS + N_OBJECT_DIMS
+N_LAVA_DIMS = 1  # is the location seek/avoid (lava or not)
+N_GOAL_DIMS = N_POS_DIMS + N_KEY_DIMS + N_DOOR_DIMS + N_OBJECT_DIMS + N_LAVA_DIMS
 
 
 class MinigridInfoWrapper(Wrapper):
@@ -36,6 +38,7 @@ class MinigridInfoWrapper(Wrapper):
   def reset(self):
     obs, info = self.env.reset()
     info = self._modify_info_dict(info)
+    print(self)
     return obs, info
 
   def step(self, action):
@@ -54,6 +57,9 @@ class MinigridInfoWrapper(Wrapper):
     info['needs_reset'] = truncated  # pfrl needs this flag
     info['TimeLimit.truncated'] = truncated  # acme needs this flag
     info['timestep'] = self._timestep # total number of timesteps in env
+    
+    info['is_lava'] = isinstance(
+      self.grid.get(info['player_x'], info['player_y']), Lava)
     
     carrying = self.unwrapped.carrying
 
@@ -248,6 +254,7 @@ def info2goals(info):
     info['player_y'],
     info['has_key'],
     *door_array,
+    info['is_lava'],
     info['has_ball']
     ], dtype=np.int16)
 
