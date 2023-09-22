@@ -476,8 +476,8 @@ class GoalSpaceManager(Saveable):
       if len(src_dest_pairs) > 1000:
         # TODO(ab): get from env and pass around
         # start_state_features = (1, 5, 0, 0)  
-        start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
-        # start_state_features = (2, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
+        # start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
+        start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
         # start_state_features = (3, 1, 0, 1, 2, 0, 0, 0, 0, 0, 0)  # S3R1
         # start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0)  # S5R3
         if start_state_features in self._hash2idx:
