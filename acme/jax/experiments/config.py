@@ -172,6 +172,7 @@ class ExperimentConfig(Generic[builders.Networks, builders.Policy,
   logger_factory: loggers.LoggerFactory = dataclasses.field(
       default_factory=experiment_utils.create_experiment_logger_factory)
   checkpointing: Optional[CheckpointingConfig] = CheckpointingConfig()
+  is_cfn: Optional[bool] = False
 
   # TODO(stanczyk): Make get_evaluator_factories a standalone function.
   def get_evaluator_factories(self):
@@ -289,6 +290,7 @@ def default_evaluator_factory(
       variable_source: core.VariableSource,
       counter: counting.Counter,
       make_actor: MakeActorFn[builders.Policy],
+      cfn_variable_source: Optional[core.VariableSource] = None
   ):
     """The evaluation process."""
 
@@ -299,7 +301,8 @@ def default_evaluator_factory(
     environment_spec = specs.make_environment_spec(environment)
     networks = network_factory(environment_spec)
     policy = policy_factory(networks, environment_spec, True)
-    actor = make_actor(actor_key, policy, environment_spec, variable_source)
+    actor = make_actor(actor_key, policy, environment_spec, variable_source,
+                       cfn_variable_source=cfn_variable_source)
 
     # Create logger and counter.
     counter = counting.Counter(counter, 'evaluator')

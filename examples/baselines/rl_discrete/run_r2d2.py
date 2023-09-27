@@ -47,27 +47,32 @@ flags.DEFINE_float('spi', 1.0,
                      'Number of samples per insert. 0 means does not constrain, other values do.')
 flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
 flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets all")
+flags.DEFINE_string("cfn_gpu_id", "1", "which GPU to use for CFN optimization.")
+flags.DEFINE_float('cfn_spi', 8.0,
+                     'Number of samples per insert. 0 means does not constrain, other values do.')
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090. Paper is 64')
 flags.DEFINE_boolean('use_rnd', False, 'Whether to use RND')
+flags.DEFINE_boolean('use_cfn', False, 'Whether to use CFN')
 flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
 flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay starts')
 
 flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
-flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
-flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')
+flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')  # NOTE: NGU paper uses 0.3
+flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')  # NOTE: NGU paper is 5e-4
 flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
-flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')
+flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')  # NOTE: NGU paper is 2e-4
 # These are different from paper to here, so will add as hypers
-flags.DEFINE_float('target_update_period', 1200, 'How often to update target network') # paper is 2500
-flags.DEFINE_float('variable_update_period', 100, 'How often to update actor variables') # paper is 400
+flags.DEFINE_float('target_update_period', 1200, 'How often to update target network') # NOTE: paper is 2500
+flags.DEFINE_float('variable_update_period', 100, 'How often to update actor variables') # NOTE: paper is 400
 flags.DEFINE_boolean('use_stale_rewards', False, 'Use stale rewards for RND')
-
 flags.DEFINE_integer('burn_in_length', 8, 'How long to burn in in replay to get good core state (paper is 20/40)')
 flags.DEFINE_integer('trace_length', 40, 'Length of sequence to fetch/train on (paper is 80)')
 flags.DEFINE_integer('sequence_period', 20, 'How often to start a new sequence. Sequences are repeated in dataset. Should be half of trace_length (paper is 40)')
 
+# MiniGrid Config
+flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
 
 FLAGS = flags.FLAGS
 
@@ -89,6 +94,23 @@ def make_rnd_builder(r2d2_builder):
     return builder
 
 
+def make_cfn_builder(r2d2_builder):
+  from acme.agents.jax.cfn import config as cfn_config
+  from acme.agents.jax.cfn import builder as cfn_builder
+  cfn_config = cfn_config.CFNConfig(
+    use_stale_rewards=FLAGS.use_stale_rewards,
+    is_sequence_based=True,
+    samples_per_insert=FLAGS.cfn_spi,
+  )
+  logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
+  builder = cfn_builder.CFNBuilder(
+    rl_agent=r2d2_builder,
+    config=cfn_config,
+    logger_fn=logger_fn
+  )
+  return builder
+
+
 def build_experiment_config():
   """Builds R2D2 experiment config which can be executed in different ways."""
   batch_size = FLAGS.learner_batch_size
@@ -97,6 +119,7 @@ def build_experiment_config():
   # cannot be pickled and pickling is necessary when launching distributed
   # experiments via Launchpad.
   env_name = FLAGS.env_name
+  max_episode_steps = FLAGS.max_episode_steps
 
   # Create an environment factory.
   def environment_factory(seed: int) -> dm_env.Environment:
@@ -109,6 +132,14 @@ def build_experiment_config():
         num_stacked_frames=1,
         flatten_frame_stack=True,
         grayscaling=False)
+  
+  def minigrid_environment_factory(seed: int) -> dm_env.Environment:
+    del seed  # NOTE: not supporting different seeds on the env for now.
+    return helpers.make_minigrid_environment(
+      level_name=env_name,
+      max_episode_len=max_episode_steps,
+      oar_wrapper=True
+    )
 
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   config = r2d2.R2D2Config(
@@ -148,22 +179,32 @@ def build_experiment_config():
       r2d2_networks = r2d2.make_atari_networks(env_spec)
       rnd_networks = rnd.make_networks(env_spec, direct_rl_networks=r2d2_networks)
       return rnd_networks
+  elif FLAGS.use_cfn:
+    agent_builder = make_cfn_builder(agent_builder)
+
+    def network_factory(env_spec):
+      from acme.agents.jax.cfn.networks import make_networks
+      r2d2_networks = r2d2.make_atari_networks(env_spec)
+      cfn_networks = make_networks(env_spec, r2d2_networks)
+      return cfn_networks
   else:
     network_factory = r2d2.make_atari_networks
 
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
+  env_factory = minigrid_environment_factory if 'minigrid' in env_name.lower() else environment_factory
 
   return experiments.ExperimentConfig(
       # builder=r2d2.R2D2Builder(config),
       builder=agent_builder,
       # network_factory=r2d2.make_atari_networks,
       network_factory=network_factory,
-      environment_factory=environment_factory,
+      environment_factory=env_factory,
       seed=FLAGS.seed,
       max_num_actor_steps=FLAGS.num_steps,
       checkpointing=checkpointing_config,
-      logger_factory=functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir))
+      logger_factory=functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir),
+      is_cfn=FLAGS.use_cfn)
 
 
 def sigterm_log_endtime_handler(_signo, _stack_frame):

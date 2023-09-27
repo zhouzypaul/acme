@@ -131,6 +131,25 @@ def make_atari_environment(
   return wrappers.wrap_all(env, wrapper_list)
 
 
+def make_minigrid_environment(
+    level_name: str = 'MiniGrid-Empty-16x16',
+    max_episode_len: int = 1000,
+    oar_wrapper: bool = False,
+) -> dm_env.Environment:
+  """Loads the Atari environment."""
+  from acme.domains.minigrid.minigrid import environment_builder
+
+  env = environment_builder(
+    level_name,
+    max_steps=max_episode_len,
+    goal_conditioned=False
+  )
+  env = wrappers.SinglePrecisionWrapper(env)
+  if oar_wrapper:
+     env = wrappers.ObservationActionRewardWrapper(env)
+  return env
+
+
 def make_dqn_atari_network(
     environment_spec: specs.EnvironmentSpec) -> dqn.DQNNetworks:
   """Creates networks for training DQN on Atari."""

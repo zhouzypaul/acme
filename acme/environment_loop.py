@@ -16,18 +16,22 @@
 
 import operator
 import time
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 from acme import core
 from acme.utils import counting
 from acme.utils import loggers
 from acme.utils import observers as observers_lib
 from acme.utils import signals
+from acme.agents.jax.cfn.cfn import CFN
+from acme.wrappers.observation_action_reward import OAR
 
 import dm_env
 from dm_env import specs
 import numpy as np
+import jax.numpy as jnp
 import tree
+import collections
 
 
 class EnvironmentLoop(core.Worker):
@@ -63,6 +67,7 @@ class EnvironmentLoop(core.Worker):
       should_update: bool = True,
       label: str = 'environment_loop',
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
+      cfn: Optional[CFN] = None
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -72,6 +77,7 @@ class EnvironmentLoop(core.Worker):
         label, steps_key=self._counter.get_steps_key())
     self._should_update = should_update
     self._observers = observers
+    self._cfn = cfn
 
   def run_episode(self) -> loggers.LoggingData:
     """Run one episode.
@@ -88,6 +94,7 @@ class EnvironmentLoop(core.Worker):
     select_action_durations: List[float] = []
     env_step_durations: List[float] = []
     episode_steps: int = 0
+    episode_trajectory: List[Tuple[OAR, dict]] = []
 
     # For evaluation, this keeps track of the total undiscounted reward
     # accumulated during the episode.
@@ -98,6 +105,9 @@ class EnvironmentLoop(core.Worker):
     env_reset_duration = time.time() - env_reset_start
     # Make the first observation.
     self._actor.observe_first(timestep)
+    
+    episode_trajectory.append((timestep.observation, self._environment.get_info()))
+
     for observer in self._observers:
       # Initialize the observer with the current state of the env after reset
       # and the initial timestep.
@@ -124,6 +134,7 @@ class EnvironmentLoop(core.Worker):
         # One environment step was completed. Observe the current state of the
         # environment, the current timestep and the action.
         observer.observe(self._environment, timestep, action)
+      episode_trajectory.append((timestep.observation, self._environment.get_info()))
 
       # Give the actor the opportunity to update itself.
       if self._should_update:
@@ -141,6 +152,11 @@ class EnvironmentLoop(core.Worker):
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_steps)
 
+    if self._cfn:
+      t0 = time.time()
+      self.update_global_counts(episode_trajectory)
+      print(f'[EnvironmentLoop] Took {time.time() - t0}s to update global ground-truth visitation counts.')
+
     # Collect the results and combine with counts.
     steps_per_second = episode_steps / (time.time() - episode_start_time)
     result = {
@@ -155,6 +171,31 @@ class EnvironmentLoop(core.Worker):
     for observer in self._observers:
       result.update(observer.get_metrics())
     return result
+
+  def update_global_counts(self, trajectory: List[Tuple[OAR, dict]]):
+
+    def get_key(info: dict) -> Tuple:
+      return self._environment.info2vec(info)
+
+    def extract_counts() -> dict:
+      """Return a dictionary mapping goal to visit count in episode."""
+      hashes = [get_key(trans[1]) for trans in trajectory]
+      return dict(collections.Counter(hashes))
+
+    def extract_goal_to_obs() -> dict:
+      """Return a dictionary mapping goal hash to the OAR when goal was achieved."""
+      return {
+        get_key(transition[1]): 
+        # We convert to jnp b/c courier cannot handle np arrays
+        # TODO(ab/sl): This assumes that the 1st 3 channels are the obs
+        jnp.asarray(transition[0].observation[:, :, :3]) 
+        for transition in trajectory
+      }
+    
+    hash2counts = extract_counts()
+    hash2obs = extract_goal_to_obs()
+
+    self._cfn.futures.update_ground_truth_counts(hash2obs, hash2counts)
 
   def run(
       self,

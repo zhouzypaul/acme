@@ -93,6 +93,7 @@ def get_local_resources(launch_type):
         'replay'    : [4, 5, 6, 7],
         'counter' : [8, 9],
         'evaluator': [10],
+        'cfn': [11, 12]
       }
     else:
       cpu_dict = {}
@@ -101,6 +102,7 @@ def get_local_resources(launch_type):
       "counter": make_process_dict(pin_to=cpu_dict.get('counter')),
       "replay": make_process_dict(pin_to=cpu_dict.get('replay')),
       "evaluator": make_process_dict(pin_to=cpu_dict.get('evaluator')),
+      "cfn": make_process_dict(FLAGS.cfn_gpu_id, pin_to=cpu_dict.get('cfn'))
     }
     # TODO: Be able to choose actor GPU so that we can compare 1 and 2 GPU utilization etc.
     actor_resources = make_actor_resources(num_actors=num_actors, one_cpu_per_actor=one_cpu_per_actor)

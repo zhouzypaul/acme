@@ -122,6 +122,20 @@ def make_distributed_experiment(
         evaluation=False)
     return experiment.builder.make_replay_tables(spec, policy)
 
+  def build_cfn_replay() -> List[reverb.Table]:
+    """Replay storage for storing CFN transitions (single step with coins)."""
+    dummy_seed = 1
+    spec = (
+        experiment.environment_spec or
+        specs.make_environment_spec(experiment.environment_factory(dummy_seed)))
+    network = experiment.network_factory(spec)
+    policy = config.make_policy(
+        experiment=experiment,
+        networks=network,
+        environment_spec=spec,
+        evaluation=False)
+    return experiment.builder.make_cfn_replay_tables(spec, policy)
+
   def build_model_saver(variable_source: core.VariableSource):
     assert experiment.checkpointing
     environment = experiment.environment_factory(0)
@@ -200,6 +214,40 @@ def make_distributed_experiment(
         # properly doing a pmap/pmean on the loss/gradients, respectively.
 
     return learner
+  
+  def build_cfn(
+      random_key: networks_lib.PRNGKey,
+      replay: reverb.Client,
+      counter: Optional[counting.Counter] = None,
+  ):
+    dummy_seed = 1
+    spec = (
+        experiment.environment_spec or
+        specs.make_environment_spec(experiment.environment_factory(dummy_seed)))
+    networks = experiment.network_factory(spec)
+    iterator = experiment.builder.make_cfn_dataset_iterator(replay)
+    cfn_counter = counting.Counter(counter, 'cfn')
+    cfn_obj = experiment.builder.make_cfn_object(
+      random_key,
+      networks,
+      iterator,
+      experiment.logger_factory,
+      replay,
+      cfn_counter)
+    if experiment.checkpointing:
+      checkpointing = experiment.checkpointing
+      cfn_obj = savers.CheckpointingRunner(
+        cfn_obj,
+        key='cfn_object',
+        subdirectory='cfn_object',
+        time_delta_minutes=5,
+        directory=checkpointing.directory,
+        add_uid=checkpointing.add_uid,
+        max_to_keep=checkpointing.max_to_keep,
+        keep_checkpoint_every_n_hours=checkpointing.keep_checkpoint_every_n_hours,
+        checkpoint_ttl_seconds=checkpointing.checkpoint_ttl_seconds,
+      )
+    return cfn_obj
 
   def build_inference_server(
       inference_server_config: inference_server_lib.InferenceServerConfig,
@@ -247,6 +295,8 @@ def make_distributed_experiment(
       counter: counting.Counter,
       actor_id: ActorId,
       inference_server: Optional[InferenceServer],
+      cfn_variable_source: Optional[core.VariableSource] = None,
+      cfn_replay: Optional[reverb.Client] = None
   ) -> environment_loop.EnvironmentLoop:
     """The actor process."""
 
@@ -274,9 +324,21 @@ def make_distributed_experiment(
 
     adder = experiment.builder.make_adder(replay, environment_spec,
                                           policy_network)
-    actor = experiment.builder.make_actor(actor_key, policy_network,
-                                          environment_spec, variable_source,
-                                          adder)
+    
+    if experiment.is_cfn:
+      cfn_adder = experiment.builder.make_cfn_adder(cfn_replay,
+                                                    environment_spec,
+                                                    policy_network)
+      
+      actor = experiment.builder.make_actor(actor_key, policy_network,
+                                            environment_spec, variable_source,
+                                            adder,
+                                            cfn_variable_source=cfn_variable_source,
+                                            cfn_adder=cfn_adder)
+    else:
+      actor = experiment.builder.make_actor(actor_key, policy_network,
+                                            environment_spec, variable_source,
+                                            adder)
 
     # Create logger and counter.
     counter = counting.Counter(counter, 'actor')
@@ -284,7 +346,8 @@ def make_distributed_experiment(
                                        actor_id)
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
-        environment, actor, counter, logger, observers=experiment.observers)
+        environment, actor, counter, logger, observers=experiment.observers,
+        cfn=cfn_variable_source if experiment.is_cfn else None)
 
   if not program:
     program = lp.Program(name=name)
@@ -298,6 +361,17 @@ def make_distributed_experiment(
       build_replay, checkpoint_time_delta_minutes=checkpoint_time_delta_minutes)
   replay = replay_node.create_handle()
 
+
+  if experiment.is_cfn:
+    cfn_replay_node = lp.ReverbNode(
+      build_cfn_replay, checkpoint_time_delta_minutes=checkpoint_time_delta_minutes)
+    cfn_replay = cfn_replay_node.create_handle()
+
+    with program.group('cfn_replay'):
+      program.add_node(cfn_replay_node)
+  else:
+    cfn_replay_node, cfn_replay = None, None
+
   counter = program.add_node(lp.CourierNode(build_counter), label='counter')
 
   if experiment.max_num_actor_steps is not None:
@@ -305,6 +379,15 @@ def make_distributed_experiment(
         lp.CourierNode(lp_utils.StepsLimiter, counter,
                        experiment.max_num_actor_steps),
         label='counter')
+  if experiment.is_cfn:
+    cfn_key, key = jax.random.split(key)
+    cfn_node = lp.CourierNode(build_cfn, cfn_key, cfn_replay, counter)
+    cfn = cfn_node.create_handle()
+
+    with program.group('cfn'):
+      program.add_node(cfn_node)
+  else:
+    cfn_node, cfn = None, None
 
   learner_key, key = jax.random.split(key)
   learner_node = lp.CourierNode(build_learner, learner_key, replay, counter)
@@ -393,6 +476,8 @@ def make_distributed_experiment(
               counter,
               actor_id,
               inference_node,
+              cfn,
+              cfn_replay
           )
           colocation_nodes.append(actor)
 
@@ -407,7 +492,7 @@ def make_distributed_experiment(
     evaluator_key, key = jax.random.split(key)
     program.add_node(
         lp.CourierNode(evaluator, evaluator_key, learner, counter,
-                       experiment.builder.make_actor),
+                       experiment.builder.make_actor, cfn),
         label='evaluator')
 
   if make_snapshot_models and experiment.checkpointing:

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Atari wrappers functionality for Python environments."""
+"""MiniGrid wrappers: small differences compared to AtariWrapper."""
 
 import abc
 from typing import Tuple, List, Optional, Sequence, Union
@@ -21,6 +21,7 @@ from acme.wrappers import base
 from acme.wrappers import frame_stacking
 
 import dm_env
+import ipdb
 from dm_env import specs
 import numpy as np
 from PIL import Image
@@ -30,8 +31,8 @@ LIVES_INDEX = 1  # Observation index holding the lives count.
 NUM_COLOR_CHANNELS = 3  # Number of color channels in RGB data.
 
 
-class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
-  """Abstract base class for Atari wrappers.
+class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
+  """Abstract base class for MiniGrid wrappers.
 
   This assumes that the input environment is a dm_env.Environment instance in
   which observations are tuples whose first element is an RGB observation and
@@ -49,7 +50,7 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
   The details of grayscale conversion, downscaling, and frame pooling are
   delegated to the concrete subclasses.
 
-  This wrapper will raise an error if the underlying Atari environment does not:
+  This wrapper will raise an error if the underlying MiniGrid environment does not:
 
   - Exposes RGB observations in interleaved format (shape `(H, W, C)`).
   - Expose zero-indexed actions.
@@ -74,11 +75,13 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
                flatten_frame_stack: bool = False,
                max_episode_len: Optional[int] = None,
                to_float: bool = False,
-               grayscaling: bool = True):
-    """Initializes a new AtariWrapper.
+               grayscaling: bool = True,
+               goal_conditioned: bool = False,
+               task_goal_features: Tuple = (6, 6)):
+    """Initializes a new MiniGridWrapper.
 
     Args:
-      environment: An Atari environment.
+      environment: An MiniGrid environment.
       max_abs_reward: Maximum absolute reward value before clipping is applied.
         If set to `None` (default), no clipping is applied.
       scale_dims: Image size for the rescaling step after grayscaling, given as
@@ -88,7 +91,7 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
       pooled_frames: Number of observations to pool over. Set to 1 to disable
         frame pooling.
       zero_discount_on_life_loss: If `True`, sets the discount to zero when the
-        number of lives decreases in in Atari environment.
+        number of lives decreases in in MiniGrid environment.
       expose_lives_observation: If `False`, the `lives` part of the observation
         is discarded, otherwise it is kept as part of an observation tuple. This
         does not affect the `zero_discount_on_life_loss` feature. When enabled,
@@ -104,6 +107,9 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
       grayscaling: If `True` returns a grayscale version of the observations. In
         this case, the observation is 3D (H, W, num_stacked_frames). If `False`
         the observations are RGB and have shape (H, W, C, num_stacked_frames).
+      goal_conditioned: If `True` the observation space has twice as many channels
+        representing the goal obs being concatenated to the current obs.
+      task_goal_features: position of the task goal.
 
     Raises:
       ValueError: For various invalid inputs.
@@ -129,6 +135,9 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
     self._max_abs_reward = max_abs_reward or np.inf
     self._to_float = to_float
     self._expose_lives_observation = expose_lives_observation
+    self._goal_conditioned = goal_conditioned
+    
+    self.task_goal_features = task_goal_features
 
     if scale_dims:
       self._height, self._width = scale_dims
@@ -145,9 +154,13 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
     # Based on underlying observation spec, decide whether lives are to be
     # included in output observations.
     observation_spec = self._environment.observation_spec()
-    spec_names = [spec.name for spec in observation_spec]
-    if "lives" in spec_names and spec_names.index("lives") != 1:
-      raise ValueError("`lives` observation needs to have index 1 in Atari.")
+    
+    try:
+      spec_names = [spec.name for spec in observation_spec]
+      if "lives" in spec_names and spec_names.index("lives") != 1:
+        raise ValueError("`lives` observation needs to have index 1 in MiniGrid.")
+    except:
+      pass
 
     self._observation_spec = self._init_observation_spec()
 
@@ -168,7 +181,8 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
       pixels_spec_shape = (self._height, self._width)
       pixels_spec_name = "grayscale"
     else:
-      pixels_spec_shape = (self._height, self._width, NUM_COLOR_CHANNELS)
+      n_channels = 2 * NUM_COLOR_CHANNELS if self._goal_conditioned else NUM_COLOR_CHANNELS
+      pixels_spec_shape = (self._height, self._width, n_channels)
       pixels_spec_name = "RGB"
 
     pixel_spec = specs.Array(
@@ -200,7 +214,10 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
 
     # Step on environment multiple times for each selected action.
     for _ in range(self._action_repeats):
-      timestep = self._environment.step([np.array([action])])
+      timestep = self._environment.step(
+        # [np.array([action])]
+        action
+      )
 
       self._episode_len += 1
       if self._episode_len == self._max_episode_len:
@@ -237,7 +254,7 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
     reward = sum(timestep_t.reward for timestep_t in timestep_stack)
 
     # Multiply discount over stack (will either be 0. or 1.).
-    discount = np.prod(
+    discount = np.product(
         [timestep_t.discount for timestep_t in timestep_stack])
 
     observation = self._observation_from_timestep_stack(timestep_stack)
@@ -252,12 +269,18 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
 
   @abc.abstractmethod
   def _preprocess_pixels(self, timestep_stack: List[dm_env.TimeStep]):
-    """Process Atari pixels."""
+    """Process MiniGrid pixels."""
 
   def _observation_from_timestep_stack(self,
                                        timestep_stack: List[dm_env.TimeStep]):
     """Compute the observation for a stack of timesteps."""
-    self._raw_observation = timestep_stack[-1].observation[RGB_INDEX].copy()
+    # ipdb.set_trace()  # how does this differ for minigrid and MiniGrid?
+    # Ah in MiniGrid, the observation is a tuple of (image, lives)
+    if isinstance(timestep_stack[-1].observation, Tuple):
+      self._raw_observation = timestep_stack[-1].observation[RGB_INDEX].copy()
+    else:
+      assert isinstance(timestep_stack[-1].observation, np.ndarray)
+      self._raw_observation = timestep_stack[-1].observation.copy()
     processed_pixels = self._preprocess_pixels(timestep_stack)
 
     if self._to_float:
@@ -285,9 +308,12 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
     return timestep._replace(reward=reward)
 
   def action_spec(self) -> specs.DiscreteArray:
-    raw_spec = self._environment.action_spec()[0]
-    return specs.DiscreteArray(num_values=raw_spec.maximum.item() -
-                               raw_spec.minimum.item() + 1)
+    if isinstance(self._environment.action_spec(), list):
+      raw_spec = self._environment.action_spec()[0]
+      return specs.DiscreteArray(num_values=raw_spec.maximum.item() -
+                                raw_spec.minimum.item() + 1)
+    assert isinstance(self._environment.action_spec(), specs.DiscreteArray), type(raw_spec)
+    return self._environment.action_spec()
 
   def observation_spec(self) -> Union[specs.Array, Sequence[specs.Array]]:
     return self._observation_spec
@@ -301,14 +327,14 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
     return self._raw_observation
 
 
-class AtariWrapper(BaseAtariWrapper):
-  """Standard "Nature Atari" wrapper for Python environments.
+class MiniGridWrapper(BaseMiniGridWrapper):
+  """Standard "Nature MiniGrid" wrapper for Python environments.
 
-  Before being fed to a neural network, Atari frames go through a prepocessing,
+  Before being fed to a neural network, MiniGrid frames go through a prepocessing,
   implemented in this wrapper. For historical reasons, there were different
   choices in the method to apply there between what was done in the Dopamine
   library and what is done in Acme. During the processing of
-  Atari frames, three operations need to happen. Images are
+  MiniGrid frames, three operations need to happen. Images are
   transformed from RGB to grayscale, we perform a max-pooling on the time scale,
   and images are resized to 84x84.
 
@@ -321,19 +347,19 @@ class AtariWrapper(BaseAtariWrapper):
 
   This can change the behavior of RL agents on some games. The recommended
   setting is to use the standard style with this class. The Dopamine setting is
-  available in `atari_wrapper_dopamine.py` for the
+  available in `MiniGrid_wrapper_dopamine.py` for the
   user that wishes to compare agents between librairies.
   """
 
   def _preprocess_pixels(self, timestep_stack: List[dm_env.TimeStep]):
-    """Preprocess Atari frames."""
+    """Preprocess MiniGrid frames."""
     # 1. Max pooling
     processed_pixels = np.max(
         np.stack([
             s.observation[RGB_INDEX]
             for s in timestep_stack[-self._pooled_frames:]
         ]),
-        axis=0)
+        axis=0) if self._pooled_frames > 1 else timestep_stack[-1].observation
 
     # 2. RGB to grayscale
     if self._grayscaling:
@@ -358,7 +384,7 @@ class _ZeroDiscountOnLifeLoss(base.EnvironmentWrapper):
     """Initializes a new `_ZeroDiscountOnLifeLoss` wrapper.
 
     Args:
-      environment: An Atari environment.
+      environment: An MiniGrid environment.
 
     Raises:
       ValueError: If the environment does not expose a lives observation.
