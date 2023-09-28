@@ -5,7 +5,7 @@ import os
 
 import threading
 import time
-from typing import Dict, Iterator, List, NamedTuple, Optional, Tuple
+from typing import Dict, Iterator, List, Mapping, Optional, Tuple
 
 from absl import logging
 import acme
@@ -208,6 +208,7 @@ class CFN(acme.Learner):
     self._networks = networks
     self._bonus_plotting_freq = bonus_plotting_freq
 
+    # TODO(ab/sl): Make plotting dirs based on acme_id
     os.makedirs('plots/cfn_plots/spatial_bonuses', exist_ok=True)
     os.makedirs('plots/cfn_plots/true_vs_approx_scatterplots', exist_ok=True)
 
@@ -240,36 +241,38 @@ class CFN(acme.Learner):
     if self._state.steps > 0 and \
         self._state.steps % self._bonus_plotting_freq == 0 and \
         len(self._hash2obs) > 1:
-      
-      state: CFNTrainingState = utils.get_from_first_device(self._state)
-      hashes, oar = self._create_observation_tensor()
-      
-      observation_tensor = oar.observation
-      assert len(observation_tensor.shape) == 4, observation_tensor.shape
-      assert observation_tensor.shape[1:] == (84, 84, 3), observation_tensor.shape
+      self._make_cfn_bonus_plots()
 
-      predicted_bonuses = compute_cfn_reward(
-        state.params,
-        state.target_params,
-        oar,
-        self._networks,
-        state.random_prior_mean,
-        jnp.sqrt(state.random_prior_var)
-      )
-      
-      assert predicted_bonuses.shape == (len(hashes),), predicted_bonuses.shape
+  def _make_cfn_bonus_plots(self):
+    state: CFNTrainingState = utils.get_from_first_device(self._state)
+    hashes, oar = self._create_observation_tensor()
+    
+    observation_tensor = oar.observation
+    assert len(observation_tensor.shape) == 4, observation_tensor.shape
+    assert observation_tensor.shape[1:] == (84, 84, 3), observation_tensor.shape
 
-      approx_bonus_info = {k: v for k, v in zip(hashes, predicted_bonuses)}
-      plotting_utils.plot_spatial_count_or_bonus(
-        true_count_info=self._hash2counts,
-        approx_bonus_info=approx_bonus_info,
-        save_path=f'plots/cfn_plots/spatial_bonuses/spatial_bonus_{self._state.steps}.png'
-      )
-      plotting_utils.plot_true_vs_approx_bonus(
-        true_count_info=self._hash2counts,
-        approx_bonus_info=approx_bonus_info,
-        save_path=f'plots/cfn_plots/true_vs_approx_scatterplots/bonus_scatterplot_{state.steps}.png'
-      )
+    predicted_bonuses = compute_cfn_reward(
+      state.params,
+      state.target_params,
+      oar,
+      self._networks,
+      state.random_prior_mean,
+      jnp.sqrt(state.random_prior_var)
+    )
+    
+    assert predicted_bonuses.shape == (len(hashes),), predicted_bonuses.shape
+
+    approx_bonus_info = {k: v for k, v in zip(hashes, predicted_bonuses)}
+    plotting_utils.plot_spatial_count_or_bonus(
+      true_count_info=self._hash2counts,
+      approx_bonus_info=approx_bonus_info,
+      save_path=f'plots/cfn_plots/spatial_bonuses/spatial_bonus_{state.steps}.png'
+    )
+    plotting_utils.plot_true_vs_approx_bonus(
+      true_count_info=self._hash2counts,
+      approx_bonus_info=approx_bonus_info,
+      save_path=f'plots/cfn_plots/true_vs_approx_scatterplots/bonus_scatterplot_{state.steps}.png'
+    )
       
   # TODO(ab/sl): add the count dictionaries so that they checkpoint correctly.
   def get_variables(self, names: List[str]) -> List[networks_lib.Params]:
@@ -277,6 +280,10 @@ class CFN(acme.Learner):
     # Return first replica of parameters.
     # Sam changed so it has whole state, there's a chance that's bad with first_device thing 
     return utils.get_from_first_device([self._state])
+  
+  def get_hash2obs(self) -> Mapping[Tuple, Tuple]:
+    keys = list(self._hash2obs.keys())
+    return {k: self._hash2obs[k] for k in keys}
 
   def save(self) -> CFNTrainingState:
     # Serialize only the first replica of parameters and optimizer state.
@@ -296,11 +303,11 @@ class CFN(acme.Learner):
   
   def _update_obs_dict(self, hash2obs: Dict):
     for obs_hash in hash2obs:
-      self._hash2obs[obs_hash] = np.asarray(hash2obs[obs_hash], dtype=np.float32)
+      self._hash2obs[obs_hash] = hash2obs[obs_hash]
 
   def _create_observation_tensor(self):
     hashes = list(self._hash2obs.keys())
-    observations = jnp.asarray([self._hash2obs[key] for key in hashes], dtype=jnp.float32)
-    fake_actions = jnp.asarray([0] * len(hashes), dtype=jnp.int32)
-    fake_rewards = jnp.asarray([0.] * len(hashes), dtype=jnp.float32)
-    return hashes, OAR(observations, fake_actions, fake_rewards)
+    observations = jnp.asarray([self._hash2obs[key][0] for key in hashes], dtype=jnp.float32)
+    actions = jnp.asarray([self._hash2obs[key][1] for key in hashes], dtype=jnp.int32)
+    rewards = jnp.asarray([self._hash2obs[key][2] for key in hashes], dtype=jnp.float32)
+    return hashes, OAR(observations, actions, rewards)

@@ -66,6 +66,7 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
       environment_spec: specs.EnvironmentSpec,
       replay_client: Optional[reverb.Client] = None,
       counter: Optional[counting.Counter] = None,
+      cfn: Optional[CFN] = None
   ) -> core.Learner:
     direct_rl_learner_key, cfn_learner_key = jax.random.split(random_key)
 
@@ -98,7 +99,8 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
         logger=logger_fn('learner'),
         intrinsic_reward_coefficient=self._config.intrinsic_reward_coefficient,
         extrinsic_reward_coefficient=self._config.extrinsic_reward_coefficient,
-        use_stale_rewards=self._config.use_stale_rewards)
+        use_stale_rewards=self._config.use_stale_rewards,
+        cfn=cfn)
 
   def make_replay_tables(
       self,

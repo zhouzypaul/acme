@@ -172,6 +172,7 @@ def make_distributed_experiment(
       replay: reverb.Client,
       counter: Optional[counting.Counter] = None,
       primary_learner: Optional[core.Learner] = None,
+      cfn=None
   ):
     """The Learning part of the agent."""
 
@@ -191,7 +192,7 @@ def make_distributed_experiment(
     counter = counting.Counter(counter, 'learner')
     learner = experiment.builder.make_learner(random_key, networks, iterator,
                                               experiment.logger_factory, spec,
-                                              replay, counter)
+                                              replay, counter, cfn)
 
     if experiment.checkpointing:
       if primary_learner is None:
@@ -390,7 +391,7 @@ def make_distributed_experiment(
     cfn_node, cfn = None, None
 
   learner_key, key = jax.random.split(key)
-  learner_node = lp.CourierNode(build_learner, learner_key, replay, counter)
+  learner_node = lp.CourierNode(build_learner, learner_key, replay, counter, cfn=cfn)
   learner = learner_node.create_handle()
   variable_sources = [learner]
 
@@ -415,7 +416,7 @@ def make_distributed_experiment(
             program.add_node(
                 lp.CourierNode(
                     build_learner, learner_key, replay,
-                    primary_learner=learner)))
+                    primary_learner=learner, cfn=cfn)))
         # NOTE: Secondary learners are used to load-balance get_variables calls,
         # which is why they get added to the list of available variable sources.
         # NOTE: Only the primary learner checkpoints.

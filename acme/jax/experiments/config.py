@@ -301,8 +301,12 @@ def default_evaluator_factory(
     environment_spec = specs.make_environment_spec(environment)
     networks = network_factory(environment_spec)
     policy = policy_factory(networks, environment_spec, True)
-    actor = make_actor(actor_key, policy, environment_spec, variable_source,
-                       cfn_variable_source=cfn_variable_source)
+
+    if cfn_variable_source is not None:
+      actor = make_actor(actor_key, policy, environment_spec, variable_source,
+                        cfn_variable_source=cfn_variable_source)
+    else:
+      actor = make_actor(actor_key, policy, environment_spec, variable_source)
 
     # Create logger and counter.
     counter = counting.Counter(counter, 'evaluator')

@@ -50,6 +50,7 @@ flags.DEFINE_list("learner_gpu_ids", ["0"], "Which GPUs to use for learner. Gets
 flags.DEFINE_string("cfn_gpu_id", "1", "which GPU to use for CFN optimization.")
 flags.DEFINE_float('cfn_spi', 8.0,
                      'Number of samples per insert. 0 means does not constrain, other values do.')
+flags.DEFINE_integer('cfn_min_replay_size', 2048, 'When CFN training starts')
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090. Paper is 64')
@@ -101,6 +102,7 @@ def make_cfn_builder(r2d2_builder):
     use_stale_rewards=FLAGS.use_stale_rewards,
     is_sequence_based=True,
     samples_per_insert=FLAGS.cfn_spi,
+    min_replay_size=FLAGS.cfn_min_replay_size
   )
   logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
   builder = cfn_builder.CFNBuilder(

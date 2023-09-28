@@ -188,7 +188,9 @@ class EnvironmentLoop(core.Worker):
         get_key(transition[1]): 
         # We convert to jnp b/c courier cannot handle np arrays
         # TODO(ab/sl): This assumes that the 1st 3 channels are the obs
-        jnp.asarray(transition[0].observation[:, :, :3]) 
+        (jnp.asarray(transition[0].observation[:, :, :3]) ,
+         int(transition[0].action),
+         float(transition[0].reward.item()))  # This should be r_e + beta * r_int
         for transition in trajectory
       }
     

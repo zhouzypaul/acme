@@ -63,3 +63,31 @@ def plot_true_vs_approx_bonus(true_count_info, approx_bonus_info, save_path):
   plt.title("True Vs Approx Bonus")
   plt.savefig(save_path)
   plt.close()
+
+
+def split_by_agent_dir(hash2quantity):
+  split_directionary = {}
+  for hash, quantity in hash2quantity.items():
+    direction = hash[2]
+    if direction not in split_directionary:
+      split_directionary[direction] = {}
+    else:
+      position = hash[0], hash[1]
+      split_directionary[direction][position] = quantity
+  return split_directionary
+
+def plot_spatial_values(hash2value, save_path):
+  
+  direction_to_pos_to_val = split_by_agent_dir(hash2value)
+
+  plt.figure(figsize=(12, 12))
+  
+  for i, (direction, pos2val) in enumerate(direction_to_pos_to_val.items()):
+    xs, ys, values = get_quantity_from_hash_to_counts(pos2val, 'count')
+    plt.subplot(2, 2, i + 1)
+    plt.scatter(xs, ys, c=values, s=40, marker='s')
+    plt.colorbar()
+    plt.title(f'Direction: {direction}')
+
+  plt.savefig(save_path)
+  plt.close()
