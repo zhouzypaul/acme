@@ -78,9 +78,9 @@ def make_networks(
       super().__init__(name=name)
       self._network = hk.Sequential([
         networks_lib.AtariTorso(),
-        hk.Linear(256),
         # TODO(ab/sl): test if fc_hidden is a good idea
-        jax.nn.relu,
+        # hk.Linear(256),
+        # jax.nn.relu,
         hk.Linear(20)
       ])
       # self.batched = hk.BatchApply(self._network, num_dims=1)
@@ -154,6 +154,10 @@ def compute_cfn_reward(predictor_params: networks_lib.Params,
   random_prior_output = networks.target.apply(target_params,
                                               transitions.observation,
                                               transitions.action)
+  # TODO(ab/sl): Maybe we should be limiting how small std can be like we did
+  # https://github.com/samlobel/CFN/blob/main/intrinsic_motivation/intrinsic_rewards.py#L1167
+  # Or maybe we clip it. Note that RND BBE doesn't do the above, though that's for reward, which is clipped
+  # at a different time. 
   normalized_rp_output = (random_prior_output - random_prior_mean) / random_prior_std
   
   return networks.get_reward(learning_network_output, normalized_rp_output, transitions.reward)
