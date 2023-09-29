@@ -190,6 +190,7 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
       max_priority_weight=self._config.max_priority_weight,  # TODO
       iterator=dataset,
       optimizer=optimizer,
+      cfn_replay_table_name=self._config.cfn_replay_table_name,
       replay_client=replay_client,
       counter=counter,
       logger=logger_fn('cfn_object'),
@@ -221,9 +222,9 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
     return [
         reverb.Table(
             name=self._config.cfn_replay_table_name,
-            sampler=reverb.selectors.Uniform(),
-            # reverb.selectors.Prioritized(
-            #     self._config.priority_exponent),
+            # sampler=reverb.selectors.Uniform(),
+            sampler=reverb.selectors.Prioritized(
+              self._config.priority_exponent),
             remover=reverb.selectors.Fifo(),
             max_size=self._config.max_replay_size,
             rate_limiter=limiter,
