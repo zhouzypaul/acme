@@ -51,6 +51,7 @@ flags.DEFINE_string("cfn_gpu_id", "1", "which GPU to use for CFN optimization.")
 flags.DEFINE_float('cfn_spi', 8.0,
                      'Number of samples per insert. 0 means does not constrain, other values do.')
 flags.DEFINE_integer('cfn_min_replay_size', 2048, 'When CFN training starts')
+flags.DEFINE_float('cfn_learning_rate', 1e-4, 'Learning rate for CFN') 
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
 flags.DEFINE_integer('learner_batch_size', 32, 'Learning batch size. 8 is best for local training, 32 fills up 3090. Paper is 64')
@@ -59,8 +60,8 @@ flags.DEFINE_boolean('use_cfn', False, 'Whether to use CFN')
 flags.DEFINE_integer('checkpointing_freq', 5, 'Checkpointing Frequency in Minutes')
 flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay starts')
 
-flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
-flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')  # NOTE: NGU paper uses 0.3
+flags.DEFINE_float('intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
+flags.DEFINE_float('extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')  # NOTE: NGU paper uses 0.3
 flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')  # NOTE: NGU paper is 5e-4
 flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
 flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')  # NOTE: NGU paper is 2e-4
@@ -82,8 +83,8 @@ def make_rnd_builder(r2d2_builder):
     # import ipdb; ipdb.set_trace()
     rnd_config = rnd.RNDConfig(
         is_sequence_based=True, # Probably
-        intrinsic_reward_coefficient=FLAGS.rnd_intrinsic_reward_coefficient,
-        extrinsic_reward_coefficient=FLAGS.rnd_extrinsic_reward_coefficient,
+        intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
+        extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
         predictor_learning_rate=FLAGS.rnd_learning_rate,
         use_stale_rewards=FLAGS.use_stale_rewards
     )
@@ -102,7 +103,10 @@ def make_cfn_builder(r2d2_builder):
     use_stale_rewards=FLAGS.use_stale_rewards,
     is_sequence_based=True,
     samples_per_insert=FLAGS.cfn_spi,
-    min_replay_size=FLAGS.cfn_min_replay_size
+    min_replay_size=FLAGS.cfn_min_replay_size,
+    cfn_learning_rate=FLAGS.cfn_learning_rate,
+    intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
+    extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
   )
   logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
   builder = cfn_builder.CFNBuilder(
@@ -240,7 +244,6 @@ def main(_):
     launch_type = FLAGS.lp_launch_type
 
     local_resources = get_local_resources(launch_type)
-    print(local_resources)
 
     program = experiments.make_distributed_experiment(
         experiment=config, num_actors=num_actors,

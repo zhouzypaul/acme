@@ -27,11 +27,14 @@ def pin_process_to_cpu(python_process, cpu_num):
 
 def make_process_dict(gpu_str="-1", pin_to=None):
   # Has ability to modify process to pin to specified CPUs using taskset. Good for controlling jax thread numbers
+  # print('\n\n\nDONT FORGET ABOUT THIS YOU JERKS\n\n\n')
   process = PythonProcess(env={
     "CUDA_VISIBLE_DEVICES": gpu_str,
     "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
     "TF_FORCE_GPU_ALLOW_GROWTH": "true",
     "ACME_ID": FLAGS.acme_id,
+    "ACME_DIR": FLAGS.acme_dir,
+  # "JAX_DISABLE_JIT": "1",
   },
   )
   if pin_to is not None:
