@@ -15,6 +15,7 @@ from acme.jax import utils
 from acme.utils import async_utils
 from acme.utils import counting
 from acme.utils import loggers
+from acme.utils.paths import get_save_directory
 from acme.wrappers.observation_action_reward import OAR
 from acme.agents.jax.cfn.learning import CFNTrainingState
 from acme.agents.jax.cfn.networks import compute_cfn_reward
@@ -44,12 +45,12 @@ class CFN(acme.Learner):
                max_priority_weight: float,
                iterator: Iterator[CFNReplaySample],
                optimizer: optax.GradientTransformation,
+               cfn_replay_table_name: str,
                replay_client: Optional[reverb.Client] = None,
                counter: Optional[counting.Counter] = None,
                logger: Optional[loggers.Logger] = None,
                bonus_plotting_freq = 500  # set to np.inf to disable plotting
   ):
-
 
     def loss(
         params: networks_lib.Params,
@@ -68,23 +69,32 @@ class CFN(acme.Learner):
       normalized_rp_output = (rp_output - random_prior_mean) / random_prior_std
       predictor_output = networks.predictor.apply(params, observation, sample.data.action)
 
-      pred = predictor_output + normalized_rp_output
+      pred = predictor_output + jax.lax.stop_gradient(normalized_rp_output)
       
       target = sample.data.extras['coin_flips']
       target = target.squeeze(1)  # TODO(ab/sl): indexing is awkward and unreadable rn
 
       assert pred.shape == target.shape, (pred.shape, target.shape)
-      
-      # TODO(ab/sl)
-      dummy_priorities = jnp.ones((random_prior_mean.shape[0],), dtype=jnp.float32)
 
       intrinsic_reward = networks.get_reward(
         predictor_output=predictor_output,
         normalized_rp_output=normalized_rp_output,
         original_reward=0.)
+      
+      times_sampled = jnp.maximum(sample.info.times_sampled, 1)
+      seen_priority = 1. / times_sampled
+      novelty_priority = intrinsic_reward ** 2
+      
+      priorities = (0.5 * seen_priority) + (0.5 * novelty_priority)
+      assert seen_priority.shape == novelty_priority.shape, (seen_priority.shape, novelty_priority.shape)
 
-      return optax.l2_loss(pred, target).mean(), (rp_output, dummy_priorities, intrinsic_reward)
+      log_dict = {
+        'batch_rint': intrinsic_reward.mean(),
+        'max_abs_pred': jnp.abs(pred).max(),
+        'max_abs_rp': jnp.abs(normalized_rp_output).max(),
+      }
 
+      return optax.l2_loss(pred, target).mean(), (rp_output, priorities, intrinsic_reward, log_dict)
 
     def sgd_step(
       state: CFNTrainingState,
@@ -93,7 +103,7 @@ class CFN(acme.Learner):
       """Performs an update step, averaging over pmap replicas."""
       grad_fn = jax.value_and_grad(loss, has_aux=True)
       # key, key_grad = jax.random.split(state.random_key)
-      (loss_value, (random_prior_output, priorities, r_int)), gradients = grad_fn(
+      (loss_value, (random_prior_output, priorities, r_int, log_dict)), gradients = grad_fn(
         state.params,
         state.target_params,
         # key_grad,
@@ -102,29 +112,48 @@ class CFN(acme.Learner):
         jnp.sqrt(state.random_prior_var))
 
       # Average gradients over pmap replicas before optimizer update.
-      # gradients = jax.lax.pmean(gradients, _PMAP_AXIS_NAME)
+      gradients = jax.lax.pmean(gradients, _PMAP_AXIS_NAME)
 
       # Apply optimizer updates.
-      updates, new_opt_state = optimizer.update(gradients, state.optimizer_state)
+      updates, new_opt_state = optimizer.update(gradients, state.optimizer_state, params=state.params)
       new_params = optax.apply_updates(state.params, updates)
 
       # Periodically update target networks.
       steps = state.steps + 1
 
-      new_cfn_state = state._replace(
+      new_cfn_state = CFNTrainingState(
         optimizer_state=new_opt_state,
         params=new_params,
+        target_params= state.target_params,
         steps=steps,
-        # random_key=key,
+        reward_mean=state.reward_mean,
+        reward_var=state.reward_var,
+        reward_squared_mean=state.reward_squared_mean,
+        random_prior_mean=state.random_prior_mean,
+        random_prior_var=state.random_prior_var,
+        random_prior_squared_mean=state.random_prior_squared_mean,
+        states_updated_on=state.states_updated_on,
       )
 
       new_cfn_state = update_mean_variance_stats(new_cfn_state, random_prior_output, r_int)
-      return new_cfn_state, priorities, {'loss': loss_value}
+      return new_cfn_state, priorities, {
+        'loss': loss_value,
+        **log_dict,
+        'random_prior_mean': new_cfn_state.random_prior_mean.mean(),
+        'random_prior_var': new_cfn_state.random_prior_var.mean(),
+        'states_updated_on': new_cfn_state.states_updated_on,
+      }
 
-
-    def update_priorities(  # TODO(ab/sl)
+    def update_priorities(
         keys_and_priorities: Tuple[jnp.ndarray, jnp.ndarray]):
-      pass
+      keys, priorities = keys_and_priorities
+      keys, priorities = tree.map_structure(
+          # Fetch array and combine device and batch dimensions.
+          lambda x: utils.fetch_devicearray(x).reshape((-1,) + x.shape[2:]),
+          (keys, priorities))
+      replay_client.mutate_priorities(  # pytype: disable=attribute-error
+          table=cfn_replay_table_name,
+          updates=dict(zip(keys, priorities)))
 
     def update_mean_variance_stats(
         state: CFNTrainingState,
@@ -147,12 +176,15 @@ class CFN(acme.Learner):
 
       delta_rp = (random_prior_output - state.random_prior_mean)
       new_rp_mean = state.random_prior_mean + (num_transitions * delta_rp.mean(axis=0) / new_states_updated_on)
-      # delta_rp_squared = (delta_rp**2 - state.random_prior_squared_mean)
       delta_rp_squared = (random_prior_output**2 - state.random_prior_squared_mean)
       new_rp_squared_mean = state.random_prior_squared_mean + (num_transitions * delta_rp_squared.mean(axis=0) / new_states_updated_on)
       new_rp_var = new_rp_squared_mean - (new_rp_mean ** 2)
 
-      return state._replace(
+      new_state = CFNTrainingState(
+        optimizer_state=state.optimizer_state,
+        params=state.params,
+        target_params=state.target_params,
+        steps=state.steps,
         reward_mean=new_reward_mean,
         reward_var=new_reward_var,
         reward_squared_mean=new_reward_squared_mean,
@@ -161,6 +193,8 @@ class CFN(acme.Learner):
         random_prior_squared_mean=new_rp_squared_mean,
         states_updated_on=new_states_updated_on,
       )
+
+      return new_state
     
     # Internalise components, hyperparameters, logger, counter, and methods.
     self._iterator = iterator
@@ -208,9 +242,12 @@ class CFN(acme.Learner):
     self._networks = networks
     self._bonus_plotting_freq = bonus_plotting_freq
 
-    # TODO(ab/sl): Make plotting dirs based on acme_id
-    os.makedirs('plots/cfn_plots/spatial_bonuses', exist_ok=True)
-    os.makedirs('plots/cfn_plots/true_vs_approx_scatterplots', exist_ok=True)
+    # Create logging directories.
+    base_dir = get_save_directory()
+    self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
+    self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
+    os.makedirs(self._spatial_plotting_dir, exist_ok=True)
+    os.makedirs(self._scatter_plotting_dir, exist_ok=True)
 
   def step(self):
     prefetching_split = next(self._iterator)
@@ -246,7 +283,7 @@ class CFN(acme.Learner):
   def _make_cfn_bonus_plots(self):
     state: CFNTrainingState = utils.get_from_first_device(self._state)
     hashes, oar = self._create_observation_tensor()
-    
+
     observation_tensor = oar.observation
     assert len(observation_tensor.shape) == 4, observation_tensor.shape
     assert observation_tensor.shape[1:] == (84, 84, 3), observation_tensor.shape
@@ -266,12 +303,12 @@ class CFN(acme.Learner):
     plotting_utils.plot_spatial_count_or_bonus(
       true_count_info=self._hash2counts,
       approx_bonus_info=approx_bonus_info,
-      save_path=f'plots/cfn_plots/spatial_bonuses/spatial_bonus_{state.steps}.png'
+      save_path=os.path.join(self._spatial_plotting_dir, f'spatial_bonus_{state.steps}.png'),
     )
     plotting_utils.plot_true_vs_approx_bonus(
       true_count_info=self._hash2counts,
       approx_bonus_info=approx_bonus_info,
-      save_path=f'plots/cfn_plots/true_vs_approx_scatterplots/bonus_scatterplot_{state.steps}.png'
+      save_path=os.path.join(self._scatter_plotting_dir, f'bonus_scatterplot_{state.steps}.png'),
     )
       
   # TODO(ab/sl): add the count dictionaries so that they checkpoint correctly.
