@@ -44,14 +44,6 @@ def get_actor_core(
   def get_intrinsic_reward(
       observation: OAR, cfn_state: CFNTrainingState) -> float:
 
-    # TODO(ab/sl): do we need all these batch dims
-    # new_obs = utils.add_batch_dim(
-    #             utils.add_batch_dim(
-    #               utils.add_batch_dim(observation.observation)))
-    new_obs = observation.observation
-    
-    observation = observation._replace(observation=new_obs)
-
     cfn_intrinsic_reward = compute_cfn_reward(
       predictor_params=cfn_state.params,
       target_params=cfn_state.target_params,
