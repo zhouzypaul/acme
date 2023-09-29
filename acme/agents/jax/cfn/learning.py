@@ -14,6 +14,7 @@ from acme.utils import counting
 from acme.utils import loggers
 from acme.utils import reverb_utils
 from acme.jax.utils import PrefetchingSplit
+from acme.utils.paths import get_save_directory
 
 from acme.wrappers.observation_action_reward import OAR
 import acme.agents.jax.cfn.plotting as plotting_utils
@@ -78,7 +79,10 @@ class CFNLearner(acme.Learner):
     self._rng_key = rng_key
     self._cfn_network = cfn_network
 
-    os.makedirs('plots/cfn_plots/spatial_value_plots', exist_ok=True)
+    # import ipdb; ipdb.set_trace()
+    base_dir = get_save_directory()
+    self._plotting_dir = os.path.join(base_dir, 'plots', 'spatial_value_plots')
+    os.makedirs(self._plotting_dir, exist_ok=True)
 
   def step(self):
     self._direct_rl_learner.step()
@@ -105,26 +109,27 @@ class CFNLearner(acme.Learner):
     agent_state = get_agent_state()
     params = agent_state.params
     hashes_to_oar_tuples = self._cfn.get_hash2obs()
-    lstm_state = get_recurrent_state(len(hashes_to_oar_tuples))
+    if hashes_to_oar_tuples:
+      lstm_state = get_recurrent_state(len(hashes_to_oar_tuples))
 
-    hashes, batch_oarg = self._create_observation_tensor(hashes_to_oar_tuples)
+      hashes, batch_oarg = self._create_observation_tensor(hashes_to_oar_tuples)
 
-    q_values, _ = self._cfn_network.direct_rl_networks.unroll(
-      params,
-      self._rng_key,
-      batch_oarg,
-      lstm_state
-    )
+      q_values, _ = self._cfn_network.direct_rl_networks.unroll(
+        params,
+        self._rng_key,
+        batch_oarg,
+        lstm_state
+      )
 
-    values = q_values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
+      values = q_values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
 
-    assert len(values.shape) == 1, values.shape
-    assert values.shape[0] == len(hashes), (values.shape, len(hashes))
+      assert len(values.shape) == 1, values.shape
+      assert values.shape[0] == len(hashes), (values.shape, len(hashes))
 
-    plotting_utils.plot_spatial_values(
-      hash2value={key: value for key, value in zip(hashes, values)},
-      save_path=f'plots/cfn_plots/spatial_value_plots/vf_{agent_state.steps}.png'
-    )
+      plotting_utils.plot_spatial_values(
+        hash2value={key: value for key, value in zip(hashes, values)},
+        save_path=os.path.join(self._plotting_dir, f'vf_{agent_state.steps}.png')
+      )
 
   def _create_observation_tensor(self, hash2obs):
     hashes = list(hash2obs.keys())

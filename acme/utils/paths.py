@@ -82,3 +82,9 @@ def get_unique_id() -> Tuple[str, ...]:
 def rmdir(path: str):
   """Remove directory recursively."""
   shutil.rmtree(path)
+
+def get_save_directory():
+  acme_dir = os.environ.get('ACME_DIR', '~/acme')
+  acme_id = '/'.join(get_unique_id())
+  save_dir = os.path.join(acme_dir, acme_id)
+  return save_dir
