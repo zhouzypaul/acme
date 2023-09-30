@@ -155,3 +155,4 @@ static
 *.csv
 examples/baselines/rl_discrete/acme
 examples/baselines/rl_discrete/local_results
+*.txt

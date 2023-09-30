@@ -150,6 +150,19 @@ def make_minigrid_environment(
   return env
 
 
+def make_visgrid_environment(
+      size=42,
+      max_steps_per_episode=150,
+      oar_wrapper=False
+) -> dm_env.Environment:
+  from acme.domains.gridworld.visgrid import environment_builder
+  env = environment_builder(size, max_steps_per_episode)
+  env = wrappers.SinglePrecisionWrapper(env)
+  if oar_wrapper:
+     env = wrappers.ObservationActionRewardWrapper(env)
+  return env 
+
+
 def make_dqn_atari_network(
     environment_spec: specs.EnvironmentSpec) -> dqn.DQNNetworks:
   """Creates networks for training DQN on Atari."""

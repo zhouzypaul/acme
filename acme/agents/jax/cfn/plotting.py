@@ -61,6 +61,11 @@ def plot_true_vs_approx_bonus(true_count_info, approx_bonus_info, save_path):
   plt.figure(figsize=(12, 12))
   plt.scatter(true_bonuses, approx_bonuses)
   plt.title("True Vs Approx Bonus")
+  max_y = max(max(true_bonuses), max(approx_bonuses))
+  plt.xlim((0, min(1, max_y) + 0.1))
+  plt.ylim((0, max_y + 0.1))
+  plt.xlabel('True Bonus')
+  plt.ylabel('Approx Bonus')
   plt.savefig(save_path)
   plt.close()
 
@@ -76,18 +81,27 @@ def split_by_agent_dir(hash2quantity):
       split_directionary[direction][position] = quantity
   return split_directionary
 
-def plot_spatial_values(hash2value, save_path):
-  
-  direction_to_pos_to_val = split_by_agent_dir(hash2value)
 
-  plt.figure(figsize=(12, 12))
-  
+def plot_spatial_values_direction_split(hash2value):
+  direction_to_pos_to_val = split_by_agent_dir(hash2value)
   for i, (direction, pos2val) in enumerate(direction_to_pos_to_val.items()):
     xs, ys, values = get_quantity_from_hash_to_counts(pos2val, 'count')
     plt.subplot(2, 2, i + 1)
     plt.scatter(xs, ys, c=values, s=40, marker='s')
     plt.colorbar()
     plt.title(f'Direction: {direction}')
+
+
+def plot_spatial_values(hash2value, save_path, split_by_direction: bool):
+  
+  plt.figure(figsize=(12, 12))
+  
+  if split_by_direction:
+    plot_spatial_values_direction_split(hash2value)
+  else:
+    xs, ys, values = get_quantity_from_hash_to_counts(hash2value, 'count')
+    plt.scatter(xs, ys, c=values, s=40, marker='s')
+    plt.colorbar()
 
   plt.savefig(save_path)
   plt.close()

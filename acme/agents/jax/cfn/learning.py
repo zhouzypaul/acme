@@ -128,7 +128,8 @@ class CFNLearner(acme.Learner):
 
       plotting_utils.plot_spatial_values(
         hash2value={key: value for key, value in zip(hashes, values)},
-        save_path=os.path.join(self._plotting_dir, f'vf_{agent_state.steps}.png')
+        save_path=os.path.join(self._plotting_dir, f'vf_{agent_state.steps}.png'),
+        split_by_direction=False
       )
 
   def _create_observation_tensor(self, hash2obs):

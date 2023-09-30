@@ -147,6 +147,9 @@ def build_experiment_config():
       oar_wrapper=True
     )
 
+  def visgrid_environment_factory(seed: int) -> dm_env.Environment:
+    return helpers.make_visgrid_environment(oar_wrapper=True)
+
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   config = r2d2.R2D2Config(
       burn_in_length=FLAGS.burn_in_length,
@@ -198,7 +201,13 @@ def build_experiment_config():
 
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
-  env_factory = minigrid_environment_factory if 'minigrid' in env_name.lower() else environment_factory
+
+  if 'minigrid' in env_name.lower():
+    env_factory = minigrid_environment_factory
+  elif 'visgrid' in env_name.lower():
+    env_factory = visgrid_environment_factory
+  else:
+    env_factory = environment_factory
 
   return experiments.ExperimentConfig(
       # builder=r2d2.R2D2Builder(config),
