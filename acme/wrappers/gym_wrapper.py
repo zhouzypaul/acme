@@ -49,7 +49,7 @@ class GymWrapper(dm_env.Environment):
     self._reset_next_step = False
     observation = self._environment.reset()
     # Reset the diagnostic information.
-    self._last_info = None
+    self._last_info = self.environment.get_info() if hasattr(self.environment, 'get_info') else None
     return dm_env.restart(observation)
 
   def step(self, action: types.NestedArray) -> dm_env.TimeStep:

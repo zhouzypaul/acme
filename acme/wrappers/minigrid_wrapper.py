@@ -77,7 +77,8 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
                to_float: bool = False,
                grayscaling: bool = True,
                goal_conditioned: bool = False,
-               task_goal_features: Tuple = (6, 6)):
+               task_goal_features: Tuple = (6, 6),
+               n_color_channels=NUM_COLOR_CHANNELS):
     """Initializes a new MiniGridWrapper.
 
     Args:
@@ -138,6 +139,7 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
     self._goal_conditioned = goal_conditioned
     
     self.task_goal_features = task_goal_features
+    self._n_color_channels = n_color_channels
 
     if scale_dims:
       self._height, self._width = scale_dims
@@ -181,7 +183,7 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
       pixels_spec_shape = (self._height, self._width)
       pixels_spec_name = "grayscale"
     else:
-      n_channels = 2 * NUM_COLOR_CHANNELS if self._goal_conditioned else NUM_COLOR_CHANNELS
+      n_channels = 2 * self._n_color_channels if self._goal_conditioned else self._n_color_channels
       pixels_spec_shape = (self._height, self._width, n_channels)
       pixels_spec_name = "RGB"
 
@@ -254,7 +256,7 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
     reward = sum(timestep_t.reward for timestep_t in timestep_stack)
 
     # Multiply discount over stack (will either be 0. or 1.).
-    discount = np.product(
+    discount = np.prod(
         [timestep_t.discount for timestep_t in timestep_stack])
 
     observation = self._observation_from_timestep_stack(timestep_stack)
@@ -375,6 +377,14 @@ class MiniGridWrapper(BaseMiniGridWrapper):
       processed_pixels = np.array(processed_pixels, dtype=np.uint8)
 
     return processed_pixels
+  
+
+class VisGridWrapper(BaseMiniGridWrapper):
+  def _preprocess_pixels(self, timestep_stack: List[dm_env.TimeStep]):
+    return timestep_stack[0].observation
+  
+  def step(self, action: int) -> dm_env.TimeStep:
+    return super().step(action.item() if isinstance(action, np.ndarray) else action)
 
 
 class _ZeroDiscountOnLifeLoss(base.EnvironmentWrapper):
