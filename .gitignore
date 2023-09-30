@@ -148,3 +148,8 @@ examples/baselines/rl_discrete/acme
 examples/baselines/rl_discrete/local_results
 *.pkl
 *.png
+*.txt
+*.e
+*.o
+*.csv
+*.json
