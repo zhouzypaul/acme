@@ -87,7 +87,7 @@ class CFNLearner(acme.Learner):
   def step(self):
     self._direct_rl_learner.step()
 
-    if self._cfn and self._direct_rl_learner._state.steps % 500 == 0:
+    if self._cfn and utils.get_from_first_device(self._direct_rl_learner._state).steps % 500 == 0:
       self._make_spatial_vf_plot()
 
   def get_variables(self, names: List[str]) -> List[Any]:
