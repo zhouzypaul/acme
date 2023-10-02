@@ -50,7 +50,7 @@ def get_actor_core(
       transitions=observation,
       networks=networks,
       random_prior_mean=cfn_state.random_prior_mean,
-      random_prior_std=jnp.sqrt(cfn_state.random_prior_var)
+      random_prior_std=jnp.sqrt(cfn_state.random_prior_var + 1e-4)
     )
     
     if use_reward_normalization:

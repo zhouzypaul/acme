@@ -109,7 +109,7 @@ class CFN(acme.Learner):
         # key_grad,
         samples,
         state.random_prior_mean,
-        jnp.sqrt(state.random_prior_var))
+        jnp.sqrt(state.random_prior_var + 1e-4))
 
       # Average gradients over pmap replicas before optimizer update.
       gradients = jax.lax.pmean(gradients, _PMAP_AXIS_NAME)
@@ -294,7 +294,7 @@ class CFN(acme.Learner):
       oar,
       self._networks,
       state.random_prior_mean,
-      jnp.sqrt(state.random_prior_var)
+      jnp.sqrt(state.random_prior_var + 1e-4)
     )
     
     assert predicted_bonuses.shape == (len(hashes),), predicted_bonuses.shape
