@@ -59,7 +59,7 @@ def plot_true_vs_approx_bonus(true_count_info, approx_bonus_info, save_path):
       approx_bonuses.append(approx_bonus_info[k])
 
   plt.figure(figsize=(12, 12))
-  plt.scatter(true_bonuses, approx_bonuses)
+  plt.scatter(true_bonuses, approx_bonuses, alpha=0.3)
   plt.title("True Vs Approx Bonus")
   max_y = max(max(true_bonuses), max(approx_bonuses))
   plt.xlim((0, min(1, max_y) + 0.1))
