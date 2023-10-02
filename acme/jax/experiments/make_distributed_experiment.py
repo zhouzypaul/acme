@@ -348,7 +348,8 @@ def make_distributed_experiment(
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
         environment, actor, counter, logger, observers=experiment.observers,
-        cfn=cfn_variable_source if experiment.is_cfn else None)
+        cfn=cfn_variable_source if experiment.is_cfn else None,
+        make_bonus_plots=experiment.make_bonus_plots)
 
   if not program:
     program = lp.Program(name=name)
