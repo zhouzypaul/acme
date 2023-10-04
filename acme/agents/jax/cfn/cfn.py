@@ -49,7 +49,7 @@ class CFN(acme.Learner):
                replay_client: Optional[reverb.Client] = None,
                counter: Optional[counting.Counter] = None,
                logger: Optional[loggers.Logger] = None,
-               bonus_plotting_freq = 500  # set to np.inf to disable plotting
+               bonus_plotting_freq = 500  # set to -1 to disable plotting.
   ):
 
     def loss(
@@ -275,7 +275,7 @@ class CFN(acme.Learner):
     # Attempt to write logs.
     self._logger.write({**metrics, **counts})
 
-    if self._state.steps > 0 and \
+    if self._bonus_plotting_freq > 0 and self._state.steps > 0 and \
         self._state.steps % self._bonus_plotting_freq == 0 and \
         len(self._hash2obs) > 1:
       self._make_cfn_bonus_plots()

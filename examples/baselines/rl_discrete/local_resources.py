@@ -96,7 +96,7 @@ def get_local_resources(launch_type):
         'replay'    : [4, 5, 6, 7],
         'counter' : [8, 9],
         'evaluator': [10],
-        'cfn': [11, 12]
+        'cfn': [11, 12, 13, 14],
       }
     else:
       cpu_dict = {}

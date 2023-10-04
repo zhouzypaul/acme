@@ -67,7 +67,8 @@ class EnvironmentLoop(core.Worker):
       should_update: bool = True,
       label: str = 'environment_loop',
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
-      cfn: Optional[CFN] = None
+      cfn: Optional[CFN] = None,
+      make_bonus_plots: bool = False,
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -78,6 +79,7 @@ class EnvironmentLoop(core.Worker):
     self._should_update = should_update
     self._observers = observers
     self._cfn = cfn
+    self._make_bonus_plots = make_bonus_plots
 
   def run_episode(self) -> loggers.LoggingData:
     """Run one episode.
@@ -106,7 +108,8 @@ class EnvironmentLoop(core.Worker):
     # Make the first observation.
     self._actor.observe_first(timestep)
     
-    episode_trajectory.append((timestep.observation, self._environment.get_info()))
+    if self._cfn and self._make_bonus_plots:
+      episode_trajectory.append((timestep.observation, self._environment.get_info()))
 
     for observer in self._observers:
       # Initialize the observer with the current state of the env after reset
@@ -134,7 +137,8 @@ class EnvironmentLoop(core.Worker):
         # One environment step was completed. Observe the current state of the
         # environment, the current timestep and the action.
         observer.observe(self._environment, timestep, action)
-      episode_trajectory.append((timestep.observation, self._environment.get_info()))
+      if self._cfn and self._make_bonus_plots:
+        episode_trajectory.append((timestep.observation, self._environment.get_info()))
 
       # Give the actor the opportunity to update itself.
       if self._should_update:
@@ -152,7 +156,7 @@ class EnvironmentLoop(core.Worker):
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_steps)
 
-    if self._cfn:
+    if self._make_bonus_plots and self._cfn:
       t0 = time.time()
       self.update_global_counts(episode_trajectory)
       print(f'[EnvironmentLoop] Took {time.time() - t0}s to update global ground-truth visitation counts.')

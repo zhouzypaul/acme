@@ -54,3 +54,6 @@ class CFNConfig:
   max_priority_weight: float = 0.9
 
   predictor_learning_rate: float = 1e-3
+
+  bonus_plotting_freq: int = 1000
+  value_plotting_freq: int = 1000

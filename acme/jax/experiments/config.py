@@ -173,6 +173,7 @@ class ExperimentConfig(Generic[builders.Networks, builders.Policy,
       default_factory=experiment_utils.create_experiment_logger_factory)
   checkpointing: Optional[CheckpointingConfig] = CheckpointingConfig()
   is_cfn: Optional[bool] = False
+  make_bonus_plots: Optional[bool] = False
 
   # TODO(stanczyk): Make get_evaluator_factories a standalone function.
   def get_evaluator_factories(self):

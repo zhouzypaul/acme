@@ -66,7 +66,8 @@ class CFNLearner(acme.Learner):
       intrinsic_reward_coefficient=0.001,
       extrinsic_reward_coefficient=1.0,
       use_stale_rewards: bool = False,
-      cfn=None
+      cfn=None,
+      value_plotting_freq: int = 1000, # Set to -1 to disable
       ):
 
     if not use_stale_rewards:
@@ -78,6 +79,7 @@ class CFNLearner(acme.Learner):
     self._cfn = cfn
     self._rng_key = rng_key
     self._cfn_network = cfn_network
+    self._value_plotting_freq = value_plotting_freq
 
     # import ipdb; ipdb.set_trace()
     base_dir = get_save_directory()
@@ -87,7 +89,8 @@ class CFNLearner(acme.Learner):
   def step(self):
     self._direct_rl_learner.step()
 
-    if self._cfn and self._direct_rl_learner._state.steps % 500 == 0:
+    if self._value_plotting_freq > 0 and self._cfn and \
+      utils.get_from_first_device(self._direct_rl_learner._state).steps % self._value_plotting_freq == 0:
       self._make_spatial_vf_plot()
 
   def get_variables(self, names: List[str]) -> List[Any]:

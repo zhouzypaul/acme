@@ -76,6 +76,11 @@ flags.DEFINE_integer('sequence_period', 20, 'How often to start a new sequence. 
 # MiniGrid Config
 flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
 
+# Plotting config
+# Setting both to -1 disables plotting
+flags.DEFINE_integer('cfn_bonus_plotting_freq', 1_000, 'How often to make CFN plots. -1 disables')
+flags.DEFINE_integer('cfn_value_plotting_freq', 1_000, 'How often to make CFN plots. -1 disables')
+
 FLAGS = flags.FLAGS
 
 def make_rnd_builder(r2d2_builder):
@@ -107,6 +112,8 @@ def make_cfn_builder(r2d2_builder):
     cfn_learning_rate=FLAGS.cfn_learning_rate,
     intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
     extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
+    bonus_plotting_freq=FLAGS.cfn_bonus_plotting_freq,
+    value_plotting_freq=FLAGS.cfn_value_plotting_freq,
   )
   logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
   builder = cfn_builder.CFNBuilder(
@@ -126,6 +133,9 @@ def build_experiment_config():
   # experiments via Launchpad.
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
+
+  if FLAGS.use_cfn and not FLAGS.use_stale_rewards:
+    raise Exception("Fresh CFN not supported at this time. Please try again later.")
 
   # Create an environment factory.
   def environment_factory(seed: int) -> dm_env.Environment:
@@ -209,6 +219,8 @@ def build_experiment_config():
   else:
     env_factory = environment_factory
 
+  make_bonus_plots = FLAGS.cfn_bonus_plotting_freq > 0 and FLAGS.cfn_value_plotting_freq > 0
+
   return experiments.ExperimentConfig(
       # builder=r2d2.R2D2Builder(config),
       builder=agent_builder,
@@ -219,7 +231,8 @@ def build_experiment_config():
       max_num_actor_steps=FLAGS.num_steps,
       checkpointing=checkpointing_config,
       logger_factory=functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir),
-      is_cfn=FLAGS.use_cfn)
+      is_cfn=FLAGS.use_cfn,
+      make_bonus_plots=make_bonus_plots,)
 
 
 def sigterm_log_endtime_handler(_signo, _stack_frame):
