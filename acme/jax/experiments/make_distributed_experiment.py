@@ -47,6 +47,7 @@ InferenceServer = inference_server_lib.InferenceServer[
 
 def make_distributed_experiment(
     experiment: config.ExperimentConfig[builders.Networks, Any, Any],
+    exploration_experiment: config.ExperimentConfig[builders.Networks, Any, Any],
     num_actors: int,
     *,
     inference_server_config: Optional[
@@ -68,6 +69,7 @@ def make_distributed_experiment(
 
   Args:
     experiment: configuration of the experiment.
+    exploration_experiment: configuration of the novelty-search policy.
     num_actors: number of actors to run.
     inference_server_config: If provided we will attempt to use
       `num_inference_servers` inference servers for selecting actions.
@@ -205,6 +207,82 @@ def make_distributed_experiment(
 
     return learner
 
+  def build_exploration_replay():
+    """The replay storage."""
+    dummy_seed = 1
+    spec = (
+        exploration_experiment.environment_spec or
+        specs.make_environment_spec(exploration_experiment.environment_factory(dummy_seed)))
+    network = exploration_experiment.network_factory(spec)
+    policy = config.make_policy(
+        experiment=exploration_experiment,
+        networks=network,
+        environment_spec=spec,
+        evaluation=False)
+    return exploration_experiment.builder.make_replay_tables(spec, policy)
+
+  def build_exploration_model_saver(variable_source: core.VariableSource):
+    assert experiment.checkpointing
+    environment = experiment.environment_factory(0)
+    spec = specs.make_environment_spec(environment)
+    networks = experiment.network_factory(spec)
+    models = make_snapshot_models(networks, spec)
+    # TODO(raveman): Decouple checkpointing and snapshotting configs.
+    return snapshotter.JAXSnapshotter(
+        variable_source=variable_source,
+        models=models,
+        path=experiment.checkpointing.directory,
+        subdirectory='snapshots',
+        add_uid=experiment.checkpointing.add_uid)
+
+  def build_exploration_learner(
+      random_key: networks_lib.PRNGKey,
+      replay: reverb.Client,
+      counter: Optional[counting.Counter] = None,
+      primary_learner: Optional[core.Learner] = None,
+  ):
+    """The Learning part of the agent."""
+
+    dummy_seed = 1
+    spec = (
+        exploration_experiment.environment_spec or
+        specs.make_environment_spec(exploration_experiment.environment_factory(dummy_seed)))
+
+    # Creates the networks to optimize (online) and target networks.
+    networks = exploration_experiment.network_factory(spec)
+
+    iterator = exploration_experiment.builder.make_dataset_iterator(replay)
+    # make_dataset_iterator is responsible for putting data onto appropriate
+    # training devices, so here we apply prefetch, so that data is copied over
+    # in the background.
+    iterator = utils.prefetch(iterable=iterator, buffer_size=1)
+    counter = counting.Counter(counter, 'exploration_learner')
+    learner = exploration_experiment.builder.make_learner(random_key, networks, iterator,
+                                              exploration_experiment.logger_factory, spec,
+                                              replay, counter)
+
+    if exploration_experiment.checkpointing:
+      if primary_learner is None:
+        checkpointing = exploration_experiment.checkpointing
+        learner = savers.CheckpointingRunner(
+            learner,
+            key='exploration_learner',
+            subdirectory='exploration_learner',
+            time_delta_minutes=5,
+            directory=checkpointing.directory,
+            add_uid=checkpointing.add_uid,
+            max_to_keep=checkpointing.max_to_keep,
+            keep_checkpoint_every_n_hours=checkpointing.keep_checkpoint_every_n_hours,
+            checkpoint_ttl_seconds=checkpointing.checkpoint_ttl_seconds,
+        )
+      else:
+        learner.restore(primary_learner.save())
+        # NOTE: This initially synchronizes secondary learner states with the
+        # primary one. Further synchronization should be handled by the learner
+        # properly doing a pmap/pmean on the loss/gradients, respectively.
+
+    return learner
+  
   def build_inference_server(
       inference_server_config: inference_server_lib.InferenceServerConfig,
       variable_source: core.VariableSource,
@@ -244,14 +322,17 @@ def make_distributed_experiment(
   def build_actor(
       random_key: networks_lib.PRNGKey,
       replay: reverb.Client,
+      exploration_replay: reverb.Client,
       variable_source: core.VariableSource,
+      exploration_variable_source: core.VariableSource,
       counter: counting.Counter,
       actor_id: ActorId,
       inference_server: Optional[InferenceServer],
       gsm: Optional[GoalSpaceManager]
   ) -> environment_loop.EnvironmentLoop:
     """The actor process."""
-    environment_key, actor_key = jax.random.split(random_key)
+    environment_key, actor_key, explore_key = jax.random.split(
+      random_key, 3)
     # Create environment and policy core.
 
     # Environments normally require uint32 as a seed.
@@ -259,12 +340,25 @@ def make_distributed_experiment(
         utils.sample_uint32(environment_key))
     environment_spec = specs.make_environment_spec(environment)
 
+    exploration_env = exploration_experiment.environment_factory(
+      utils.sample_uint32(environment_key))
+    explore_env_spec = specs.make_environment_spec(exploration_env)
+
     networks = experiment.network_factory(environment_spec)
     policy_network = config.make_policy(
         experiment=experiment,
         networks=networks,
         environment_spec=environment_spec,
         evaluation=False)
+    
+    exploration_networks = exploration_experiment.network_factory(
+      explore_env_spec)
+    exploration_policy_network = config.make_policy(
+      experiment=exploration_experiment,
+      networks=exploration_networks,
+      environment_spec=explore_env_spec,
+      evaluation=False)
+
     if inference_server is not None:
       policy_network = actor_core.ActorCore(
           init=policy_network.init,
@@ -278,6 +372,11 @@ def make_distributed_experiment(
     actor = experiment.builder.make_actor(actor_key, policy_network,
                                           environment_spec, variable_source,
                                           adder)
+    exploration_adder = exploration_experiment.builder.make_adder(
+      exploration_replay, explore_env_spec, exploration_policy_network)
+    exploration_actor = exploration_experiment.builder.make_actor(
+      explore_key, exploration_policy_network, explore_env_spec,
+      exploration_variable_source, exploration_adder)
 
     # Create logger and counter.
     counter = counting.Counter(counter, 'actor')
@@ -285,16 +384,31 @@ def make_distributed_experiment(
                                        actor_id)
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
-        environment, actor, counter, logger, observers=experiment.observers,
+        environment, actor, exploration_actor, counter, logger,
+        observers=experiment.observers,
         goal_space_manager=gsm, actor_id=actor_id)
     
-  def _gsm_node(rng_num, networks, variable_source):
+  def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
     variable_client = variable_utils.VariableClient(
         variable_source,
         key='actor_variables',
         update_period=datetime.timedelta(minutes=1))
+    exploration_var_client = variable_utils.VariableClient(
+      exploration_var_source,
+      key='rnd_training_state',  # TODO(ab): Make this more generic.
+      update_period=datetime.timedelta(minutes=1))
     env = experiment.environment_factory(rng_num)
-    gsm = GoalSpaceManager(env, rng_num, networks, variable_client)
+    
+    exploration_env = exploration_experiment.environment_factory(
+      utils.sample_uint32(rng_num))
+    explore_env_spec = specs.make_environment_spec(exploration_env)
+    exploration_networks = exploration_experiment.network_factory(
+      explore_env_spec)
+    
+    gsm = GoalSpaceManager(env, rng_num, networks,
+                           variable_client,
+                           exploration_networks,
+                           exploration_var_client)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(
@@ -322,6 +436,10 @@ def make_distributed_experiment(
       build_replay, checkpoint_time_delta_minutes=checkpoint_time_delta_minutes)
   replay = replay_node.create_handle()
 
+  exploration_replay_node = lp.ReverbNode(
+    build_exploration_replay, checkpoint_time_delta_minutes=checkpoint_time_delta_minutes)
+  exploration_replay = exploration_replay_node.create_handle()
+
   counter = program.add_node(lp.CourierNode(build_counter), label='counter')
 
   if experiment.max_num_actor_steps is not None:
@@ -335,12 +453,22 @@ def make_distributed_experiment(
   learner = learner_node.create_handle()
   variable_sources = [learner]
 
+  # TODO(ab): How does Counter work? Can I reuse the counter b/w both learners or do I need a new one??
+  exploration_learner_key, key = jax.random.split(key)
+  exploration_learner_node = lp.CourierNode(
+    build_exploration_learner, exploration_learner_key, exploration_replay, counter)
+  exploration_learner = exploration_learner_node.create_handle()
+
   if multithreading_colocate_learner_and_reverb:
     program.add_node(
         lp.MultiThreadingColocation([learner_node, replay_node]),
         label='learner')
+    program.add_node(
+      lp.MultiThreadingColocation([exploration_learner_node, exploration_replay_node]),
+      label='exploration_learner')
   else:
     program.add_node(replay_node, label='replay')
+    program.add_node(exploration_replay_node, label='exploration_replay')
 
     with program.group('learner'):
       program.add_node(learner_node)
@@ -362,6 +490,9 @@ def make_distributed_experiment(
         # NOTE: Only the primary learner checkpoints.
         # NOTE: Do not pass the counter to the secondary learners to avoid
         # double counting of learner steps.
+
+    with program.group('exploration_learner'):
+      program.add_node(exploration_learner_node)
 
   if inference_server_config is not None:
     num_actors_per_server = math.ceil(num_actors / num_inference_servers)
@@ -394,6 +525,7 @@ def make_distributed_experiment(
       gsm_key,
       experiment.network_factory(spec),
       variable_sources[0],
+      exploration_learner,
       # TODO(ab): How to set the number of threads for the GSM?
       courier_kwargs={'thread_pool_size': 42}
       )
@@ -420,7 +552,9 @@ def make_distributed_experiment(
             build_actor,
             actor_keys[actor_id],
             replay,
+            exploration_replay,
             variable_source,
+            exploration_learner,
             counter,
             actor_id,
             inference_node,
@@ -445,5 +579,10 @@ def make_distributed_experiment(
   if make_snapshot_models and experiment.checkpointing:
     program.add_node(
         lp.CourierNode(build_model_saver, learner), label='model_saver')
+    
+  if make_snapshot_models and exploration_experiment.checkpointing:
+    program.add_node(
+      lp.CourierNode(build_exploration_model_saver, exploration_learner),
+      label='exploration_model_saver')
 
   return program

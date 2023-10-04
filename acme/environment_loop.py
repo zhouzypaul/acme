@@ -17,6 +17,7 @@
 import operator
 import time
 import math
+import itertools
 from typing import List, Optional, Sequence, Tuple, Dict, Callable
 import matplotlib.pyplot as plt
 
@@ -71,6 +72,7 @@ class EnvironmentLoop(core.Worker):
       self,
       environment: dm_env.Environment,
       actor: core.Actor,
+      exploration_actor: Optional[core.Actor] = None,
       counter: Optional[counting.Counter] = None,
       logger: Optional[loggers.Logger] = None,
       should_update: bool = True,
@@ -88,6 +90,7 @@ class EnvironmentLoop(core.Worker):
     self._environment = environment
     self._actor = actor
     self._actor_id = actor_id
+    self._exploration_actor = exploration_actor
     self._counter = counter or counting.Counter()
     self._logger = logger or loggers.make_default_logger(
         label, steps_key=self._counter.get_steps_key())
@@ -112,6 +115,7 @@ class EnvironmentLoop(core.Worker):
 
     # For debugging and visualizations
     self._start_ts = None
+    self._episode_iter = itertools.count()
     
   @property
   def task_goal(self) -> OARG:
@@ -289,7 +293,9 @@ class EnvironmentLoop(core.Worker):
         
         overall_attempted_edges.append((timestep.observation, self.exploration_goal))
         print(f'[EnvironmentLoop] Reached {expansion_node}; starting pure exploration rollout.')
-        timestep, needs_reset, episode_logs = self.exploration_rollout(timestep, episode_logs)
+        timestep, needs_reset, episode_logs = self.exploration_rollout(
+          timestep, episode_logs, trajectory_key='exploration_trajectory')
+        print(f"[EnvironmentLoop] Length of exploration trajectory = {len(episode_logs['exploration_trajectory'])}")
     
     print(f"Episode traj len: {len(episode_logs['episode_trajectory'])}. Num attempted edges: {len(overall_attempted_edges)}")
 
@@ -316,9 +322,11 @@ class EnvironmentLoop(core.Worker):
     episode_logs['env_step_durations'] = []
     episode_logs['episode_steps'] = 0
     episode_logs['episode_trajectory'] = []
+    episode_logs['exploration_trajectory'] = []
     episode_logs['episode_return'] = tree.map_structure(
       _generate_zeros_from_spec, self._environment.reward_spec())
     
+    new_hash2goals = {}
     env_reset_start = time.time()
     timestep = self._environment.reset()
     env_reset_duration = time.time() - env_reset_start
@@ -332,10 +340,13 @@ class EnvironmentLoop(core.Worker):
       if self._goal_space_manager:
         self._update_dicts_from_gsm()
       attempted_edges = [(timestep.observation, self.exploration_goal)]
-      _, _, episode_logs = self.exploration_rollout(timestep, episode_logs)
+      _, _, episode_logs = self.exploration_rollout(timestep, episode_logs, 'episode_trajectory')
 
     # Extract new goals to add to the goal-space.
-    new_hash2goals = self.extract_new_goals(episode_logs['episode_trajectory'])
+    explore_traj_key = 'exploration_trajectory' if not is_warmup_episode else 'episode_trajectory'
+
+    if episode_logs[explore_traj_key]:
+      new_hash2goals = self.extract_new_goals(episode_logs[explore_traj_key])
       
     # HER.
     if not is_warmup_episode:
@@ -404,24 +415,43 @@ class EnvironmentLoop(core.Worker):
 
     return timestep, needs_reset, attempted_edges, episode_logs
   
-  def exploration_rollout(self, ts: dm_env.TimeStep, episode_logs: Dict):
+  def exploration_rollout(self, ts: dm_env.TimeStep, episode_logs: Dict, trajectory_key: str):
     """Rollout the exploration policy and return dict mapping new goal hashes to their OARGs.
 
     Args:
       ts (dm_env.TimeStep): current timestep.
       episode_logs (Dict): logs keeping track of the episode so far.
+      trajectory_key (str): which key to store the exploration traj in episode_logs.
 
     Returns:
       timestep (dm_env.TimeStep): ts at the end of the rollout.
       needs_reset (bool): currently, we run the exploration policy till episode end.
       episode_logs (Dict): updated log of episode so far.
     """
-    timestep, needs_reset, episode_logs = self.gc_rollout(
-      timestep=ts._replace(step_type=dm_env.StepType.FIRST),
-      goal=self.exploration_goal,
-      episode_logs=episode_logs,
-      use_random_actions=self._use_random_policy_for_exploration
-    )
+
+    if self._exploration_actor:
+      print(f'About to roll out {self._exploration_actor}')
+      obs: OARG = ts.observation
+      new_obs = OARG(
+        observation=obs.observation[:, :, :3],
+        action=obs.action, reward=obs.reward, goals=obs.goals)
+      ts = ts._replace(
+        observation=new_obs,
+        step_type=dm_env.StepType.FIRST)
+      timestep, needs_reset, episode_logs = self.vanilla_policy_rollout(
+        timestep=ts,
+        episode_logs=episode_logs,
+        trajectory_key=trajectory_key)
+      if self._actor_id == 1:
+        self.visualize_intrinsic_spatial_bonus(episode_logs[trajectory_key], next(self._episode_iter))
+    else:
+      print(f'Could have been rolling out the RND policy... {self._exploration_actor}')
+      timestep, needs_reset, episode_logs = self.gc_rollout(
+        timestep=ts._replace(step_type=dm_env.StepType.FIRST),
+        goal=self.exploration_goal,
+        episode_logs=episode_logs,
+        use_random_actions=self._use_random_policy_for_exploration
+      )
 
     print(f'[EnvironmentLoop] Ended exploration in {timestep.observation.goals}')
     assert needs_reset, 'Currently, we run the exploration policy till episode end.'
@@ -435,17 +465,33 @@ class EnvironmentLoop(core.Worker):
       tuple(trans.next_ts.observation.goals): trans.next_ts.observation 
       for trans in trajectory
     }
+
+    # Associate each hash with its most recently assigned intrinsic reward.
+    hash2int = {
+      tuple(trans.next_ts.observation.goals): trans.intrinsic_reward
+      for trans in trajectory
+    }
     
     visited_hashes: List[Tuple] = list(visited_states.keys())
     new_goal_hashes: List[Tuple] = [g for g in visited_hashes if g not in goal_space]
 
     if new_goal_hashes:
-      novelty_scores: List[float] = [self._get_intrinsic_reward(visited_states[g]) \
-                                     for g in new_goal_hashes]
-      most_novel_goal_hash: Tuple = new_goal_hashes[np.argmax(novelty_scores)]
-      most_novel_state: OARG = visited_states[most_novel_goal_hash]
-      print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
-      return {most_novel_goal_hash: most_novel_state}
+      # novelty_scores: List[float] = [self._get_intrinsic_reward(visited_states[g]) \
+      #                                for g in new_goal_hashes]
+      novelty_scores: List[float] = [hash2int[g] for g in new_goal_hashes]
+      
+      if max(novelty_scores) > self._exploration_actor._rnd_state.reward_mean:
+        most_novel_goal_hash: Tuple = new_goal_hashes[np.argmax(novelty_scores)]
+        most_novel_state: OARG = visited_states[most_novel_goal_hash]
+        print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
+        
+        if self._actor_id == 1:
+          episode_number = next(self._episode_iter)
+          self.visualize_new_goal(most_novel_goal_hash, most_novel_state,
+                                  max(novelty_scores), episode=episode_number)
+          # self.visualize_intrinsic_spatial_bonus(trajectory, episode_number)
+
+        return {most_novel_goal_hash: most_novel_state}
 
     return {}
 
@@ -455,6 +501,89 @@ class EnvironmentLoop(core.Worker):
       n_actions = self._env_spec.actions.num_values
       return np.random.randint(0, n_actions, dtype=self._env_spec.actions.dtype)
     return self._actor.select_action(timestep.observation)
+  
+  def vanilla_policy_rollout(
+      self,
+      timestep: dm_env.TimeStep,
+      episode_logs: dict,
+      trajectory_key: str = 'exploration_trajectory'
+  ):
+    """Rollout vanilla policy for exploration.
+
+    Args:
+        timestep (dm_env.TimeStep): starting timestep
+        episode_logs (dict): for logging
+        trajectory_key (str): what key to use in episode_logs
+
+    Returns:
+        timestep (dm_env.TimeStep): final ts
+        done (bool): env needs reset
+        logs (dict): updated episode logs
+    """
+    assert trajectory_key in ('exploration_trajectory', 'episode_trajectory')
+    trajectory: List[GoalBasedTransition] = []
+  
+    # Make the first observation.
+    self._exploration_actor.observe_first(timestep)
+    for observer in self._observers:
+      # Initialize the observer with the current state of the env after reset
+      # and the initial timestep.
+      observer.observe_first(self._environment, timestep)
+
+    # Run an episode.
+    while not timestep.last():
+      # Book-keeping.
+      episode_logs['episode_steps'] += 1
+
+      # Generate an action from the agent's policy.
+      select_action_start = time.time()
+      action = self._exploration_actor.select_action(timestep.observation)
+      episode_logs['select_action_durations'].append(time.time() - select_action_start)  
+
+      # Step the environment with the agent's selected action.
+      env_step_start = time.time()
+      next_timestep = self._environment.step(action)
+      episode_logs['env_step_durations'].append(time.time() - env_step_start)
+
+      trajectory.append(
+        GoalBasedTransition(
+          ts=timestep,
+          action=action,
+          reward=next_timestep.reward,
+          discount=next_timestep.discount,
+          next_ts=next_timestep,
+          pursued_goal=self.exploration_goal,
+          # intrinsic reward corresponding to timestep.observation
+          # TODO(ab): what should we initialize prev_intrinsic_reward to? Does it matter?
+          intrinsic_reward=self._exploration_actor._state.prev_intrinsic_reward
+        ))
+
+      # Have the agent and observers observe the timestep.
+      self._exploration_actor.observe(action, next_timestep=next_timestep)
+      for observer in self._observers:
+        # One environment step was completed. Observe the current state of the
+        # environment, the current timestep and the action.
+        observer.observe(self._environment, next_timestep, action)
+
+      # Give the actor the opportunity to update itself.
+      if self._should_update:
+        self._exploration_actor.update()
+
+      # Equivalent to: episode_return += timestep.reward
+      # We capture the return value because if timestep.reward is a JAX
+      # DeviceArray, episode_return will not be mutated in-place. (In all other
+      # cases, the returned episode_return will be the same object as the
+      # argument episode_return.)
+      episode_logs['episode_return'] = tree.map_structure(
+        operator.iadd,
+        episode_logs['episode_return'],
+        next_timestep.reward
+      )
+      timestep = next_timestep
+
+    episode_logs[trajectory_key].extend(trajectory)
+
+    return timestep, timestep.last(), episode_logs
 
   def gc_rollout(
     self, timestep: dm_env.TimeStep, goal: OARG, episode_logs: dict,
@@ -747,6 +876,52 @@ class EnvironmentLoop(core.Worker):
         print(f'[HER] Took {time.time() - t0}s to replay for exploration rewards.')
 
       print(f'HER took {time.time() - start_time}s')
+
+  def visualize_new_goal(self,
+                         goal_hash: Tuple,
+                         goal_oarg: OARG,
+                         novelty_score: float,
+                         episode: int):
+    reward_mean = self._exploration_actor._rnd_state.reward_mean
+    reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var)
+    image = goal_oarg.observation[:, :, :3]
+    image = (image * 255).astype(np.uint8)
+    
+    plt.figure(figsize=(13, 10))
+    plt.imshow(image)
+    plt.title(f'G: {goal_hash} R: {novelty_score:.2f} mu: {reward_mean:.2f} std: {reward_std:.2f}')
+    plt.savefig(f'plots/discovered_goals/goal_{episode}.png')
+    plt.close()
+
+  def visualize_intrinsic_spatial_bonus(self, trajectory: List[GoalBasedTransition], episode: int):
+
+    pos2bonuses = collections.defaultdict(list)
+    executed_actions: List[int] = []
+
+    for transition in trajectory:
+      oarg = transition.ts.observation
+      intrinsic_reward = transition.intrinsic_reward
+      goal_hash = tuple(oarg.goals)
+      x_position = goal_hash[0]
+      y_position = goal_hash[1]
+      pos2bonuses[(x_position, y_position)].append(intrinsic_reward)
+      executed_actions.append(transition.action.item())
+
+    x_positions = []
+    y_positions = []
+    exploration_bonuses = []
+    for pos, bonuses in pos2bonuses.items():
+      x_positions.append(pos[0])
+      y_positions.append(pos[1])
+      exploration_bonuses.append(np.mean(bonuses))
+
+    executed_action_distribution = collections.Counter(executed_actions)
+    plt.title(f'As: {executed_action_distribution}')
+    plt.scatter(x_positions, y_positions, c=exploration_bonuses)
+    plt.colorbar()
+    plt.savefig(f'plots/exploration_bonus/spatial_bonus_episode_{episode}.png')
+    plt.close()
+
 
   # TODO(ab): fix this function and move to the GSM.
   def visualize_goal_space(

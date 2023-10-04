@@ -27,6 +27,8 @@ import dm_env
 import launchpad as lp
 from datetime import datetime
 import rlax
+import functools
+from acme.utils.experiment_utils import make_experiment_logger
 
 start_time = datetime.now()
 
@@ -43,6 +45,12 @@ flags.DEFINE_integer('num_actors', 64, 'Number of actors to use')
 flags.DEFINE_integer('spi', 0, 'Samples per insert')
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
+
+# Novelty search flags.
+flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
+flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
+flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')
+flags.DEFINE_boolean('use_stale_rewards', True, 'Use stale rewards for RND')
 
 FLAGS = flags.FLAGS
 
@@ -87,6 +95,71 @@ def build_experiment_config():
       max_num_actor_steps=FLAGS.num_steps)
 
 
+def make_rnd_builder(r2d2_builder):
+  from acme.agents.jax import rnd
+  # import ipdb; ipdb.set_trace()
+  rnd_config = rnd.RNDConfig(
+      is_sequence_based=True, # Probably
+      intrinsic_reward_coefficient=FLAGS.rnd_intrinsic_reward_coefficient,
+      extrinsic_reward_coefficient=FLAGS.rnd_extrinsic_reward_coefficient,
+      predictor_learning_rate=FLAGS.rnd_learning_rate,
+      use_stale_rewards=FLAGS.use_stale_rewards
+  )
+  logger_fn = functools.partial(
+    make_experiment_logger, FLAGS.acme_id)
+  builder = rnd.RNDBuilder(
+      rl_agent=r2d2_builder,
+      config=rnd_config,
+      logger_fn=logger_fn)
+  return builder
+
+
+def build_exploration_policy_experiment_config():
+  batch_size = 32
+
+  # The env_name must be dereferenced outside the environment factory as FLAGS
+  # cannot be pickled and pickling is necessary when launching distributed
+  # experiments via Launchpad.
+  env_name = FLAGS.env_name
+  max_episode_steps = FLAGS.max_episode_steps
+  
+  def environment_factory(seed: int) -> dm_env.Environment:
+    return helpers.make_minigrid_environment(
+      level_name=env_name,
+      max_episode_len=max_episode_steps,
+      goal_conditioned=False,  # This is the reason we have a different env_factory
+      seed=seed)
+  
+  def network_factory(env_spec):
+    from acme.agents.jax import rnd
+    r2d2_networks = r2d2.make_vanilla_atari_networks(env_spec)
+    return rnd.make_networks(env_spec, direct_rl_networks=r2d2_networks)
+  
+  # Configure the agent.
+  # TODO(ab): pick hyperparameters that make sense for R2D2 + RND.
+  config = r2d2.R2D2Config(
+      burn_in_length=0,  # NOTE(ab): got rid of burn_in
+      trace_length=40,
+      sequence_period=20,
+      min_replay_size=1_000,
+      batch_size=batch_size,
+      prefetch_size=1,
+      samples_per_insert=FLAGS.spi,
+      evaluation_epsilon=1e-3,
+      learning_rate=1e-4,
+      target_update_period=1200,
+      variable_update_period=100,
+      # tx_pair=rlax.signed_hyperbolic
+  )
+  agent_builder = make_rnd_builder(r2d2.R2D2Builder(config))
+  return experiments.ExperimentConfig(
+      builder=agent_builder,
+      network_factory=network_factory,
+      environment_factory=environment_factory,
+      seed=FLAGS.seed,
+      max_num_actor_steps=FLAGS.num_steps)
+
+
 def _get_local_resources(launch_type):
    assert launch_type in ('local_mp', 'local_mt'), launch_type
    from launchpad.nodes.python.local_multi_processing import PythonProcess
@@ -106,6 +179,12 @@ def _get_local_resources(launch_type):
          "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
          "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
          "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+        }),
+        "exploration_replay":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
+        "exploration_learner": PythonProcess(env={
+          "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
+          "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+          "TF_FORCE_GPU_ALLOW_GROWTH": "true",
         })
      }
    else:
@@ -138,6 +217,7 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
 def main(_):
   FLAGS.append_flags_into_file('/tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
   config = build_experiment_config()
+  exploration_config = build_exploration_policy_experiment_config()
 
   utils.create_log_dir('plots')
   utils.create_log_dir(os.path.join('plots', 'uvfa_plots'))
@@ -145,7 +225,9 @@ def main(_):
 
   if FLAGS.run_distributed:
     program = experiments.make_distributed_experiment(
-        experiment=config, num_actors=FLAGS.num_actors if lp_utils.is_local_run() else 80,
+        experiment=config,
+        exploration_experiment=exploration_config,
+        num_actors=FLAGS.num_actors if lp_utils.is_local_run() else 80,
         create_goal_space_manager=True
     )
     lp.launch(program, 

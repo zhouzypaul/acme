@@ -101,3 +101,51 @@ class GenericActor(core.Actor, Generic[actor_core.State, actor_core.Extras]):
   def update(self, wait: bool = False):
     if self._variable_client and not self._per_episode_update:
       self._variable_client.update(wait)
+
+
+class GenericIntrinsicActor(GenericActor):
+  """[StaleRewards] Actor that uses r_int for action selection & adds it to replay."""
+
+  def __init__(
+    self,
+    intrinsic_reward_scale: float,
+    extrinsic_reward_scale: float,
+    *args,
+    **kwargs
+  ):
+    self._intrinsic_reward_scale = intrinsic_reward_scale
+    self._extrinsic_reward_scale = extrinsic_reward_scale
+    super().__init__(*args, **kwargs)
+  
+  @property
+  def _params(self):
+    params = self._variable_client.params[0] if self._variable_client else []
+    return params
+  
+  @property
+  def _rnd_state(self):
+    assert len(self._variable_client.params) == 2, "Assuming params, rnd_state."
+    params = self._variable_client.params[1] if self._variable_client else []
+    return params
+  
+  def select_action(self,
+                    observation: network_lib.Observation) -> types.NestedArray:
+
+    action, self._state = self._policy(
+      self._params, observation, self._state, self._rnd_state)
+    return utils.to_numpy(action)
+  
+  def observe(self, action: network_lib.Action, next_timestep: dm_env.TimeStep):
+    if self._adder:
+      combined_reward = (self._extrinsic_reward_scale * next_timestep.reward) \
+          + (self._intrinsic_reward_scale * self._state.prev_intrinsic_reward)
+      next_timestep = next_timestep._replace(reward=combined_reward)
+
+      # s_{t+1} = <o_{t+1}, a_t, r_t> 
+      # where r_t = r_ext_t + r_int_{t-1}
+      next_oar = next_timestep.observation
+      next_oar = next_oar._replace(reward=next_timestep.reward)
+      next_timestep = next_timestep._replace(observation=next_oar)
+
+      self._adder.add(
+          action, next_timestep, extras=self._get_extras(self._state))

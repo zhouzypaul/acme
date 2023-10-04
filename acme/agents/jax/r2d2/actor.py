@@ -42,6 +42,7 @@ class R2D2ActorState(Generic[actor_core_lib.RecurrentState]):
   recurrent_state: actor_core_lib.RecurrentState
   prev_recurrent_state: actor_core_lib.RecurrentState
   q_values: jnp.ndarray
+  prev_intrinsic_reward: float
 
 
 R2D2Policy = actor_core_lib.ActorCore[
@@ -76,7 +77,8 @@ def get_actor_core(
         epsilon=state.epsilon,
         recurrent_state=recurrent_state,
         prev_recurrent_state=state.recurrent_state,
-        q_values=q_values  # Akhil: sneaking in the Q-values
+        q_values=q_values,  # Akhil: sneaking in the Q-values
+        prev_intrinsic_reward=0.
     )
 
   def init(
@@ -94,7 +96,8 @@ def get_actor_core(
         epsilon=epsilon,
         recurrent_state=initial_core_state,
         prev_recurrent_state=initial_core_state,
-        q_values=jnp.zeros((7,)))  # TODO(ab)
+        q_values=jnp.zeros((7,)),  # TODO(ab)
+        prev_intrinsic_reward=0.)  
 
   def get_extras(
       state: R2D2ActorState[actor_core_lib.RecurrentState]) -> R2D2Extras:

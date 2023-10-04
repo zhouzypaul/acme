@@ -75,18 +75,57 @@ def make_networks(
     The RND networks.
   """
 
+  assert intrinsic_reward_coefficient == 1.0, 'we do scaling elsewhere'
+  assert extrinsic_reward_coefficient == 0.0, 'we do scaling elsewhere'
+
   def _rnd_fn(obs, act):
     # RND does not use the action but other variants like RED do.
     del act
     network = networks_lib.LayerNormMLP(list(layer_sizes))
     return network(obs)
 
-  target = hk.without_apply_rng(hk.transform(_rnd_fn))
-  predictor = hk.without_apply_rng(hk.transform(_rnd_fn))
+
+  class ConvolutionalNetworkClass(hk.Module):
+    def __init__(self, name = 'convolutional_network_class'):
+      super().__init__(name=name)
+      self._network = hk.Sequential([
+        networks_lib.AtariTorso(),
+        hk.Linear(256),
+      ])
+      self.batched = hk.BatchApply(self._network, num_dims=3)
+
+    def __call__(self, obs):
+      return self.batched(obs) # hopefully we just need another index here...
+
+
+  def _conv_rnd_func(obs, act):
+    # Seems like its gonna fail because of the batch dimension sadly. Maybe we'll see.
+    # Would be nice if it batched on its own.
+    del act
+    network = ConvolutionalNetworkClass()
+    return network(obs)
+
+
+  # target = hk.without_apply_rng(hk.transform(_rnd_fn))
+  # predictor = hk.without_apply_rng(hk.transform(_rnd_fn))
+  target = hk.without_apply_rng(hk.transform(_conv_rnd_func))
+  predictor = hk.without_apply_rng(hk.transform(_conv_rnd_func))
 
   # Create dummy observations and actions to create network parameters.
   dummy_obs = utils.zeros_like(spec.observations)
+  from acme.wrappers.observation_action_reward import OAR
+
+  if hasattr(dummy_obs, 'observation'):
+    print('using OAR so I need to extract the observation')
+    dummy_obs = dummy_obs.observation
+
+  # For sequences we need to add time. Why is it 3? So its batch_size, sequence length, and then there's some extra dimension
+  # that's always one. But, it comes from Reverb so I don't think its anything I did.
   dummy_obs = utils.add_batch_dim(dummy_obs)
+  dummy_obs = utils.add_batch_dim(dummy_obs)
+  dummy_obs = utils.add_batch_dim(dummy_obs) # after 3 of these it has the right shape at least...
+
+  print('dummy-obs shape: ', dummy_obs.shape)
 
   return RNDNetworks(
       target=networks_lib.FeedForwardNetwork(
@@ -103,7 +142,9 @@ def make_networks(
 def compute_rnd_reward(predictor_params: networks_lib.Params,
                        target_params: networks_lib.Params,
                        transitions: types.Transition,
-                       networks: RNDNetworks) -> jnp.ndarray:
+                       networks: RNDNetworks,
+                       observation_mean: jnp.ndarray,
+                       observation_var: jnp.ndarray) -> jnp.ndarray:
   """Computes the intrinsic RND reward for a given transition.
 
   Args:
@@ -115,10 +156,14 @@ def compute_rnd_reward(predictor_params: networks_lib.Params,
   Returns:
     The rewards as an ndarray.
   """
-  target_output = networks.target.apply(target_params, transitions.observation,
+  safe_observation_var = jnp.maximum(observation_var, 1e-6)
+  whitened_observation = (transitions.observation - observation_mean) / jnp.sqrt(safe_observation_var) # sqrt not var...
+  whitened_clipped_observation = jnp.clip(whitened_observation, -5., 5.)
+
+  target_output = networks.target.apply(target_params, whitened_clipped_observation,
                                         transitions.action)
   predictor_output = networks.predictor.apply(predictor_params,
-                                              transitions.observation,
+                                              whitened_clipped_observation,
                                               transitions.action)
   return networks.get_reward(predictor_output, target_output,
                              transitions.reward)

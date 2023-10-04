@@ -27,6 +27,7 @@ class GoalBasedTransition:
   discount: float  # whether next_ts is a terminal state
   next_ts: dm_env.TimeStep
   pursued_goal: Tuple
+  intrinsic_reward: float = 0.
 
 
 def truncation(ts: dm_env.TimeStep) -> dm_env.TimeStep:

@@ -12,7 +12,10 @@ import matplotlib.pyplot as plt
 from typing import Dict, Optional, Tuple
 
 from acme.wrappers.oar_goal import OARG
+from acme.wrappers.observation_action_reward import OAR
 from acme.agents.jax.r2d2 import networks as r2d2_networks
+from acme.agents.jax.rnd import networks as rnd_networks
+from acme.agents.jax.rnd.networks import compute_rnd_reward
 from acme.jax import variable_utils
 from acme.jax import networks as networks_lib
 from acme.core import Saveable
@@ -27,7 +30,9 @@ class GoalSpaceManager(Saveable):
       environment: dm_env.Environment,
       rng_key: networks_lib.PRNGKey,
       networks: r2d2_networks.R2D2Networks,
-      variable_client: Optional[variable_utils.VariableClient],
+      variable_client: variable_utils.VariableClient,
+      exploration_networks: rnd_networks.RNDNetworks,
+      exploration_variable_client: variable_utils.VariableClient,
       tensor_increments: int = 1000,
     ):
     self._environment = environment
@@ -44,6 +49,7 @@ class GoalSpaceManager(Saveable):
     # Extrinsic reward function
     self._hash2reward = {}
     self._hash2discount = {}
+    self._hash2bonus = {}
     
     self._tensor_increments = tensor_increments
     self._n_actions = tensor_increments
@@ -58,7 +64,11 @@ class GoalSpaceManager(Saveable):
     
     self._rng_key = rng_key
     self._variable_client = variable_client
+    self._exploration_variable_client = exploration_variable_client
+
     self._networks = networks
+    self._exploration_networks = exploration_networks
+
     self._iteration_iterator = itertools.count()
     self._gsm_loop_last_timestamp = time.time()
 
@@ -135,6 +145,10 @@ class GoalSpaceManager(Saveable):
   def _params(self):
     return self._variable_client.params if self._variable_client else []
   
+  @property
+  def _exploration_params(self):
+    return self._exploration_variable_client.params if self._exploration_variable_client else []
+  
   def update_params(self, wait: bool = False):
     """Update to a more recent copy of the learner params."""
     if self._variable_client:
@@ -143,6 +157,8 @@ class GoalSpaceManager(Saveable):
       print(f'[GSM] Took {time.time() - t0}s to update GSM learner params.',
             f'VarUpdatePeriod={self._variable_client._update_period.total_seconds()}s',
             f'TimeSinceLastVarUpdate={time.time() - self._variable_client._last_call}s')
+    if self._exploration_variable_client:
+      self._exploration_variable_client.update(wait)
 
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
@@ -282,6 +298,11 @@ class GoalSpaceManager(Saveable):
     ] = old_transition_matrix
     self._n_states, self._n_actions = self._transition_matrix.shape
     print(f'[GSM] Resized transition tensor to {self._transition_matrix.shape} in {time.time() - t0}s')
+
+  def _update_bonuses(self, src_hashes, bonuses):
+    assert len(src_hashes) == len(bonuses)
+    for key, value in zip(src_hashes, bonuses):
+      self._hash2bonus[key] = value
         
   def _construct_obs_matrix(self):
     def get_nodes():  # TODO(ab): is this just a deepcopy of hash2goal?
@@ -444,6 +465,18 @@ class GoalSpaceManager(Saveable):
     plt.savefig(f'plots/uvfa_plots/four_rooms_uvfa_episode_{episode}.png')
     plt.close()
 
+  def _make_spatial_bonus_plot(self, episode):
+    hashes = list(self._hash2bonus.keys())
+    xs, ys, bonuses = [], [], []
+    for hash in hashes:
+      xs.append(hash[0])
+      ys.append(hash[1])
+      bonuses.append(self._hash2bonus[hash])
+    plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
+    plt.colorbar()
+    plt.savefig(f'plots/spatial_bonus/rnd_{episode}.png')
+    plt.close()
+
   def step(self):
     t0 = time.time()
     iteration: int = next(self._iteration_iterator)
@@ -466,23 +499,44 @@ class GoalSpaceManager(Saveable):
       print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
       self._update_transition_tensor(src_dest_pairs, values)
 
+      exploration_transitions = OAR(
+        observation=batch_oarg.observation[None, ..., :3],
+        action=batch_oarg.action[None, ...],
+        reward=batch_oarg.reward[None, ...]
+      )
+
+      bonuses = compute_rnd_reward(
+        self._exploration_params.params,
+        self._exploration_params.target_params,
+        exploration_transitions,
+        self._exploration_networks,
+        self._exploration_params.observation_mean,
+        self._exploration_params.observation_var,
+      ).squeeze()
+
+      self._update_bonuses([pair[0] for pair in src_dest_pairs], bonuses)
+
       if iteration > 0 and iteration % 10 == 0:
         self.visualize_value_function(
           iteration,
           task_value_vector=None,
           exploration_value_vector=None
         )
+        self._make_spatial_bonus_plot(iteration)
 
       if len(src_dest_pairs) > 1000:
         # TODO(ab): get from env and pass around
         # start_state_features = (1, 5, 0, 0)  
-        # start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
-        start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
+        start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
+        # start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
         # start_state_features = (3, 1, 0, 1, 2, 0, 0, 0, 0, 0, 0)  # S3R1
         # start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0)  # S5R3
         if start_state_features in self._hash2idx:
           row_idx = self._hash2idx[start_state_features]
           pprint.pprint(self._transition_matrix[row_idx, :len(self._hash2idx)])
+
+        if start_state_features in self._hash2bonus:
+          pprint.pprint(self._hash2bonus)
 
       dt = time.time() - self._gsm_loop_last_timestamp
       print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)} dt={dt}')

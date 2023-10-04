@@ -134,13 +134,18 @@ def make_atari_environment(
 
 def make_minigrid_environment(
     level_name: str = 'MiniGrid-Empty-16x16',
-    max_episode_len: int = 1000
+    max_episode_len: int = 1000,
+    seed: int = 42,
+    goal_conditioned: bool = True
 ) -> dm_env.Environment:
   """Loads the Atari environment."""
-# Internal logic.
+  del seed
+
+  # Internal logic.
   env = environment_builder(
     level_name,
-    max_steps=max_episode_len
+    max_steps=max_episode_len,
+    goal_conditioned=goal_conditioned
   )
   env = wrappers.SinglePrecisionWrapper(env)
   return env

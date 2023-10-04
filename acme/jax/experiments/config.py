@@ -307,7 +307,11 @@ def default_evaluator_factory(
 
     # Create the run loop and return it.
     return environment_loop.EnvironmentLoop(
-        environment, actor, counter, logger, observers=observers)
+        environment=environment,
+        actor=actor,
+        counter=counter,
+        logger=logger,
+        observers=observers)
 
   return evaluator
 

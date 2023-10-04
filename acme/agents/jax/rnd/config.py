@@ -28,3 +28,10 @@ class RNDConfig:
 
   # How many gradient updates to perform per step.
   num_sgd_steps_per_step: int = 1
+
+  intrinsic_reward_coefficient: float = 10.
+  extrinsic_reward_coefficient: float = 1.0
+  
+  # When using stale_rewards, we compute intrinsic rewards during acting
+  # and don't modify them during learning.
+  use_stale_rewards: bool = True
