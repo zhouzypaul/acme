@@ -81,6 +81,8 @@ flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
 flags.DEFINE_integer('cfn_bonus_plotting_freq', 1_000, 'How often to make CFN plots. -1 disables')
 flags.DEFINE_integer('cfn_value_plotting_freq', 1_000, 'How often to make CFN plots. -1 disables')
 
+flags.DEFINE_bool('condition_actor_on_intrinsic_reward', False, 'Whether to condition actor LSTM on intrinsic reward')
+
 FLAGS = flags.FLAGS
 
 def make_rnd_builder(r2d2_builder):
@@ -91,7 +93,8 @@ def make_rnd_builder(r2d2_builder):
         intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
         extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
         predictor_learning_rate=FLAGS.rnd_learning_rate,
-        use_stale_rewards=FLAGS.use_stale_rewards
+        use_stale_rewards=FLAGS.use_stale_rewards,
+        condition_actor_on_intrinsic_reward=FLAGS.condition_actor_on_intrinsic_reward
     )
     logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
     builder = rnd.RNDBuilder(
@@ -114,6 +117,7 @@ def make_cfn_builder(r2d2_builder):
     extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
     bonus_plotting_freq=FLAGS.cfn_bonus_plotting_freq,
     value_plotting_freq=FLAGS.cfn_value_plotting_freq,
+    condition_actor_on_intrinsic_reward=FLAGS.condition_actor_on_intrinsic_reward
   )
   logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
   builder = cfn_builder.CFNBuilder(

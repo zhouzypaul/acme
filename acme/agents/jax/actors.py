@@ -111,11 +111,13 @@ class GenericIntrinsicActor(GenericActor):
     self,
     intrinsic_reward_scale: float,
     extrinsic_reward_scale: float,
+    condition_actor_on_intrinsic_reward: bool,
     *args,
     **kwargs
   ):
     self._intrinsic_reward_scale = intrinsic_reward_scale
     self._extrinsic_reward_scale = extrinsic_reward_scale
+    self._condition_actor_on_intrinsic_reward = condition_actor_on_intrinsic_reward
     super().__init__(*args, **kwargs)
   
   @property
@@ -145,9 +147,10 @@ class GenericIntrinsicActor(GenericActor):
 
       # s_{t+1} = <o_{t+1}, a_t, r_t> 
       # where r_t = r_ext_t + r_int_{t-1}
-      next_oar: OAR = next_timestep.observation
-      next_oar = next_oar._replace(reward=next_timestep.reward)
-      next_timestep = next_timestep._replace(observation=next_oar)
+      if self._condition_actor_on_intrinsic_reward:
+        next_oar: OAR = next_timestep.observation
+        next_oar = next_oar._replace(reward=next_timestep.reward)
+        next_timestep = next_timestep._replace(observation=next_oar)
 
       self._adder.add(
           action, next_timestep,

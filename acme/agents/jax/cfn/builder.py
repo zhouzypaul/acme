@@ -155,7 +155,8 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
         random_key=random_key,
         variable_client=q_learner_variable_client,
         adder=adder,
-        cfn_adder=cfn_adder
+        cfn_adder=cfn_adder,
+        condition_actor_on_intrinsic_reward=self._config.condition_actor_on_intrinsic_reward,
       )
 
     return self._rl_agent.make_actor(random_key, policy, environment_spec,

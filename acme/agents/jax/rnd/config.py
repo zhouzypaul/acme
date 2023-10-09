@@ -35,3 +35,5 @@ class RNDConfig:
   # When using stale_rewards, we compute intrinsic rewards during acting
   # and don't modify them during learning.
   use_stale_rewards: bool = False
+
+  condition_actor_on_intrinsic_reward: bool = False

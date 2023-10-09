@@ -57,3 +57,5 @@ class CFNConfig:
 
   bonus_plotting_freq: int = 1000
   value_plotting_freq: int = 1000
+
+  condition_actor_on_intrinsic_reward: bool = False
