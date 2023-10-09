@@ -37,7 +37,8 @@ def get_actor_core(
     intrinsic_reward_scale: float,
     extrinsic_reward_scale: float,
     use_reward_normalization: bool = False,
-    cfn_output_dimensions: int = 20
+    cfn_output_dimensions: int = 20,
+    condition_actor_on_intrinsic_reward: bool = False,
 ) -> R2D2Policy:
   """Returns ActorCore for R2D2 that adds the intrinsic reward to the OAR."""
 
@@ -71,12 +72,15 @@ def get_actor_core(
                     state: R2D2ActorState[actor_core_lib.RecurrentState],
                     cfn_state: CFNTrainingState):
 
-    intrinsic_reward = get_intrinsic_reward(observation, cfn_state)
-    modified_oar = modify_obs_with_intrinsic_reward(
-      observation, state.prev_intrinsic_reward)
+    if condition_actor_on_intrinsic_reward:
+      intrinsic_reward = get_intrinsic_reward(observation, cfn_state)
+      observation = modify_obs_with_intrinsic_reward(
+        observation, state.prev_intrinsic_reward)
 
-    action, state = rl_actor_core.select_action(params, modified_oar, state)
-    state = state.replace(prev_intrinsic_reward=intrinsic_reward)
+    action, state = rl_actor_core.select_action(params, observation, state)
+
+    if condition_actor_on_intrinsic_reward:
+      state = state.replace(prev_intrinsic_reward=intrinsic_reward)
 
     return action, state
 

@@ -31,7 +31,8 @@ def get_actor_core(
     networks: rnd_networks.RNDNetworks,
     rl_actor_core: R2D2Policy,
     intrinsic_reward_scale: float,
-    extrinsic_reward_scale: float
+    extrinsic_reward_scale: float,
+    condition_actor_on_intrinsic_reward: bool,
 ) -> R2D2Policy:
   """Returns ActorCore for R2D2."""
 
@@ -67,12 +68,12 @@ def get_actor_core(
                     observation: networks_lib.Observation,
                     state: R2D2ActorState[actor_core_lib.RecurrentState],
                     rnd_state: RNDTrainingState):
+    if condition_actor_on_intrinsic_reward:
+      intrinsic_reward = get_intrinsic_reward(observation, rnd_state)
+      observation = modify_obs_with_intrinsic_reward(
+        observation, state.prev_intrinsic_reward)
 
-    intrinsic_reward = get_intrinsic_reward(observation, rnd_state)
-    modified_oar = modify_obs_with_intrinsic_reward(
-      observation, state.prev_intrinsic_reward)
-
-    action, state = rl_actor_core.select_action(params, modified_oar, state)
+    action, state = rl_actor_core.select_action(params, observation, state)
     state = state.replace(prev_intrinsic_reward=intrinsic_reward)
 
     return action, state

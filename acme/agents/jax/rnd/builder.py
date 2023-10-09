@@ -161,5 +161,6 @@ class RNDBuilder(Generic[rnd_networks.DirectRLNetworks, Policy],
         networks,
         rl_actor_core,
         self._config.intrinsic_reward_coefficient,
-        self._config.extrinsic_reward_coefficient)
+        self._config.extrinsic_reward_coefficient,
+        self._config.condition_actor_on_intrinsic_reward)
     return rl_actor_core

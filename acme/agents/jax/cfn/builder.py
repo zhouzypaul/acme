@@ -173,7 +173,8 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
       return get_cfn_actor_core(
         networks, rl_actor_core, self._config.intrinsic_reward_coefficient,
         self._config.extrinsic_reward_coefficient, self._config.use_reward_normalization,
-        self._config.cfn_output_dimensions)
+        self._config.cfn_output_dimensions,
+        self._config.condition_actor_on_intrinsic_reward)
     return rl_actor_core
 
   def make_cfn_object(
