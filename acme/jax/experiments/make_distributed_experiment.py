@@ -190,9 +190,15 @@ def make_distributed_experiment(
     # in the background.
     iterator = utils.prefetch(iterable=iterator, buffer_size=1)
     counter = counting.Counter(counter, 'learner')
-    learner = experiment.builder.make_learner(random_key, networks, iterator,
-                                              experiment.logger_factory, spec,
-                                              replay, counter, cfn)
+
+    if cfn is None:
+      learner = experiment.builder.make_learner(random_key, networks, iterator,
+                                                experiment.logger_factory, spec,
+                                                replay, counter)
+    else:
+      learner = experiment.builder.make_learner(random_key, networks, iterator,
+                                                experiment.logger_factory, spec,
+                                                replay, counter, cfn)
 
     if experiment.checkpointing:
       if primary_learner is None:
