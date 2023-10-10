@@ -28,6 +28,7 @@ from datetime import datetime
 from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
 import functools
+import rlax
 start_time = datetime.now()
 
 # Flags which modify the behavior of the launcher.
@@ -51,6 +52,7 @@ flags.DEFINE_string("cfn_gpu_id", "1", "which GPU to use for CFN optimization.")
 flags.DEFINE_float('cfn_spi', 8.0,
                      'Number of samples per insert. 0 means does not constrain, other values do.')
 flags.DEFINE_integer('cfn_min_replay_size', 2048, 'When CFN training starts')
+flags.DEFINE_integer('cfn_max_replay_size', 1_000_000, 'Size of CFN replay buffer')
 flags.DEFINE_float('cfn_learning_rate', 1e-4, 'Learning rate for CFN') 
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_string('acme_dir', '~/acme', 'Directory to do acme logging')
@@ -82,6 +84,7 @@ flags.DEFINE_integer('cfn_bonus_plotting_freq', 1_000, 'How often to make CFN pl
 flags.DEFINE_integer('cfn_value_plotting_freq', 1_000, 'How often to make CFN plots. -1 disables')
 
 flags.DEFINE_bool('condition_actor_on_intrinsic_reward', False, 'Whether to condition actor LSTM on intrinsic reward')
+flags.DEFINE_bool('use_identity_tx', False, 'Whether to use undo R2D2s hyperbolic squash.')
 
 FLAGS = flags.FLAGS
 
@@ -112,6 +115,7 @@ def make_cfn_builder(r2d2_builder):
     is_sequence_based=True,
     samples_per_insert=FLAGS.cfn_spi,
     min_replay_size=FLAGS.cfn_min_replay_size,
+    max_replay_size=FLAGS.cfn_max_replay_size,
     cfn_learning_rate=FLAGS.cfn_learning_rate,
     intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
     extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
@@ -165,6 +169,7 @@ def build_experiment_config():
     return helpers.make_visgrid_environment(oar_wrapper=True)
 
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
+  tx = rlax.IDENTITY_PAIR if FLAGS.use_identity_tx else rlax.SIGNED_HYPERBOLIC_PAIR
   config = r2d2.R2D2Config(
       burn_in_length=FLAGS.burn_in_length,
       trace_length=FLAGS.trace_length,
@@ -180,6 +185,7 @@ def build_experiment_config():
       variable_update_period=FLAGS.variable_update_period,
       actor_jit=True,
       actor_backend=actor_backend,
+      tx_pair=tx,
   )
 
   # # Configure the agent.
