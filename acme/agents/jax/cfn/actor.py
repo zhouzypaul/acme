@@ -57,7 +57,7 @@ def get_actor_core(
     if use_reward_normalization:
       norm_reward = cfn_intrinsic_reward - cfn_state.reward_mean
       norm_reward /= jnp.sqrt(jnp.maximum(cfn_state.reward_var, 1e-12))
-      return norm_reward[0][0][0]
+      return norm_reward
 
     return cfn_intrinsic_reward
   
