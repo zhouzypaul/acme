@@ -64,6 +64,7 @@ flags.DEFINE_integer('min_replay_size', 10_000, 'When training from replay start
 
 flags.DEFINE_float('intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
 flags.DEFINE_float('extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')  # NOTE: NGU paper uses 0.3
+flags.DEFINE_boolean('cfn_use_reward_normalization', False, 'Whether to normalize CFN intrinsic reward')
 flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')  # NOTE: NGU paper is 5e-4
 flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
 flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')  # NOTE: NGU paper is 2e-4
@@ -119,6 +120,7 @@ def make_cfn_builder(r2d2_builder):
     cfn_learning_rate=FLAGS.cfn_learning_rate,
     intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
     extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
+    use_reward_normalization=FLAGS.cfn_use_reward_normalization,
     bonus_plotting_freq=FLAGS.cfn_bonus_plotting_freq,
     value_plotting_freq=FLAGS.cfn_value_plotting_freq,
     condition_actor_on_intrinsic_reward=FLAGS.condition_actor_on_intrinsic_reward
