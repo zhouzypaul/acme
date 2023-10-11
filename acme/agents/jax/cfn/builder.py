@@ -101,7 +101,8 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
         extrinsic_reward_coefficient=self._config.extrinsic_reward_coefficient,
         use_stale_rewards=self._config.use_stale_rewards,
         cfn=cfn,
-        value_plotting_freq=self._config.value_plotting_freq,)
+        value_plotting_freq=self._config.value_plotting_freq,
+        tx_pair=self._rl_agent._config.tx_pair,)
 
   def make_replay_tables(
       self,

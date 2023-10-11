@@ -24,7 +24,7 @@ import numpy as np
 import jax.numpy as jnp
 import optax
 import reverb
-
+import rlax
 
 class CFNTrainingState(NamedTuple):
   """Contains training state for the learner."""
@@ -68,6 +68,7 @@ class CFNLearner(acme.Learner):
       use_stale_rewards: bool = False,
       cfn=None,
       value_plotting_freq: int = 1000, # Set to -1 to disable
+      tx_pair=rlax.SIGNED_HYPERBOLIC_PAIR,
       ):
 
     if not use_stale_rewards:
@@ -80,6 +81,7 @@ class CFNLearner(acme.Learner):
     self._rng_key = rng_key
     self._cfn_network = cfn_network
     self._value_plotting_freq = value_plotting_freq
+    self._tx_pair = tx_pair
 
     # import ipdb; ipdb.set_trace()
     base_dir = get_save_directory()
@@ -123,6 +125,8 @@ class CFNLearner(acme.Learner):
         batch_oarg,
         lstm_state
       )
+
+      q_values = self._tx_pair.apply_inv(q_values)
 
       values = q_values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
 

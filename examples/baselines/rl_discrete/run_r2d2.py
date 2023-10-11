@@ -68,6 +68,7 @@ flags.DEFINE_boolean('cfn_use_reward_normalization', False, 'Whether to normaliz
 flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')  # NOTE: NGU paper is 5e-4
 flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
 flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')  # NOTE: NGU paper is 2e-4
+flags.DEFINE_float('discount', 0.997, 'Gamma') 
 # These are different from paper to here, so will add as hypers
 flags.DEFINE_float('target_update_period', 1200, 'How often to update target network') # NOTE: paper is 2500
 flags.DEFINE_float('variable_update_period', 100, 'How often to update actor variables') # NOTE: paper is 400
@@ -188,6 +189,7 @@ def build_experiment_config():
       actor_jit=True,
       actor_backend=actor_backend,
       tx_pair=tx,
+      discount=FLAGS.discount,
   )
 
   # # Configure the agent.
