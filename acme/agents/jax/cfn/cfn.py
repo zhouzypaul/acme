@@ -19,6 +19,7 @@ from acme.utils.paths import get_save_directory
 from acme.wrappers.observation_action_reward import OAR
 from acme.agents.jax.cfn.learning import CFNTrainingState
 from acme.agents.jax.cfn.networks import compute_cfn_reward
+import acme.agents.jax.cfn.norm_lib as norm_lib
 
 import jax
 import numpy as np
@@ -49,7 +50,8 @@ class CFN(acme.Learner):
                replay_client: Optional[reverb.Client] = None,
                counter: Optional[counting.Counter] = None,
                logger: Optional[loggers.Logger] = None,
-               bonus_plotting_freq = 500  # set to -1 to disable plotting.
+               bonus_plotting_freq = 500,  # set to -1 to disable plotting.,
+               cfn_var_to_std_epsilon: float = 1e-4,
   ):
 
     def loss(
@@ -109,7 +111,7 @@ class CFN(acme.Learner):
         # key_grad,
         samples,
         state.random_prior_mean,
-        jnp.sqrt(state.random_prior_var + 1e-4))
+        jnp.sqrt(state.random_prior_var + cfn_var_to_std_epsilon))
 
       # Average gradients over pmap replicas before optimizer update.
       gradients = jax.lax.pmean(gradients, _PMAP_AXIS_NAME)
@@ -206,6 +208,7 @@ class CFN(acme.Learner):
         serialize_fn=utils.fetch_devicearray,
         time_delta=1.,
         steps_key=self._counter.get_steps_key())
+    self._cfn_var_to_std_eps = cfn_var_to_std_epsilon
 
     self._sgd_step = jax.pmap(sgd_step, axis_name=_PMAP_AXIS_NAME)
     self._async_priority_updater = async_utils.AsyncExecutor(update_priorities)
@@ -241,13 +244,22 @@ class CFN(acme.Learner):
     self._count_dict_lock = threading.Lock()
     self._networks = networks
     self._bonus_plotting_freq = bonus_plotting_freq
+    self._hash_to_first_intrinsic_reward = {}
+    self._hash_to_first_intrinsic_reward_lock = threading.Lock()
+
+    # Keeping track of normalization ops in a different way for debugging
+    self._normalization_params_lock = threading.Lock()
 
     # Create logging directories.
     base_dir = get_save_directory()
     self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
     self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
+    self._first_intrinsic_dir = os.path.join(base_dir, 'plots', 'first_intrinsic_reward')
+    self._first_intrinsic_hist_dir = os.path.join(base_dir, 'plots', 'first_intrinsic_reward_hist')
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
+    os.makedirs(self._first_intrinsic_dir, exist_ok=True)
+    os.makedirs(self._first_intrinsic_hist_dir, exist_ok=True)
 
   def step(self):
     prefetching_split = next(self._iterator)
@@ -294,7 +306,7 @@ class CFN(acme.Learner):
       oar,
       self._networks,
       state.random_prior_mean,
-      jnp.sqrt(state.random_prior_var + 1e-4)
+      jnp.sqrt(state.random_prior_var + self._cfn_var_to_std_eps)
     )
     
     assert predicted_bonuses.shape == (len(hashes),), predicted_bonuses.shape
@@ -309,6 +321,19 @@ class CFN(acme.Learner):
       true_count_info=self._hash2counts,
       approx_bonus_info=approx_bonus_info,
       save_path=os.path.join(self._scatter_plotting_dir, f'bonus_scatterplot_{state.steps}.png'),
+    )
+    plotting_utils.plot_spatial_values(
+      self._hash_to_first_intrinsic_reward,
+      save_path=os.path.join(self._first_intrinsic_dir, f'first_intrinsic_reward_{state.steps}.png',),
+      split_by_direction=False,
+      use_discrete_colorbar=True,
+    )
+    plotting_utils.plot_histogram(
+      list(self._hash_to_first_intrinsic_reward.values()),
+      save_path=os.path.join(self._first_intrinsic_hist_dir, f'first_intrinsic_reward_hist_{state.steps}.png',),
+      title='First Intrinsic Reward',
+      xlabel='Intrinsic Reward',
+      ylabel='Count',
     )
       
   # TODO(ab/sl): add the count dictionaries so that they checkpoint correctly.
@@ -329,9 +354,14 @@ class CFN(acme.Learner):
   def restore(self, state: CFNTrainingState):
     self._state = utils.replicate_in_all_devices(state)
 
-  def update_ground_truth_counts(self, hash2obs, hash2counts):
+  def update_ground_truth_counts(
+      self,
+      hash2obs: Dict,
+      hash2counts: Dict,
+      hash_to_first_intrinsic_reward: Dict,):
     self._update_obs_dict(hash2obs)
     self._update_count_dict(hash2counts)
+    self._update_hash_to_first_intrinsic_reward(hash_to_first_intrinsic_reward)
 
   def _update_count_dict(self, hash2count: Dict):
     with self._count_dict_lock:
@@ -341,6 +371,41 @@ class CFN(acme.Learner):
   def _update_obs_dict(self, hash2obs: Dict):
     for obs_hash in hash2obs:
       self._hash2obs[obs_hash] = hash2obs[obs_hash]
+
+  def _update_hash_to_first_intrinsic_reward(self, hash2intrinsic: Dict):
+    with self._hash_to_first_intrinsic_reward_lock:
+      for obs_hash in hash2intrinsic:
+        if obs_hash not in self._hash_to_first_intrinsic_reward:
+          self._hash_to_first_intrinsic_reward[obs_hash] = hash2intrinsic[obs_hash]
+
+  def _update_normalization_params(self, rewards: List[float], rp_outputs: jnp.ndarray):
+    """Updates the mean and variance of the reward and random prior outputs.
+
+    Args:
+      rewards: list of rewards (len is episode_length)
+      rp_outputs: (episode_length, cfn_output_dim) array of random prior outputs
+    """
+    with self._normalization_params_lock:
+      new_reward_mean, new_reward_var, _ = norm_lib.update_mean_var_count_from_moments(
+        self._state.reward_mean,
+        self._state.reward_var,
+        self._state.states_updated_on,
+        np.mean(rewards),
+        np.var(rewards),
+        len(rewards))
+      new_rp_mean, new_rp_var, new_count = norm_lib.update_mean_var_count_from_moments(
+        self._state.random_prior_mean,
+        self._state.random_prior_var,
+        self._state.states_updated_on,
+        jnp.mean(rp_outputs, axis=0),
+        jnp.var(rp_outputs, axis=0),
+        len(rp_outputs))
+      self._state = self._state._replace(
+        reward_mean=new_reward_mean,
+        reward_var=new_reward_var,
+        random_prior_mean=new_rp_mean,
+        random_prior_var=new_rp_var,
+        states_updated_on=new_count)
 
   def _create_observation_tensor(self):
     hashes = list(self._hash2obs.keys())

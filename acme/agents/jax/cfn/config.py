@@ -59,3 +59,4 @@ class CFNConfig:
   value_plotting_freq: int = 1000
 
   condition_actor_on_intrinsic_reward: bool = False
+  cfn_var_to_std_epsilon: float = 1e-4

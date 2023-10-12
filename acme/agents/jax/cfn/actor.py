@@ -39,6 +39,7 @@ def get_actor_core(
     use_reward_normalization: bool = False,
     cfn_output_dimensions: int = 20,
     condition_actor_on_intrinsic_reward: bool = False,
+    cfn_var_to_std_epsilon: float = 1e-4,
 ) -> R2D2Policy:
   """Returns ActorCore for R2D2 that adds the intrinsic reward to the OAR."""
 
@@ -51,7 +52,7 @@ def get_actor_core(
       transitions=observation,
       networks=networks,
       random_prior_mean=cfn_state.random_prior_mean,
-      random_prior_std=jnp.sqrt(cfn_state.random_prior_var + 1e-4)
+      random_prior_std=jnp.sqrt(cfn_state.random_prior_var + cfn_var_to_std_epsilon),
     )
     
     if use_reward_normalization:

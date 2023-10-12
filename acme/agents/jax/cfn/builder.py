@@ -175,7 +175,8 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
         networks, rl_actor_core, self._config.intrinsic_reward_coefficient,
         self._config.extrinsic_reward_coefficient, self._config.use_reward_normalization,
         self._config.cfn_output_dimensions,
-        self._config.condition_actor_on_intrinsic_reward)
+        self._config.condition_actor_on_intrinsic_reward,
+        self._config.cfn_var_to_std_epsilon)
     return rl_actor_core
 
   def make_cfn_object(
@@ -199,6 +200,7 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
       counter=counter,
       logger=logger_fn('cfn_object'),
       bonus_plotting_freq=self._config.bonus_plotting_freq,
+      cfn_var_to_std_epsilon=self._config.cfn_var_to_std_epsilon,
     )
   
   def make_cfn_replay_tables(

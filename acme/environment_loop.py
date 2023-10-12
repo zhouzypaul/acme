@@ -96,7 +96,7 @@ class EnvironmentLoop(core.Worker):
     select_action_durations: List[float] = []
     env_step_durations: List[float] = []
     episode_steps: int = 0
-    episode_trajectory: List[Tuple[OAR, dict]] = []
+    episode_trajectory: List[Tuple[OAR, dict, float]] = []
 
     # For evaluation, this keeps track of the total undiscounted reward
     # accumulated during the episode.
@@ -109,7 +109,11 @@ class EnvironmentLoop(core.Worker):
     self._actor.observe_first(timestep)
     
     if self._cfn and self._make_bonus_plots:
-      episode_trajectory.append((timestep.observation, self._environment.get_info()))
+      episode_trajectory.append((
+        timestep.observation,
+        self._environment.get_info(),
+        0.,
+      ))
 
     for observer in self._observers:
       # Initialize the observer with the current state of the env after reset
@@ -138,7 +142,11 @@ class EnvironmentLoop(core.Worker):
         # environment, the current timestep and the action.
         observer.observe(self._environment, timestep, action)
       if self._cfn and self._make_bonus_plots:
-        episode_trajectory.append((timestep.observation, self._environment.get_info()))
+        episode_trajectory.append((
+          timestep.observation,
+          self._environment.get_info(),
+          self._actor._state.prev_intrinsic_reward,
+        ))
 
       # Give the actor the opportunity to update itself.
       if self._should_update:
@@ -176,7 +184,7 @@ class EnvironmentLoop(core.Worker):
       result.update(observer.get_metrics())
     return result
 
-  def update_global_counts(self, trajectory: List[Tuple[OAR, dict]]):
+  def update_global_counts(self, trajectory: List[Tuple[OAR, dict, float]]):
 
     def get_key(info: dict) -> Tuple:
       return self._environment.info2vec(info)
@@ -198,10 +206,24 @@ class EnvironmentLoop(core.Worker):
         for transition in trajectory
       }
     
+    def extract_goal_to_first_intrinsic_reward() -> dict:
+      """Return a dictionary mapping goal hash to the first intrinsic reward it got."""
+      hash2first_intrinsic_reward = {}
+      for transition in trajectory:
+        key = get_key(transition[1])
+        if key not in hash2first_intrinsic_reward:
+          hash2first_intrinsic_reward[key] = float(transition[2])
+      return hash2first_intrinsic_reward
+    
     hash2counts = extract_counts()
     hash2obs = extract_goal_to_obs()
+    hash_to_first_intrinsic_reward = extract_goal_to_first_intrinsic_reward()
 
-    self._cfn.futures.update_ground_truth_counts(hash2obs, hash2counts)
+    self._cfn.futures.update_ground_truth_counts(
+      hash2obs,
+      hash2counts,
+      hash_to_first_intrinsic_reward
+    )
 
   def run(
       self,

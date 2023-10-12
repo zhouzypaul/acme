@@ -92,16 +92,30 @@ def plot_spatial_values_direction_split(hash2value):
     plt.title(f'Direction: {direction}')
 
 
-def plot_spatial_values(hash2value, save_path, split_by_direction: bool):
+def plot_spatial_values(hash2value, save_path, split_by_direction: bool,
+                        use_discrete_colorbar: bool = False):
   
   plt.figure(figsize=(12, 12))
+  cmap = 'tab10' if use_discrete_colorbar else 'viridis'
   
   if split_by_direction:
     plot_spatial_values_direction_split(hash2value)
   else:
     xs, ys, values = get_quantity_from_hash_to_counts(hash2value, 'count')
-    plt.scatter(xs, ys, c=values, s=40, marker='s')
+    plt.scatter(xs, ys, c=values, s=40, marker='s', cmap=cmap)
     plt.colorbar()
 
+  plt.savefig(save_path)
+  plt.close()
+
+
+def plot_histogram(values, save_path,
+                   title="", xlabel="", ylabel="",
+                   bins=100):
+  plt.figure(figsize=(12, 12))
+  plt.hist(values, bins=bins)
+  plt.title(title)
+  plt.xlabel(xlabel)
+  plt.ylabel(ylabel)
   plt.savefig(save_path)
   plt.close()
