@@ -53,6 +53,7 @@ def make_networks(
     layer_sizes: Tuple[int, ...] = (256, 256),
     intrinsic_reward_coefficient: float = 1.0,
     extrinsic_reward_coefficient: float = 0.0,
+    use_orthogonal_initialization: bool = False,
 ) -> CFNNetworks[DirectRLNetworks]:
   """Creates networks used by the agent and returns CFNNetworks.
 
@@ -76,12 +77,15 @@ def make_networks(
 
     def __init__(self, name = 'convolutional_network_class'):
       super().__init__(name=name)
+      w_init = None
+      if use_orthogonal_initialization:
+        w_init = hk.initializers.Orthogonal(scale=jnp.sqrt(2))
       self._network = hk.Sequential([
-        networks_lib.AtariTorso(),
+        networks_lib.CFNAtariTorso(w_init=w_init),
         # TODO(ab/sl): test if fc_hidden is a good idea
         # hk.Linear(256),
         # jax.nn.relu,
-        hk.Linear(20)
+        hk.Linear(20, w_init=w_init)
       ])
       # self.batched = hk.BatchApply(self._network, num_dims=1)
 

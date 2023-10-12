@@ -87,6 +87,7 @@ flags.DEFINE_integer('cfn_value_plotting_freq', 1_000, 'How often to make CFN pl
 
 flags.DEFINE_bool('condition_actor_on_intrinsic_reward', False, 'Whether to condition actor LSTM on intrinsic reward')
 flags.DEFINE_bool('use_identity_tx', False, 'Whether to use undo R2D2s hyperbolic squash.')
+flags.DEFINE_bool('cfn_use_orthogonal_init', False, 'Whether to use orthogonal init for CFN networks')
 
 FLAGS = flags.FLAGS
 
@@ -213,12 +214,14 @@ def build_experiment_config():
       rnd_networks = rnd.make_networks(env_spec, direct_rl_networks=r2d2_networks)
       return rnd_networks
   elif FLAGS.use_cfn:
+    use_orthogonal_init = FLAGS.cfn_use_orthogonal_init
     agent_builder = make_cfn_builder(agent_builder)
 
     def network_factory(env_spec):
       from acme.agents.jax.cfn.networks import make_networks
       r2d2_networks = r2d2.make_atari_networks(env_spec)
-      cfn_networks = make_networks(env_spec, r2d2_networks)
+      cfn_networks = make_networks(env_spec, r2d2_networks,
+                                   use_orthogonal_initialization=use_orthogonal_init)
       return cfn_networks
   else:
     network_factory = r2d2.make_atari_networks
