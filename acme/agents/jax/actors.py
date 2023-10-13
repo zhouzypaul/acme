@@ -135,17 +135,69 @@ class GenericIntrinsicActor(GenericActor):
       self._params, observation, self._state, self._rnd_state)
     return utils.to_numpy(action)
   
-  def observe(self, action: network_lib.Action, next_timestep: dm_env.TimeStep):
+  def observe(self, action: network_lib.Action, next_timestep: dm_env.TimeStep,
+              extras: Optional[dict] = None):
     if self._adder:
-      combined_reward = (self._extrinsic_reward_scale * next_timestep.reward) \
-          + (self._intrinsic_reward_scale * self._state.prev_intrinsic_reward)
-      next_timestep = next_timestep._replace(reward=combined_reward)
+      if next_timestep.discount.item() > 0:
+        combined_reward = (self._extrinsic_reward_scale * next_timestep.reward) \
+            + (self._intrinsic_reward_scale * self._state.prev_intrinsic_reward)
+        next_timestep = next_timestep._replace(reward=combined_reward)
 
-      # s_{t+1} = <o_{t+1}, a_t, r_t> 
-      # where r_t = r_ext_t + r_int_{t-1}
-      next_oar = next_timestep.observation
-      next_oar = next_oar._replace(reward=next_timestep.reward)
-      next_timestep = next_timestep._replace(observation=next_oar)
+        # s_{t+1} = <o_{t+1}, a_t, r_t> 
+        # where r_t = r_ext_t + r_int_{t-1}
+        next_oar = next_timestep.observation
+        next_oar = next_oar._replace(reward=next_timestep.reward)
+        next_timestep = next_timestep._replace(observation=next_oar)
 
       self._adder.add(
-          action, next_timestep, extras=self._get_extras(self._state))
+          action,
+          next_timestep,
+          extras=self._get_extras(self._state) if extras is None else extras)
+
+
+class CFNIntrinsicActor(GenericIntrinsicActor):
+  def __init__(
+      self,
+      cfn_variable_client: variable_utils.VariableClient,
+      cfn_adder: adders.Adder,
+      *args,
+      **kwargs,
+  ):
+    self._cfn_adder = cfn_adder
+    self._cfn_variable_client = cfn_variable_client
+    super().__init__(*args, **kwargs)
+
+  @property
+  def _params(self):
+    params = self._variable_client.params if self._variable_client else []
+    return params
+
+  @property
+  def _rnd_state(self):
+    # since cfn.py  get_variables returns list of len 1, its unpacked by VariableClient
+    params = self._cfn_variable_client.params if self._cfn_variable_client else []
+    return params
+  
+  def update(self, wait: bool = False):
+    if self._cfn_variable_client:
+      self._cfn_variable_client.update(wait)
+    return super().update(wait)
+
+  # TODO(sl): add per-episode support for CfnVarClient
+  def observe_first(self, timestep: dm_env.TimeStep):
+    if self._cfn_adder:
+      self._cfn_adder.add_first(timestep)
+    return super().observe_first(timestep)
+  
+  def observe(self, action: network_lib.Action, next_timestep: dm_env.TimeStep):
+    # TODO(ab/sl): pass in random_key to get_extras, then update it locally, so its advances
+
+    # Split RNG so that bernoulli isnt same every time
+    rng, new_rng = jax.random.split(self._state.rng)
+    self._state = self._state.replace(rng=rng)
+    extras = self._get_extras(self._state)
+    # Update again to make sure we don't use same 
+    self._state = self._state.replace(rng=new_rng)
+    if self._cfn_adder:
+      self._cfn_adder.add(action, next_timestep, extras=extras)
+    return super().observe(action, next_timestep, extras=extras)
