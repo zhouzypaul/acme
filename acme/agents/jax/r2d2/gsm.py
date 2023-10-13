@@ -1,3 +1,4 @@
+import os
 import time
 import pprint
 import random
@@ -9,17 +10,20 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 from acme.wrappers.oar_goal import OARG
 from acme.wrappers.observation_action_reward import OAR
 from acme.agents.jax.r2d2 import networks as r2d2_networks
 from acme.agents.jax.rnd import networks as rnd_networks
+from acme.agents.jax.cfn.networks import CFNNetworks
 from acme.agents.jax.rnd.networks import compute_rnd_reward
+from acme.agents.jax.cfn.networks import compute_cfn_reward
 from acme.jax import variable_utils
 from acme.jax import networks as networks_lib
 from acme.core import Saveable
 from acme.agents.jax.r2d2.goal_sampler import GoalSampler
+from acme.utils.paths import get_save_directory
 
 
 class GoalSpaceManager(Saveable):
@@ -31,11 +35,16 @@ class GoalSpaceManager(Saveable):
       rng_key: networks_lib.PRNGKey,
       networks: r2d2_networks.R2D2Networks,
       variable_client: variable_utils.VariableClient,
-      exploration_networks: rnd_networks.RNDNetworks,
+      exploration_networks: Union[rnd_networks.RNDNetworks, CFNNetworks],
       exploration_variable_client: variable_utils.VariableClient,
       tensor_increments: int = 1000,
+      exploration_algorithm_is_cfn: bool = True
     ):
     self._environment = environment
+    self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
+
+    if exploration_algorithm_is_cfn:
+      assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
 
     self._hash2obs = {}  # map goal hash to obs
     self._hash2counts = collections.defaultdict(int)
@@ -71,6 +80,15 @@ class GoalSpaceManager(Saveable):
 
     self._iteration_iterator = itertools.count()
     self._gsm_loop_last_timestamp = time.time()
+
+    base_dir = get_save_directory()
+    self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
+    self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
+    self._gcvf_plotting_dir = os.path.join(base_dir, 'plots', 'gcvf_plots')
+    os.makedirs(self._spatial_plotting_dir, exist_ok=True)
+    os.makedirs(self._scatter_plotting_dir, exist_ok=True)
+    os.makedirs(self._gcvf_plotting_dir, exist_ok=True)
+    print(f'[GSM] Going to save plots to {self._spatial_plotting_dir} and {self._scatter_plotting_dir}')
 
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
     """Create and solve the AMDP. Then return the abstract policy."""
@@ -462,7 +480,7 @@ class GoalSpaceManager(Saveable):
       plt.colorbar()
       plt.title('Exploration Context')
 
-    plt.savefig(f'plots/uvfa_plots/four_rooms_uvfa_episode_{episode}.png')
+    plt.savefig(os.path.join(self._gcvf_plotting_dir, f'uvfa_{episode}.png'))
     plt.close()
 
   def _make_spatial_bonus_plot(self, episode):
@@ -474,7 +492,7 @@ class GoalSpaceManager(Saveable):
       bonuses.append(self._hash2bonus[hash])
     plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
     plt.colorbar()
-    plt.savefig(f'plots/spatial_bonus/rnd_{episode}.png')
+    plt.savefig(os.path.join(self._spatial_plotting_dir, f'spatial_bonus_{episode}.png'))
     plt.close()
 
   def step(self):
@@ -499,20 +517,30 @@ class GoalSpaceManager(Saveable):
       print(f'[iteration={iteration}] values={values.shape}, max={values.max()} dt={time.time() - t0}s')
       self._update_transition_tensor(src_dest_pairs, values)
 
-      exploration_transitions = OAR(
-        observation=batch_oarg.observation[None, ..., :3],
-        action=batch_oarg.action[None, ...],
-        reward=batch_oarg.reward[None, ...]
-      )
-
-      bonuses = compute_rnd_reward(
-        self._exploration_params.params,
-        self._exploration_params.target_params,
-        exploration_transitions,
-        self._exploration_networks,
-        self._exploration_params.observation_mean,
-        self._exploration_params.observation_var,
-      ).squeeze()
+      if self._exploration_algorithm_is_cfn:
+        cfn_oar = batch_oarg._replace(
+          observation=batch_oarg.observation[0, ..., :3])
+        bonuses = compute_cfn_reward(
+          self._exploration_params.params,
+          self._exploration_params.target_params,
+          cfn_oar,
+          self._exploration_networks,
+          self._exploration_params.random_prior_mean,
+          jnp.sqrt(self._exploration_params.random_prior_var + 1e-4),
+        ).squeeze()
+      else:
+        exploration_transitions = OAR(
+          observation=batch_oarg.observation[None, ..., :3],
+          action=batch_oarg.action[None, ...],
+          reward=batch_oarg.reward[None, ...])
+        bonuses = compute_rnd_reward(
+          self._exploration_params.params,
+          self._exploration_params.target_params,
+          exploration_transitions,
+          self._exploration_networks,
+          self._exploration_params.observation_mean,
+          self._exploration_params.observation_var,
+        ).squeeze()
 
       self._update_bonuses([pair[0] for pair in src_dest_pairs], bonuses)
 
@@ -522,7 +550,10 @@ class GoalSpaceManager(Saveable):
           task_value_vector=None,
           exploration_value_vector=None
         )
-        self._make_spatial_bonus_plot(iteration)
+
+        # Skip plotting spatial bonus for CFN because that is happening in cfn.py
+        if not self._exploration_algorithm_is_cfn:
+          self._make_spatial_bonus_plot(iteration)
 
       if len(src_dest_pairs) > 1000:
         # TODO(ab): get from env and pass around
@@ -534,9 +565,6 @@ class GoalSpaceManager(Saveable):
         if start_state_features in self._hash2idx:
           row_idx = self._hash2idx[start_state_features]
           pprint.pprint(self._transition_matrix[row_idx, :len(self._hash2idx)])
-
-        if start_state_features in self._hash2bonus:
-          pprint.pprint(self._hash2bonus)
 
       dt = time.time() - self._gsm_loop_last_timestamp
       print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)} dt={dt}')
