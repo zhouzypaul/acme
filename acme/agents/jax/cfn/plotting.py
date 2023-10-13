@@ -119,3 +119,29 @@ def plot_histogram(values, save_path,
   plt.ylabel(ylabel)
   plt.savefig(save_path)
   plt.close()
+
+
+def compute_bonus_prediction_error(true_count_info, approx_bonus_info):
+  true_count_info_keys = list(true_count_info.keys())
+  total_error = 0
+  num_points = 0
+  for k in true_count_info_keys:
+    if k in approx_bonus_info:
+      true_count = true_count_info[k]
+      true_bonus = 1 / math.sqrt(true_count)
+      approx_bonus = approx_bonus_info[k]
+      mse = (true_bonus - approx_bonus) ** 2
+      total_error += mse
+      num_points += 1
+  return total_error / num_points if num_points > 0 else -1
+
+
+def plot_mse_over_iteration(mse_over_iteration, save_path):
+  plt.figure(figsize=(12, 12))
+  plt.plot(mse_over_iteration, linewidth=3)
+  plt.title("MSE over iteration")
+  plt.xlabel("Iteration")
+  plt.ylabel("MSE")
+  plt.grid()
+  plt.savefig(save_path)
+  plt.close()

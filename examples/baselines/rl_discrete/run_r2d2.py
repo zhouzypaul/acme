@@ -88,6 +88,7 @@ flags.DEFINE_integer('cfn_value_plotting_freq', 1_000, 'How often to make CFN pl
 flags.DEFINE_bool('condition_actor_on_intrinsic_reward', False, 'Whether to condition actor LSTM on intrinsic reward')
 flags.DEFINE_bool('use_identity_tx', False, 'Whether to use undo R2D2s hyperbolic squash.')
 flags.DEFINE_bool('cfn_use_orthogonal_init', False, 'Whether to use orthogonal init for CFN networks')
+flags.DEFINE_float('cfn_var_to_std_epsilon', 1e-4, 'Epsilon to add to variance before taking square root.')
 
 FLAGS = flags.FLAGS
 
@@ -125,7 +126,8 @@ def make_cfn_builder(r2d2_builder):
     use_reward_normalization=FLAGS.cfn_use_reward_normalization,
     bonus_plotting_freq=FLAGS.cfn_bonus_plotting_freq,
     value_plotting_freq=FLAGS.cfn_value_plotting_freq,
-    condition_actor_on_intrinsic_reward=FLAGS.condition_actor_on_intrinsic_reward
+    condition_actor_on_intrinsic_reward=FLAGS.condition_actor_on_intrinsic_reward,
+    cfn_var_to_std_epsilon=FLAGS.cfn_var_to_std_epsilon
   )
   logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
   builder = cfn_builder.CFNBuilder(

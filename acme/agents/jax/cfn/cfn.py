@@ -2,6 +2,7 @@
 
 import collections
 import os
+import pickle
 
 import threading
 import time
@@ -246,6 +247,7 @@ class CFN(acme.Learner):
     self._bonus_plotting_freq = bonus_plotting_freq
     self._hash_to_first_intrinsic_reward = {}
     self._hash_to_first_intrinsic_reward_lock = threading.Lock()
+    self._bonus_prediction_errors = []
 
     # Keeping track of normalization ops in a different way for debugging
     self._normalization_params_lock = threading.Lock()
@@ -256,10 +258,12 @@ class CFN(acme.Learner):
     self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
     self._first_intrinsic_dir = os.path.join(base_dir, 'plots', 'first_intrinsic_reward')
     self._first_intrinsic_hist_dir = os.path.join(base_dir, 'plots', 'first_intrinsic_reward_hist')
+    self._mse_plotting_dir = os.path.join(base_dir, 'plots', 'mse')
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
     os.makedirs(self._first_intrinsic_dir, exist_ok=True)
     os.makedirs(self._first_intrinsic_hist_dir, exist_ok=True)
+    os.makedirs(self._mse_plotting_dir, exist_ok=True)
 
   def step(self):
     prefetching_split = next(self._iterator)
@@ -335,6 +339,16 @@ class CFN(acme.Learner):
       xlabel='Intrinsic Reward',
       ylabel='Count',
     )
+
+    bonus_prediction_error = plotting_utils.compute_bonus_prediction_error(
+      true_count_info=self._hash2counts,
+      approx_bonus_info=approx_bonus_info
+    )
+    self._bonus_prediction_errors.append(bonus_prediction_error)
+    plotting_utils.plot_mse_over_iteration(self._bonus_prediction_errors,
+                                           save_path=os.path.join(self._mse_plotting_dir, 'mse.png'))
+    with open(os.path.join(self._mse_plotting_dir, 'mse.pkl'), 'wb+') as f:
+      pickle.dump(self._bonus_prediction_errors, f)
       
   # TODO(ab/sl): add the count dictionaries so that they checkpoint correctly.
   def get_variables(self, names: List[str]) -> List[networks_lib.Params]:
