@@ -172,6 +172,7 @@ class ExperimentConfig(Generic[builders.Networks, builders.Policy,
   logger_factory: loggers.LoggerFactory = dataclasses.field(
       default_factory=experiment_utils.create_experiment_logger_factory)
   checkpointing: Optional[CheckpointingConfig] = CheckpointingConfig()
+  is_cfn: bool = False
 
   # TODO(stanczyk): Make get_evaluator_factories a standalone function.
   def get_evaluator_factories(self):

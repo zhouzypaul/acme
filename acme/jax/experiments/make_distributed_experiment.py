@@ -37,6 +37,7 @@ import jax
 import launchpad as lp
 import reverb
 from acme.agents.jax.r2d2 import GoalSpaceManager
+from acme.agents.jax.cfn.cfn import CFN
 
 ActorId = int
 InferenceServer = inference_server_lib.InferenceServer[
@@ -127,6 +128,54 @@ def make_distributed_experiment(
         environment_spec=spec,
         evaluation=False)
     return experiment.builder.make_replay_tables(spec, policy)
+  
+  def build_cfn_replay() -> List[reverb.Table]:
+    """Replay storage for storing CFN transitions (single step with coins)."""
+    dummy_seed = 1
+    spec = (
+        exploration_experiment.environment_spec or
+        specs.make_environment_spec(exploration_experiment.environment_factory(dummy_seed)))
+    network = exploration_experiment.network_factory(spec)
+    policy = config.make_policy(
+        experiment=exploration_experiment,
+        networks=network,
+        environment_spec=spec,
+        evaluation=False)
+    return exploration_experiment.builder.make_cfn_replay_tables(spec, policy)
+  
+  def build_cfn(
+      random_key: networks_lib.PRNGKey,
+      replay: reverb.Client,
+      counter: Optional[counting.Counter] = None,
+  ):
+    dummy_seed = 1
+    spec = (
+        exploration_experiment.environment_spec or
+        specs.make_environment_spec(exploration_experiment.environment_factory(dummy_seed)))
+    networks = exploration_experiment.network_factory(spec)
+    iterator = exploration_experiment.builder.make_cfn_dataset_iterator(replay)
+    cfn_counter = counting.Counter(counter, 'cfn')
+    cfn_obj = exploration_experiment.builder.make_cfn_object(
+      random_key,
+      networks,
+      iterator,
+      exploration_experiment.logger_factory,
+      replay,
+      cfn_counter)
+    if exploration_experiment.checkpointing:
+      checkpointing = exploration_experiment.checkpointing
+      cfn_obj = savers.CheckpointingRunner(
+        cfn_obj,
+        key='cfn_object',
+        subdirectory='cfn_object',
+        time_delta_minutes=5,
+        directory=checkpointing.directory,
+        add_uid=checkpointing.add_uid,
+        max_to_keep=checkpointing.max_to_keep,
+        keep_checkpoint_every_n_hours=checkpointing.keep_checkpoint_every_n_hours,
+        checkpoint_ttl_seconds=checkpointing.checkpoint_ttl_seconds,
+      )
+    return cfn_obj
 
   def build_model_saver(variable_source: core.VariableSource):
     assert experiment.checkpointing
@@ -240,6 +289,7 @@ def make_distributed_experiment(
       replay: reverb.Client,
       counter: Optional[counting.Counter] = None,
       primary_learner: Optional[core.Learner] = None,
+      cfn: Optional[CFN] = None
   ):
     """The Learning part of the agent."""
 
@@ -257,7 +307,13 @@ def make_distributed_experiment(
     # in the background.
     iterator = utils.prefetch(iterable=iterator, buffer_size=1)
     counter = counting.Counter(counter, 'exploration_learner')
-    learner = exploration_experiment.builder.make_learner(random_key, networks, iterator,
+
+    if exploration_experiment.is_cfn:
+      learner = exploration_experiment.builder.make_learner(random_key, networks, iterator,
+                                              exploration_experiment.logger_factory, spec,
+                                              replay, counter, cfn=cfn)
+    else:
+      learner = exploration_experiment.builder.make_learner(random_key, networks, iterator,
                                               exploration_experiment.logger_factory, spec,
                                               replay, counter)
 
@@ -328,7 +384,9 @@ def make_distributed_experiment(
       counter: counting.Counter,
       actor_id: ActorId,
       inference_server: Optional[InferenceServer],
-      gsm: Optional[GoalSpaceManager]
+      gsm: Optional[GoalSpaceManager],
+      cfn_variable_source: Optional[core.VariableSource] = None,
+      cfn_replay: Optional[reverb.Client] = None,
   ) -> environment_loop.EnvironmentLoop:
     """The actor process."""
     environment_key, actor_key, explore_key = jax.random.split(
@@ -374,9 +432,19 @@ def make_distributed_experiment(
                                           adder)
     exploration_adder = exploration_experiment.builder.make_adder(
       exploration_replay, explore_env_spec, exploration_policy_network)
-    exploration_actor = exploration_experiment.builder.make_actor(
-      explore_key, exploration_policy_network, explore_env_spec,
-      exploration_variable_source, exploration_adder)
+    
+    if exploration_experiment.is_cfn:
+      cfn_adder = exploration_experiment.builder.make_cfn_adder(
+        cfn_replay, explore_env_spec, exploration_policy_network)
+      exploration_actor = exploration_experiment.builder.make_actor(
+        explore_key, exploration_policy_network, explore_env_spec,
+        exploration_variable_source, exploration_adder,
+        cfn_variable_source=cfn_variable_source,
+        cfn_adder=cfn_adder)
+    else:
+      exploration_actor = exploration_experiment.builder.make_actor(
+        explore_key, exploration_policy_network, explore_env_spec,
+        exploration_variable_source, exploration_adder)
 
     # Create logger and counter.
     counter = counting.Counter(counter, 'actor')
@@ -386,7 +454,7 @@ def make_distributed_experiment(
     return environment_loop.EnvironmentLoop(
         environment, actor, exploration_actor, counter, logger,
         observers=experiment.observers,
-        goal_space_manager=gsm, actor_id=actor_id)
+        goal_space_manager=gsm, actor_id=actor_id, cfn=cfn_variable_source)
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
     variable_client = variable_utils.VariableClient(
@@ -395,7 +463,7 @@ def make_distributed_experiment(
         update_period=datetime.timedelta(minutes=1))
     exploration_var_client = variable_utils.VariableClient(
       exploration_var_source,
-      key='rnd_training_state',  # TODO(ab): Make this more generic.
+      key='rnd_training_state',  # NOTE: this works for CFN b/c it doesn't look at `names`
       update_period=datetime.timedelta(minutes=1))
     env = experiment.environment_factory(rng_num)
     
@@ -440,6 +508,16 @@ def make_distributed_experiment(
     build_exploration_replay, checkpoint_time_delta_minutes=checkpoint_time_delta_minutes)
   exploration_replay = exploration_replay_node.create_handle()
 
+  if exploration_experiment.is_cfn:
+    cfn_replay_node = lp.ReverbNode(
+      build_cfn_replay, checkpoint_time_delta_minutes=checkpoint_time_delta_minutes)
+    cfn_replay = cfn_replay_node.create_handle()
+
+    with program.group('cfn_replay'):
+      program.add_node(cfn_replay_node)
+  else:
+    cfn_replay_node, cfn_replay = None, None
+
   counter = program.add_node(lp.CourierNode(build_counter), label='counter')
 
   if experiment.max_num_actor_steps is not None:
@@ -447,6 +525,16 @@ def make_distributed_experiment(
         lp.CourierNode(lp_utils.StepsLimiter, counter,
                        experiment.max_num_actor_steps),
         label='counter')
+  
+  if exploration_experiment.is_cfn:
+    cfn_key, key = jax.random.split(key)
+    cfn_node = lp.CourierNode(build_cfn, cfn_key, cfn_replay, counter)
+    cfn = cfn_node.create_handle()
+
+    with program.group('cfn'):
+      program.add_node(cfn_node)
+  else:
+    cfn_node, cfn = None, None
 
   learner_key, key = jax.random.split(key)
   learner_node = lp.CourierNode(build_learner, learner_key, replay, counter)
@@ -456,7 +544,7 @@ def make_distributed_experiment(
   # TODO(ab): How does Counter work? Can I reuse the counter b/w both learners or do I need a new one??
   exploration_learner_key, key = jax.random.split(key)
   exploration_learner_node = lp.CourierNode(
-    build_exploration_learner, exploration_learner_key, exploration_replay, counter)
+    build_exploration_learner, exploration_learner_key, exploration_replay, counter, cfn=cfn)
   exploration_learner = exploration_learner_node.create_handle()
 
   if multithreading_colocate_learner_and_reverb:
@@ -525,7 +613,7 @@ def make_distributed_experiment(
       gsm_key,
       experiment.network_factory(spec),
       variable_sources[0],
-      exploration_learner,
+      cfn if exploration_experiment.is_cfn else exploration_learner,
       # TODO(ab): How to set the number of threads for the GSM?
       courier_kwargs={'thread_pool_size': 42}
       )
@@ -558,7 +646,9 @@ def make_distributed_experiment(
             counter,
             actor_id,
             inference_node,
-            gsm if create_goal_space_manager else None
+            gsm if create_goal_space_manager else None,
+            cfn,
+            cfn_replay
         )
         colocation_nodes.append(actor)
 
