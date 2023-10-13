@@ -14,6 +14,7 @@
 
 """A simple agent-environment training loop."""
 
+import os
 import operator
 import time
 import math
@@ -32,6 +33,8 @@ from acme.agents.jax.r2d2.subgoal_sampler import SubgoalSampler
 from acme.utils.utils import GoalBasedTransition
 from acme.utils.utils import termination, truncation, continuation
 from acme import specs as env_specs
+from acme.utils.paths import get_save_directory
+from acme.agents.jax.cfn.cfn import CFN
 
 import dm_env
 from dm_env import specs
@@ -84,7 +87,8 @@ class EnvironmentLoop(core.Worker):
       always_learn_about_exploration_goal: bool = False,
       actor_id: int = 0,
       use_random_policy_for_exploration: bool = True,
-      pure_exploration_probability: float = 1.
+      pure_exploration_probability: float = 1.,
+      cfn: Optional[CFN] = None
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -102,6 +106,7 @@ class EnvironmentLoop(core.Worker):
     self._always_learn_about_exploration_goal = always_learn_about_exploration_goal
     self._use_random_policy_for_exploration = use_random_policy_for_exploration
     self._pure_exploration_probability = pure_exploration_probability
+    self._cfn = cfn
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -116,6 +121,19 @@ class EnvironmentLoop(core.Worker):
     # For debugging and visualizations
     self._start_ts = None
     self._episode_iter = itertools.count()
+
+    base_dir = get_save_directory()
+    self._exploration_traj_dir = os.path.join(base_dir, 'plots', 'exploration_trajectories')
+    self._target_node_plot_dir = os.path.join(base_dir, 'plots', 'target_node_plots')
+    self._discovered_goals_dir = os.path.join(base_dir, 'plots', 'discovered_goals')
+    
+    os.makedirs(self._exploration_traj_dir, exist_ok=True)
+    os.makedirs(self._target_node_plot_dir, exist_ok=True)
+    os.makedirs(self._discovered_goals_dir, exist_ok=True)
+    
+    print(f'Going to save exploration trajectories to {self._exploration_traj_dir}')
+    print(f'Going to save target node plots to {self._target_node_plot_dir}')
+    print(f'Going to save discovered goals to {self._discovered_goals_dir}')
     
   @property
   def task_goal(self) -> OARG:
@@ -443,7 +461,7 @@ class EnvironmentLoop(core.Worker):
         episode_logs=episode_logs,
         trajectory_key=trajectory_key)
       if self._actor_id == 1:
-        self.visualize_intrinsic_spatial_bonus(episode_logs[trajectory_key], next(self._episode_iter))
+        self.visualize_exploration_trajectory(episode_logs[trajectory_key], next(self._episode_iter))
     else:
       print(f'Could have been rolling out the RND policy... {self._exploration_actor}')
       timestep, needs_reset, episode_logs = self.gc_rollout(
@@ -452,6 +470,10 @@ class EnvironmentLoop(core.Worker):
         episode_logs=episode_logs,
         use_random_actions=self._use_random_policy_for_exploration
       )
+
+    if self._cfn is not None and episode_logs[trajectory_key]:
+      print(f'[EnvironmentLoop] Updating CFN with {len(episode_logs[trajectory_key])} transitions.')
+      self.update_cfn_ground_truth_counts(episode_logs[trajectory_key])
 
     print(f'[EnvironmentLoop] Ended exploration in {timestep.observation.goals}')
     assert needs_reset, 'Currently, we run the exploration policy till episode end.'
@@ -472,6 +494,7 @@ class EnvironmentLoop(core.Worker):
       for trans in trajectory
     }
     
+    # NOTE: Using hash for equality here.
     visited_hashes: List[Tuple] = list(visited_states.keys())
     new_goal_hashes: List[Tuple] = [g for g in visited_hashes if g not in goal_space]
 
@@ -479,8 +502,12 @@ class EnvironmentLoop(core.Worker):
       # novelty_scores: List[float] = [self._get_intrinsic_reward(visited_states[g]) \
       #                                for g in new_goal_hashes]
       novelty_scores: List[float] = [hash2int[g] for g in new_goal_hashes]
+
+      reward_mean = self._exploration_actor._rnd_state.reward_mean
+      reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
+      thresh = reward_mean + (2 * reward_std)  # TODO(ab): make this a hyperparam
       
-      if max(novelty_scores) > self._exploration_actor._rnd_state.reward_mean:
+      if max(novelty_scores) > thresh:
         most_novel_goal_hash: Tuple = new_goal_hashes[np.argmax(novelty_scores)]
         most_novel_state: OARG = visited_states[most_novel_goal_hash]
         print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
@@ -489,9 +516,19 @@ class EnvironmentLoop(core.Worker):
           episode_number = next(self._episode_iter)
           self.visualize_new_goal(most_novel_goal_hash, most_novel_state,
                                   max(novelty_scores), episode=episode_number)
-          # self.visualize_intrinsic_spatial_bonus(trajectory, episode_number)
+          # self.visualize_exploration_trajectory(trajectory, episode_number)
 
-        return {most_novel_goal_hash: most_novel_state}
+        discovered_goal = {most_novel_goal_hash: most_novel_state}
+        start_state_hash = tuple(self._start_ts.observation.goals)
+
+        if start_state_hash not in goal_space:
+          print(f'Adding start state {start_state_hash} to goal space.')
+          return {
+            **discovered_goal,
+            start_state_hash: self._start_ts.observation
+          }
+
+        return discovered_goal
 
     return {}
 
@@ -883,17 +920,17 @@ class EnvironmentLoop(core.Worker):
                          novelty_score: float,
                          episode: int):
     reward_mean = self._exploration_actor._rnd_state.reward_mean
-    reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var)
+    reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
     image = goal_oarg.observation[:, :, :3]
     image = (image * 255).astype(np.uint8)
     
     plt.figure(figsize=(13, 10))
     plt.imshow(image)
-    plt.title(f'G: {goal_hash} R: {novelty_score:.2f} mu: {reward_mean:.2f} std: {reward_std:.2f}')
-    plt.savefig(f'plots/discovered_goals/goal_{episode}.png')
+    plt.title(f'G: {goal_hash} R: {novelty_score:.3f} mu: {reward_mean:.3f} std: {reward_std:.3f}')
+    plt.savefig(os.path.join(self._discovered_goals_dir, f'goal_{episode}.png'))
     plt.close()
 
-  def visualize_intrinsic_spatial_bonus(self, trajectory: List[GoalBasedTransition], episode: int):
+  def visualize_exploration_trajectory(self, trajectory: List[GoalBasedTransition], episode: int):
 
     pos2bonuses = collections.defaultdict(list)
     executed_actions: List[int] = []
@@ -919,7 +956,8 @@ class EnvironmentLoop(core.Worker):
     plt.title(f'As: {executed_action_distribution}')
     plt.scatter(x_positions, y_positions, c=exploration_bonuses)
     plt.colorbar()
-    plt.savefig(f'plots/exploration_bonus/spatial_bonus_episode_{episode}.png')
+    plt.savefig(os.path.join(self._exploration_traj_dir,
+                             f'exploration_traj_episode_{episode}.png'))
     plt.close()
 
 
@@ -973,8 +1011,35 @@ class EnvironmentLoop(core.Worker):
     plt.legend()
 
     plt.suptitle(f'Episode {current_episode}')
-    plt.savefig(f'plots/target_nodes/{filename}')
+    plt.savefig(os.path.join(self._target_node_plot_dir, filename))
     plt.close()
+
+  def update_cfn_ground_truth_counts(self, trajectory: List[GoalBasedTransition]):
+
+    def get_key(ts: dm_env.TimeStep) -> Tuple:
+      return tuple([int(g) for g in ts.observation.goals])
+
+    def extract_counts() -> dict:
+      """Return a dictionary mapping goal to visit count in episode."""
+      hashes = [get_key(trans.next_ts) for trans in trajectory]
+      return dict(collections.Counter(hashes))
+
+    def extract_goal_to_obs() -> dict:
+      """Return a dictionary mapping goal hash to the OAR when goal was achieved."""
+      return {
+        get_key(transition.next_ts): 
+        # We convert to jnp b/c courier cannot handle np arrays
+        # TODO(ab/sl): This assumes that the 1st 3 channels are the obs
+        (jnp.asarray(transition.next_ts.observation.observation[:, :, :3]),
+         int(transition.next_ts.observation.action),
+         float(transition.reward.item()))  # This should be r_e + beta * r_int
+        for transition in trajectory
+      }
+    
+    hash2counts = extract_counts()
+    hash2obs = extract_goal_to_obs()
+
+    self._cfn.futures.update_ground_truth_counts(hash2obs, hash2counts)
 
   def run(
       self,
