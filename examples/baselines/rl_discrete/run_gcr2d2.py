@@ -43,14 +43,22 @@ flags.DEFINE_integer('num_steps', 50_000_000,
                      'Number of environment steps to run for. Number of frames is 4x this')
 flags.DEFINE_integer('num_actors', 64, 'Number of actors to use')
 flags.DEFINE_integer('spi', 0, 'Samples per insert')
+flags.DEFINE_string('acme_dir', 'local_testing', 'Directory to do acme logging')
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
 
 # Novelty search flags.
-flags.DEFINE_float('rnd_intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
-flags.DEFINE_float('rnd_extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
+flags.DEFINE_float('intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
+flags.DEFINE_float('extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
 flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')
 flags.DEFINE_boolean('use_stale_rewards', True, 'Use stale rewards for RND')
+flags.DEFINE_bool('use_rnd', False, help='Whether to use RND or not')
+flags.DEFINE_bool('use_cfn', True, help='Whether to use CFN or not')
+flags.DEFINE_float('cfn_learning_rate', 1e-4, 'Learning rate for CFN optimizer')
+flags.DEFINE_integer('cfn_spi', 0, 'Samples per insert for CFN optimization')
+flags.DEFINE_integer('cfn_policy_spi', 8, 'Samples per insert for the exploration policy')
+flags.DEFINE_integer('cfn_max_replay_size', 2_000_000, 'Max replay size for CFN optimization')
+
 
 FLAGS = flags.FLAGS
 
@@ -70,6 +78,8 @@ def build_experiment_config():
       level_name=env_name,
       max_episode_len=max_episode_steps
     )
+
+  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
 
   # Configure the agent.
   config = r2d2.R2D2Config(
@@ -92,7 +102,9 @@ def build_experiment_config():
       network_factory=r2d2.make_atari_networks,
       environment_factory=environment_factory,
       seed=FLAGS.seed,
-      max_num_actor_steps=FLAGS.num_steps)
+      max_num_actor_steps=FLAGS.num_steps,
+      logger_factory=functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir),
+      checkpointing=checkpointing_config)
 
 
 def make_rnd_builder(r2d2_builder):
@@ -100,17 +112,35 @@ def make_rnd_builder(r2d2_builder):
   # import ipdb; ipdb.set_trace()
   rnd_config = rnd.RNDConfig(
       is_sequence_based=True, # Probably
-      intrinsic_reward_coefficient=FLAGS.rnd_intrinsic_reward_coefficient,
-      extrinsic_reward_coefficient=FLAGS.rnd_extrinsic_reward_coefficient,
+      intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
+      extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
       predictor_learning_rate=FLAGS.rnd_learning_rate,
       use_stale_rewards=FLAGS.use_stale_rewards
   )
-  logger_fn = functools.partial(
-    make_experiment_logger, FLAGS.acme_id)
+  logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
   builder = rnd.RNDBuilder(
       rl_agent=r2d2_builder,
       config=rnd_config,
       logger_fn=logger_fn)
+  return builder
+
+
+def make_cfn_builder(r2d2_builder):
+  from acme.agents.jax.cfn.config import CFNConfig
+  from acme.agents.jax.cfn.builder import CFNBuilder
+  cfn_config = CFNConfig(
+    intrinsic_reward_coefficient=FLAGS.intrinsic_reward_coefficient,
+    extrinsic_reward_coefficient=FLAGS.extrinsic_reward_coefficient,
+    cfn_learning_rate=FLAGS.cfn_learning_rate,
+    use_stale_rewards=FLAGS.use_stale_rewards,
+    samples_per_insert=FLAGS.cfn_spi,
+    max_replay_size=FLAGS.cfn_max_replay_size,
+  )
+  logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
+  builder = CFNBuilder(
+    rl_agent=r2d2_builder,
+    config=cfn_config,
+    logger_fn=logger_fn)
   return builder
 
 
@@ -130,10 +160,17 @@ def build_exploration_policy_experiment_config():
       goal_conditioned=False,  # This is the reason we have a different env_factory
       seed=seed)
   
-  def network_factory(env_spec):
+  def rnd_network_factory(env_spec):
     from acme.agents.jax import rnd
     r2d2_networks = r2d2.make_vanilla_atari_networks(env_spec)
     return rnd.make_networks(env_spec, direct_rl_networks=r2d2_networks)
+  
+  def cfn_network_factory(env_spec):
+    from acme.agents.jax.cfn import networks as cfn_networks
+    r2d2_networks = r2d2.make_vanilla_atari_networks(env_spec)
+    return cfn_networks.make_networks(env_spec, direct_rl_networks=r2d2_networks)
+
+  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
   
   # Configure the agent.
   # TODO(ab): pick hyperparameters that make sense for R2D2 + RND.
@@ -144,20 +181,32 @@ def build_exploration_policy_experiment_config():
       min_replay_size=1_000,
       batch_size=batch_size,
       prefetch_size=1,
-      samples_per_insert=FLAGS.spi,
+      samples_per_insert=FLAGS.cfn_policy_spi,
       evaluation_epsilon=1e-3,
-      learning_rate=1e-4,
+      learning_rate=3e-4,
       target_update_period=1200,
       variable_update_period=100,
-      # tx_pair=rlax.signed_hyperbolic
+      tx_pair=rlax.IDENTITY_PAIR,
+      discount=0.99,
   )
-  agent_builder = make_rnd_builder(r2d2.R2D2Builder(config))
+  
+  if FLAGS.use_rnd:
+    agent_builder = make_rnd_builder(r2d2.R2D2Builder(config))
+  elif FLAGS.use_cfn:
+    agent_builder = make_cfn_builder(r2d2.R2D2Builder(config))
+  else:
+    raise NotImplementedError()
+  
   return experiments.ExperimentConfig(
       builder=agent_builder,
-      network_factory=network_factory,
+      network_factory=rnd_network_factory if FLAGS.use_rnd else cfn_network_factory,
       environment_factory=environment_factory,
       seed=FLAGS.seed,
-      max_num_actor_steps=FLAGS.num_steps)
+      max_num_actor_steps=FLAGS.num_steps,
+      logger_factory=functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir),
+      is_cfn=FLAGS.use_cfn,
+      checkpointing=checkpointing_config
+  )
 
 
 def _get_local_resources(launch_type):
@@ -185,7 +234,12 @@ def _get_local_resources(launch_type):
           "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
           "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
           "TF_FORCE_GPU_ALLOW_GROWTH": "true",
-        })
+        }),
+       "cfn": PythonProcess(env={
+         "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
+         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+         "TF_FORCE_GPU_ALLOW_GROWTH": "true",
+        }),
      }
    else:
      local_resources = {}
@@ -199,7 +253,7 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
   """
   end_time = datetime.now()
   # log start and end time 
-  log_dir = os.path.expanduser(os.path.join('~/acme', FLAGS.acme_id))
+  log_dir = os.path.expanduser(os.path.join(FLAGS.acme_dir, FLAGS.acme_id))
   # don't print because it will be lost, especially because acme stops experiment by throwing an Error when reaching num_steps
   from helpers import save_start_and_end_time
   save_start_and_end_time(log_dir, start_time, end_time)

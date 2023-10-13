@@ -36,7 +36,7 @@ class CFNConfig:
   variable_update_period: int = 400
 
   min_replay_size: int = 50_000 // 4
-  max_replay_size: int = 5_000_000
+  max_replay_size: int = 2_000_000
   samples_per_insert: int = 32
   samples_per_insert_tolerance_rate: float = 0.1
   

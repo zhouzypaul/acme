@@ -146,6 +146,7 @@ media
 static
 examples/baselines/rl_discrete/acme
 examples/baselines/rl_discrete/local_results
+examples/baselines/rl_discrete/local_testing
 *.pkl
 *.png
 *.txt
@@ -153,3 +154,4 @@ examples/baselines/rl_discrete/local_results
 *.o
 *.csv
 *.json
+.onager
