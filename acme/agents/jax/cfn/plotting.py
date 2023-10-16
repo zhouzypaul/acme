@@ -136,12 +136,15 @@ def compute_bonus_prediction_error(true_count_info, approx_bonus_info):
   return total_error / num_points if num_points > 0 else -1
 
 
-def plot_mse_over_iteration(mse_over_iteration, save_path):
+def plot_quantity_over_iteration(
+    quantity_over_iteration,
+    save_path,
+    quantity_name: str = 'MSE'):
   plt.figure(figsize=(12, 12))
-  plt.plot(mse_over_iteration, linewidth=3)
-  plt.title("MSE over iteration")
+  plt.plot(quantity_over_iteration, linewidth=4)
+  plt.title(f"{quantity_name} over iteration")
   plt.xlabel("Iteration")
-  plt.ylabel("MSE")
+  plt.ylabel(f"{quantity_name}")
   plt.grid()
   plt.savefig(save_path)
   plt.close()
