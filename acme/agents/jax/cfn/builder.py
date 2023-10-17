@@ -226,13 +226,17 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
                   step_spec,
                   self._config.cfn_replay_table_name),
       step_spec=step_spec)
+    if self._config.cfn_use_forgetting:
+      remover = reverb.selectors.MinHeap()
+    else:
+      remover = reverb.selectors.Fifo()
     return [
         reverb.Table(
             name=self._config.cfn_replay_table_name,
             # sampler=reverb.selectors.Uniform(),
             sampler=reverb.selectors.Prioritized(
               self._config.priority_exponent),
-            remover=reverb.selectors.Fifo(),
+            remover=remover,
             max_size=self._config.max_replay_size,
             rate_limiter=limiter,
             signature=signature

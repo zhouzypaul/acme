@@ -52,6 +52,7 @@ class CFNConfig:
   importance_sampling_exponent: float = 0.6
   priority_exponent: float = 1.0
   max_priority_weight: float = 0.9
+  cfn_use_forgetting: bool = False
 
   predictor_learning_rate: float = 1e-3
 
