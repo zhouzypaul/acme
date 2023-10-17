@@ -87,6 +87,10 @@ class CFNLearner(acme.Learner):
     base_dir = get_save_directory()
     self._plotting_dir = os.path.join(base_dir, 'plots', 'spatial_value_plots')
     os.makedirs(self._plotting_dir, exist_ok=True)
+    self._spread_plotting_dir = os.path.join(base_dir, 'plots', 'max_value_spread_plots')
+    os.makedirs(self._spread_plotting_dir, exist_ok=True)
+    self._spread_list = []
+
 
   def step(self):
     self._direct_rl_learner.step()
@@ -129,6 +133,14 @@ class CFNLearner(acme.Learner):
       q_values = self._tx_pair.apply_inv(q_values)
 
       values = q_values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
+
+      value_diff = values.max() - values.min()
+      self._spread_list.append(value_diff)
+      plotting_utils.plot_quantity_over_iteration(self._spread_list,
+                                            save_path=os.path.join(self._spread_plotting_dir, 'value_spread.png'),
+                                            quantity_name='Value Spread')
+      with open(os.path.join(self._spread_plotting_dir, 'value_spread.pkl'), 'wb+') as f:
+        pickle.dump(self._spread_list, f)
 
       assert len(values.shape) == 1, values.shape
       assert values.shape[0] == len(hashes), (values.shape, len(hashes))
