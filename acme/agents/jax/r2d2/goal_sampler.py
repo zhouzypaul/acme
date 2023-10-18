@@ -11,7 +11,7 @@ import collections
 from typing import List, Tuple, Dict
 
 from acme.wrappers.oar_goal import OARG
-# from acme.agents.jax.r2d2.amdp import AMDP
+from acme.utils.utils import scores2probabilities
 from acme.agents.jax.r2d2.amdp import AMDP
 
 
@@ -149,9 +149,11 @@ class GoalSampler:
   def _get_target_node_probability_dist(
     self,
     current_node: Tuple,
-    default_behavior: str = 'none'
+    default_behavior: str = 'none',
+    sampling_type: str = 'sum_sample'
   ) -> Tuple[List[Tuple], np.ndarray]:
     assert default_behavior in ('task', 'exploration', 'none'), default_behavior
+    assert sampling_type in ('argmax', 'sum_sample', 'sort_then_sample'), sampling_type
     
     # TODO(ab): handle case where we can be in multiple current nodes.
     t0 = time.time()
@@ -161,10 +163,21 @@ class GoalSampler:
     if reachable_goals:
       scores = self._get_expansion_scores(reachable_goals)
       scores = np.asarray(scores)
-      if scores.sum() > 0:
-        probs = scores / scores.sum()
+      if sampling_type == 'sum_sample':
+        probs = scores2probabilities(scores)
+      elif sampling_type == 'sort_then_sample':  # NOTE: Untested.
+        # Sort by score, then sample based on scores from the top 10%.
+        idx = np.argsort(scores)[::-1]  # descending order sort.
+        n_non_zero_probs = len(scores) // 10 if len(scores) > 50 else len(scores)
+        non_zero_probs_idx  = idx[:n_non_zero_probs]
+        probs = np.zeros_like(scores)
+        probs[non_zero_probs_idx] = scores2probabilities(scores[non_zero_probs_idx])
+      elif sampling_type == 'argmax':
+        probs = np.zeros_like(scores)
+        probs[np.argmax(scores)] = 1.
       else:
-        probs = np.ones((len(scores),)) / len(scores)
+        raise NotImplementedError(sampling_type)
+      print(f'[GoalSampler] Reachable prob pairs: {list(zip(reachable_goals, probs))}')
       return reachable_goals, probs
     
     if default_behavior == 'exploration':
@@ -209,7 +222,6 @@ class GoalSampler:
     reachable_nodes = [self.idx2hash[idx] for idx in reachable_idx]
     if self._ignore_non_rewarding_terminal_nodes:
       reachable_nodes = [node for node in reachable_nodes if not self.is_death_node(node)]
-    print(f'[GoalSampler] Nodes reachable from {src_node}: {reachable_nodes}')
     return reachable_nodes
 
   def _get_descendants(

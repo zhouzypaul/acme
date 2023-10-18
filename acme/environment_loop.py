@@ -32,6 +32,7 @@ from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.r2d2.subgoal_sampler import SubgoalSampler
 from acme.utils.utils import GoalBasedTransition
 from acme.utils.utils import termination, truncation, continuation
+from acme.utils.utils import scores2probabilities
 from acme import specs as env_specs
 from acme.utils.paths import get_save_directory
 from acme.agents.jax.cfn.cfn import CFN
@@ -852,16 +853,6 @@ class EnvironmentLoop(core.Worker):
   def hingsight_experience_replay(
     self, start_state: OARG, trajectory: List[GoalBasedTransition]):
     """Learn about goal(s) achieved when following a diff goal."""
-    def scores2probabilities(scores: np.ndarray) -> np.ndarray:
-      score_sum = scores.sum()
-      if score_sum == 0:
-        return np.ones_like(scores) / len(scores)
-      probabilities = scores / score_sum
-      if probabilities.sum() < 1:
-        assert probabilities.sum() > 0.99, (probabilities, probabilities.sum())
-        renormalization_factor = 1.0 / probabilities.sum()
-        probabilities *= renormalization_factor
-      return probabilities
 
     def goal_space_novelty_selection(
       traj: List[GoalBasedTransition],

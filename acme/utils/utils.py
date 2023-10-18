@@ -51,6 +51,18 @@ def continuation(ts: dm_env.TimeStep) -> dm_env.TimeStep:
   return ts._replace(discount=discount, step_type=step_type)
 
 
+def scores2probabilities(scores: np.ndarray) -> np.ndarray:
+  score_sum = scores.sum()
+  if score_sum == 0:
+    return np.ones_like(scores) / len(scores)
+  probabilities = scores / score_sum
+  if probabilities.sum() < 1:
+    assert probabilities.sum() > 0.99, (probabilities, probabilities.sum())
+    renormalization_factor = 1.0 / probabilities.sum()
+    probabilities *= renormalization_factor
+  return probabilities
+
+
 def create_log_dir(experiment_name):
   path = os.path.join(os.getcwd(), experiment_name)
   try:
