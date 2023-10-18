@@ -454,7 +454,8 @@ def make_distributed_experiment(
     return environment_loop.EnvironmentLoop(
         environment, actor, exploration_actor, counter, logger,
         observers=experiment.observers,
-        goal_space_manager=gsm, actor_id=actor_id, cfn=cfn_variable_source)
+        goal_space_manager=gsm, actor_id=actor_id, cfn=cfn_variable_source,
+        exploration_networks=exploration_networks)
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
     variable_client = variable_utils.VariableClient(
