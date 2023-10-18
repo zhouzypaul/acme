@@ -35,6 +35,7 @@ from acme.utils.utils import termination, truncation, continuation
 from acme import specs as env_specs
 from acme.utils.paths import get_save_directory
 from acme.agents.jax.cfn.cfn import CFN
+from acme.agents.jax.cfn.networks import compute_cfn_reward, CFNNetworks
 
 import dm_env
 from dm_env import specs
@@ -88,7 +89,8 @@ class EnvironmentLoop(core.Worker):
       actor_id: int = 0,
       use_random_policy_for_exploration: bool = True,
       pure_exploration_probability: float = 1.,
-      cfn: Optional[CFN] = None
+      cfn: Optional[CFN] = None,
+      exploration_networks: Optional[CFNNetworks] = None
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -107,6 +109,7 @@ class EnvironmentLoop(core.Worker):
     self._use_random_policy_for_exploration = use_random_policy_for_exploration
     self._pure_exploration_probability = pure_exploration_probability
     self._cfn = cfn
+    self._exploration_networks = exploration_networks
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -125,15 +128,12 @@ class EnvironmentLoop(core.Worker):
     base_dir = get_save_directory()
     self._exploration_traj_dir = os.path.join(base_dir, 'plots', 'exploration_trajectories')
     self._target_node_plot_dir = os.path.join(base_dir, 'plots', 'target_node_plots')
-    self._discovered_goals_dir = os.path.join(base_dir, 'plots', 'discovered_goals')
     
     os.makedirs(self._exploration_traj_dir, exist_ok=True)
     os.makedirs(self._target_node_plot_dir, exist_ok=True)
-    os.makedirs(self._discovered_goals_dir, exist_ok=True)
     
     print(f'Going to save exploration trajectories to {self._exploration_traj_dir}')
     print(f'Going to save target node plots to {self._target_node_plot_dir}')
-    print(f'Going to save discovered goals to {self._discovered_goals_dir}')
     
   @property
   def task_goal(self) -> OARG:
@@ -376,7 +376,10 @@ class EnvironmentLoop(core.Worker):
     # Stream the episodic trajectory to the goal space manager.
     if self._goal_space_manager is not None:
       t0 = time.time()
-      filtered_trajectory = self.filter_achieved_goals(new_hash2goals, episode_logs['episode_trajectory'])
+      filtered_trajectory = self.filter_achieved_goals(
+        new_hash2goals,
+        episode_logs['episode_trajectory'] + episode_logs['exploration_trajectory']
+      )
       t1 = time.time()
       
       self.stream_achieved_goals_to_gsm(filtered_trajectory, attempted_edges)
@@ -511,12 +514,6 @@ class EnvironmentLoop(core.Worker):
         most_novel_goal_hash: Tuple = new_goal_hashes[np.argmax(novelty_scores)]
         most_novel_state: OARG = visited_states[most_novel_goal_hash]
         print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
-        
-        if self._actor_id == 1:
-          episode_number = next(self._episode_iter)
-          self.visualize_new_goal(most_novel_goal_hash, most_novel_state,
-                                  max(novelty_scores), episode=episode_number)
-          # self.visualize_exploration_trajectory(trajectory, episode_number)
 
         discovered_goal = {most_novel_goal_hash: most_novel_state}
         start_state_hash = tuple(self._start_ts.observation.goals)
@@ -855,18 +852,55 @@ class EnvironmentLoop(core.Worker):
   def hingsight_experience_replay(
     self, start_state: OARG, trajectory: List[GoalBasedTransition]):
     """Learn about goal(s) achieved when following a diff goal."""
+    def scores2probabilities(scores: np.ndarray) -> np.ndarray:
+      score_sum = scores.sum()
+      if score_sum == 0:
+        return np.ones_like(scores) / len(scores)
+      probabilities = scores / score_sum
+      if probabilities.sum() < 1:
+        assert probabilities.sum() > 0.99, (probabilities, probabilities.sum())
+        renormalization_factor = 1.0 / probabilities.sum()
+        probabilities *= renormalization_factor
+      return probabilities
+
     def goal_space_novelty_selection(
       traj: List[GoalBasedTransition],
-      num_goals_to_replay: int = 5
+      num_goals_to_replay: int = 5,
+      use_tabular_counts: bool = True
     ) -> List[OARG]:
       achieved_goals = {
         tuple(trans.next_ts.observation.goals): trans.next_ts.observation
         for trans in traj
       }
       goal_hashes = list(achieved_goals.keys())
-      counts = [self.count_dict[g] for g in goal_hashes]
-      scores = np.asarray([1. / (1 + count) for count in counts])
-      probs = scores / scores.sum()
+
+      # TODO(ab): When the number of goal_hashes is <= num_goals_to_replay and sampling_by_replacement is False,
+      # we can skip computing scores/probs and return all the indices.
+      # Another way to implement this would be to interpret the exploration bonus as a 
+      # replay probability, i.e, with prob = bonus, replay achieved goal.
+      # We would still need to cap the number of goals to replay and should sort by bonus.
+
+      if (not use_tabular_counts) and (self._exploration_actor is not None):
+        achieved_oarg = OARG(
+          observation=jnp.asarray([achieved_goals[g].observation[..., :3] for g in goal_hashes]),
+          action=jnp.asarray([achieved_goals[g].action for g in goal_hashes]),
+          reward=jnp.asarray([achieved_goals[g].reward for g in goal_hashes]),
+          goals=jnp.asarray([achieved_goals[g].goals for g in goal_hashes])
+        )
+        # TODO(ab): this is specific to CFN right now
+        scores = compute_cfn_reward(
+          self._exploration_actor._rnd_state.params,
+          self._exploration_actor._rnd_state.target_params,
+          achieved_oarg,
+          self._exploration_networks,
+          self._exploration_actor._rnd_state.random_prior_mean,
+          jnp.sqrt(self._exploration_actor._rnd_state.random_prior_var + 1e-12))
+        scores = np.asarray(scores)
+      else:
+        counts = [self.count_dict[g] for g in goal_hashes]
+        scores = np.asarray([1. / (1 + count) for count in counts])
+        
+      probs = scores2probabilities(scores)
       selected_indices = np.random.choice(
         range(len(goal_hashes)),
         p=probs,
@@ -913,22 +947,6 @@ class EnvironmentLoop(core.Worker):
         print(f'[HER] Took {time.time() - t0}s to replay for exploration rewards.')
 
       print(f'HER took {time.time() - start_time}s')
-
-  def visualize_new_goal(self,
-                         goal_hash: Tuple,
-                         goal_oarg: OARG,
-                         novelty_score: float,
-                         episode: int):
-    reward_mean = self._exploration_actor._rnd_state.reward_mean
-    reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
-    image = goal_oarg.observation[:, :, :3]
-    image = (image * 255).astype(np.uint8)
-    
-    plt.figure(figsize=(13, 10))
-    plt.imshow(image)
-    plt.title(f'G: {goal_hash} R: {novelty_score:.3f} mu: {reward_mean:.3f} std: {reward_std:.3f}')
-    plt.savefig(os.path.join(self._discovered_goals_dir, f'goal_{episode}.png'))
-    plt.close()
 
   def visualize_exploration_trajectory(self, trajectory: List[GoalBasedTransition], episode: int):
 

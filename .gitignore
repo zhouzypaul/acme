@@ -147,6 +147,7 @@ static
 examples/baselines/rl_discrete/acme
 examples/baselines/rl_discrete/local_results
 examples/baselines/rl_discrete/local_testing
+examples/baselines/rl_discrete/testing_results
 *.pkl
 *.png
 *.txt
