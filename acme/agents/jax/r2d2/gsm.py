@@ -1,5 +1,6 @@
 import os
 import time
+import ipdb
 import pprint
 import random
 import dm_env
@@ -10,7 +11,7 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union, List
 
 from acme.wrappers.oar_goal import OARG
 from acme.wrappers.observation_action_reward import OAR
@@ -19,6 +20,7 @@ from acme.agents.jax.rnd import networks as rnd_networks
 from acme.agents.jax.cfn.networks import CFNNetworks
 from acme.agents.jax.rnd.networks import compute_rnd_reward
 from acme.agents.jax.cfn.networks import compute_cfn_reward
+from acme.agents.jax.cfn.plotting import plot_average_bonus_for_each_hash_bit
 from acme.jax import variable_utils
 from acme.jax import networks as networks_lib
 from acme.core import Saveable
@@ -81,13 +83,22 @@ class GoalSpaceManager(Saveable):
     self._iteration_iterator = itertools.count()
     self._gsm_loop_last_timestamp = time.time()
 
+    self._already_plotted_goals = set()
+
     base_dir = get_save_directory()
     self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
     self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
     self._gcvf_plotting_dir = os.path.join(base_dir, 'plots', 'gcvf_plots')
+    self._discovered_goals_dir = os.path.join(base_dir, 'plots', 'discovered_goals')
+    self._node_expansion_prob_dir = os.path.join(base_dir, 'plots', 'node_expansion_prob')
+    self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
+
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
     os.makedirs(self._gcvf_plotting_dir, exist_ok=True)
+    os.makedirs(self._discovered_goals_dir, exist_ok=True)
+    os.makedirs(self._node_expansion_prob_dir, exist_ok=True)
+    os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
     print(f'[GSM] Going to save plots to {self._spatial_plotting_dir} and {self._scatter_plotting_dir}')
 
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
@@ -122,6 +133,7 @@ class GoalSpaceManager(Saveable):
     transition_tensor = self.get_transition_tensor(n_nodes)
     return self.get_goal_dict(),\
           self.get_count_dict(),\
+          self.get_bonus_dict(),\
           self.get_on_policy_count_dict(),\
           *self.get_extrinsic_reward_dicts(),\
           hash2idx,\
@@ -219,6 +231,9 @@ class GoalSpaceManager(Saveable):
   
   def get_count_dict(self) -> Dict:
     return self._thread_safe_deepcopy(self._hash2counts)
+  
+  def get_bonus_dict(self) -> Dict:
+    return self._thread_safe_deepcopy(self._hash2bonus)
   
   def get_on_policy_count_dict(self):
     with self._on_policy_count_dict_lock:
@@ -495,6 +510,35 @@ class GoalSpaceManager(Saveable):
     plt.savefig(os.path.join(self._spatial_plotting_dir, f'spatial_bonus_{episode}.png'))
     plt.close()
 
+  def _plot_discovered_goals(self, episode):
+    for goal_hash in self._thread_safe_deepcopy(self._hash2obs):
+      if goal_hash not in self._already_plotted_goals:
+        obs = self._hash2obs[goal_hash]
+        # TODO(ab): Maybe compute the bonus if it is not already in hash2bonus.
+        score = self._hash2bonus[goal_hash] if goal_hash in self._hash2bonus else 0.
+        filename = f'goal_{goal_hash}_episode_{episode}.png'
+        title = f'Score: {score:.3f} ' + \
+                f'Mean: {self._exploration_params.reward_mean:.3f} ' + \
+                f'Var: {self._exploration_params.reward_var:.3f}'
+        plt.imshow(obs.observation)
+        plt.title(title)
+        plt.savefig(os.path.join(self._discovered_goals_dir, filename))
+        plt.close()
+        
+        self._already_plotted_goals.add(goal_hash)
+
+  def _plot_hash2bonus(self, episode):
+    hashes = list(self._hash2bonus.keys())
+    xs, ys, bonuses = [], [], []
+    for hash in hashes:
+      xs.append(hash[0])
+      ys.append(hash[1])
+      bonuses.append(self._hash2bonus[hash])
+    plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
+    plt.colorbar()
+    plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
+    plt.close()
+
   def step(self):
     t0 = time.time()
     iteration: int = next(self._iteration_iterator)
@@ -555,13 +599,20 @@ class GoalSpaceManager(Saveable):
         if not self._exploration_algorithm_is_cfn:
           self._make_spatial_bonus_plot(iteration)
 
-      if len(src_dest_pairs) > 1000:
+        self._plot_discovered_goals(iteration)
+        self._plot_hash2bonus(iteration)
+
+        plot_average_bonus_for_each_hash_bit(
+          self._thread_safe_deepcopy(self._hash2bonus),
+          save_path=os.path.join(self._hash_bit_plotting_dir, f'mean_bonus_{iteration}.png'))
+
+      if len(src_dest_pairs) > 10:
         # TODO(ab): get from env and pass around
         # start_state_features = (1, 5, 0, 0)  
-        start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
+        # start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
         # start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
         # start_state_features = (3, 1, 0, 1, 2, 0, 0, 0, 0, 0, 0)  # S3R1
-        # start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0)  # S5R3
+        start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0, 0)  # S5R3
         if start_state_features in self._hash2idx:
           row_idx = self._hash2idx[start_state_features]
           pprint.pprint(self._transition_matrix[row_idx, :len(self._hash2idx)])
@@ -581,22 +632,23 @@ class GoalSpaceManager(Saveable):
     t0 = time.time()
     print('[GSM] Checkpointing..')
     to_return = self.get_variables()
-    assert len(to_return) == 8, len(to_return)
+    assert len(to_return) == 9, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
   def restore(self, state: Tuple[Dict]):
     t0 = time.time()
     print('About to start restoring GSM from checkpoint.')
-    assert len(state) == 8, len(state)
+    assert len(state) == 9, len(state)
     self._hash2obs = state[0]
     self._hash2counts = collections.defaultdict(int, state[1])
-    self._on_policy_counts = self._dict_to_default_dict(state[2], int)
-    self._hash2reward = state[3]
-    self._hash2discount = state[4]
-    self._hash2idx = state[5]
-    self._transition_matrix = self.restore_transition_tensor(state[6])
-    self._idx2hash = state[7]
+    self._hash2bonus = state[2]
+    self._on_policy_counts = self._dict_to_default_dict(state[3], int)
+    self._hash2reward = state[4]
+    self._hash2discount = state[5]
+    self._hash2idx = state[6]
+    self._transition_matrix = self.restore_transition_tensor(state[7])
+    self._idx2hash = state[8]
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
 

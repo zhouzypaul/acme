@@ -1,4 +1,6 @@
 import math
+import numpy as np
+import collections
 import matplotlib.pyplot as plt
 
 
@@ -103,5 +105,105 @@ def plot_spatial_values(hash2value, save_path, split_by_direction: bool):
     plt.scatter(xs, ys, c=values, s=40, marker='s')
     plt.colorbar()
 
+  plt.savefig(save_path)
+  plt.close()
+
+
+def plot_histogram(values, save_path,
+                   title="", xlabel="", ylabel="",
+                   bins=100):
+  plt.figure(figsize=(12, 12))
+  plt.hist(values, bins=bins)
+  plt.title(title)
+  plt.xlabel(xlabel)
+  plt.ylabel(ylabel)
+  plt.savefig(save_path)
+  plt.close()
+
+
+def compute_bonus_prediction_error(true_count_info, approx_bonus_info):
+  true_count_info_keys = list(true_count_info.keys())
+  total_error = 0
+  num_points = 0
+  for k in true_count_info_keys:
+    if k in approx_bonus_info:
+      true_count = true_count_info[k]
+      true_bonus = 1 / math.sqrt(true_count)
+      approx_bonus = approx_bonus_info[k]
+      mse = (true_bonus - approx_bonus) ** 2
+      total_error += mse
+      num_points += 1
+  return total_error / num_points if num_points > 0 else -1
+
+
+def plot_quantity_over_iteration(
+    quantity_over_iteration,
+    save_path,
+    quantity_name: str = 'MSE'):
+  plt.figure(figsize=(12, 12))
+  plt.plot(quantity_over_iteration, linewidth=4)
+  plt.title(f"{quantity_name} over iteration")
+  plt.xlabel("Iteration")
+  plt.ylabel(f"{quantity_name}")
+  plt.grid()
+  plt.savefig(save_path)
+  plt.close()
+
+
+def split_hash_to_bonus_by_hash(hash2bonus):
+  """Split hash2bonus into hash_bit_to_mean_bonus,
+  which clusters hash2bonus based on bonuses observed when different bits of hash are on."""
+  split_directionary = collections.defaultdict(list)
+
+  # This dictionary maps each index in the hash to the value that it activates on.
+  # A value of -1 denotes that the index is not used.
+  # Missing indices are assumed to correspond to the door and is high at val=1.
+  idx_high_vals = collections.defaultdict(int, {
+    0: -1, 
+    1: -1,
+    2: 1,
+    -1: 1,
+    -2: 1
+  })
+
+  for hash, bonus in hash2bonus.items():
+    for i in range(len(hash)):
+
+      # Ignore the hash bits that are -1 in the index dictionary.
+      if idx_high_vals[i] == -1:
+        continue
+
+      if hash[i] == idx_high_vals[i]:
+        split_directionary[i].append(bonus)
+
+  for i in split_directionary:
+    split_directionary[i] = (np.mean(split_directionary[i]),
+                             np.var(split_directionary[i]),
+                             len(split_directionary[i]))
+
+  return split_directionary
+
+
+def plot_average_bonus_for_each_hash_bit(hash2bonus, save_path):
+  """Plot the average bonus for each hash bit."""
+  hash_bit_to_mean_bonus = split_hash_to_bonus_by_hash(hash2bonus)
+  hash_bit_to_mean_bonus = sorted(hash_bit_to_mean_bonus.items(), key=lambda x: x[0])
+  hash_bits = [x[0] for x in hash_bit_to_mean_bonus]
+  mean_bonuses = [x[1][0] for x in hash_bit_to_mean_bonus]
+  std_bonuses = [x[1][1] for x in hash_bit_to_mean_bonus]
+  num_occurences = [x[1][2] for x in hash_bit_to_mean_bonus]
+  plt.figure(figsize=(14, 14))
+  plt.subplot(121)
+  plt.bar(hash_bits, mean_bonuses, yerr=std_bonuses)
+  plt.title("Average bonus for each hash bit")
+  plt.xlabel("Hash bit")
+  plt.ylabel("Average bonus")
+  plt.grid()
+  plt.subplot(122)
+  plt.bar(hash_bits, num_occurences)
+  plt.title("Number of occurences for each hash bit")
+  plt.xlabel("Hash bit")
+  plt.ylabel("Number of occurences")
+  plt.grid()
   plt.savefig(save_path)
   plt.close()
