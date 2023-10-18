@@ -20,6 +20,7 @@ class GoalSampler:
       self,
       goal_dict, 
       count_dict,
+      bonus_dict,
       on_policy_edge_count_dict,
       reward_dict,
       discount_dict,
@@ -44,6 +45,7 @@ class GoalSampler:
 
     self.goal_dict = goal_dict
     self.count_dict = count_dict
+    self.bonus_dict = collections.defaultdict(float, bonus_dict)
     self.reward_dict = reward_dict
     self.discount_dict = discount_dict
     self.on_policy_edge_count_dict = on_policy_edge_count_dict
@@ -86,7 +88,17 @@ class GoalSampler:
       return target_node
 
   def is_death_node(self, g):
-    return self.reward_dict[g] <= 0 and self.discount_dict[g] == 0
+    try:
+      reward = self.reward_dict[g]
+    except KeyError:
+      print(f'[GoalSampler] KeyError for {g}, existing goals: {self.reward_dict.keys()}')
+      raise KeyError
+    try:
+      discount = self.discount_dict[g]
+    except KeyError:
+      print(f'[GoalSampler] KeyError for {g}, existing goals: {self.discount_dict.keys()}')
+      raise KeyError
+    return reward <= 0 and discount == 0
 
   def get_candidate_goals(self, current_node: Tuple) -> Dict:
     """Get the possible goals to pursue at the current state."""
@@ -117,11 +129,22 @@ class GoalSampler:
       if any([self.is_death_node(g) for g in goal_dict]):
         print(f'Death node made it into candidate goals: {goal_dict}')
       dist = self._get_target_node_probability_dist(current_node)
-      reachables = dist[0] if dist is not None else list(goal_dict.keys())
-      probs = dist[1] if dist is not None else np.ones((len(reachables),)) / len(reachables)
+      if dist is None or len(dist[0]) <= 1:
+        reachables = list(goal_dict.keys())
+        probs = np.ones((len(reachables),)) / len(reachables)
+        print('[GoalSampler] No reachable nodes, using uniform distribution.')
+      else:
+        reachables = dist[0]
+        probs = dist[1]
       idx = np.random.choice(range(len(reachables)), p=probs)
       return reachables[idx]
     raise NotImplementedError(method)
+  
+  # TODO(ab): Support using the exploration value function.
+  def _get_expansion_scores(self, reachable_goals, use_tabular_counts=False):
+    if use_tabular_counts:
+      return [1. / np.sqrt(self.count_dict[g] + 1) for g in reachable_goals]
+    return [self.bonus_dict[g] for g in reachable_goals]
 
   def _get_target_node_probability_dist(
     self,
@@ -136,9 +159,12 @@ class GoalSampler:
     print(f'[GoalSampler] Took {time.time() - t0} to get descendants.')
 
     if reachable_goals:
-      scores = [1. / np.sqrt(self.count_dict[g] + 1) for g in reachable_goals]
+      scores = self._get_expansion_scores(reachable_goals)
       scores = np.asarray(scores)
-      probs = scores / scores.sum()
+      if scores.sum() > 0:
+        probs = scores / scores.sum()
+      else:
+        probs = np.ones((len(scores),)) / len(scores)
       return reachable_goals, probs
     
     if default_behavior == 'exploration':
@@ -183,7 +209,7 @@ class GoalSampler:
     reachable_nodes = [self.idx2hash[idx] for idx in reachable_idx]
     if self._ignore_non_rewarding_terminal_nodes:
       reachable_nodes = [node for node in reachable_nodes if not self.is_death_node(node)]
-    # print(f'[GoalSampler] Nodes reachable from {src_node}: {reachable_nodes}')
+    print(f'[GoalSampler] Nodes reachable from {src_node}: {reachable_nodes}')
     return reachable_nodes
 
   def _get_descendants(
