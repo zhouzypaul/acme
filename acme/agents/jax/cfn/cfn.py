@@ -3,6 +3,7 @@
 import collections
 import os
 
+import pickle
 import threading
 import time
 from typing import Dict, Iterator, List, Mapping, Optional, Tuple
@@ -109,7 +110,7 @@ class CFN(acme.Learner):
         # key_grad,
         samples,
         state.random_prior_mean,
-        jnp.sqrt(state.random_prior_var + 1e-4))
+        jnp.sqrt(state.random_prior_var + 1e-12))
 
       # Average gradients over pmap replicas before optimizer update.
       gradients = jax.lax.pmean(gradients, _PMAP_AXIS_NAME)
@@ -243,13 +244,17 @@ class CFN(acme.Learner):
     self._count_dict_lock = threading.Lock()
     self._networks = networks
     self._bonus_plotting_freq = bonus_plotting_freq
+    self._bonus_prediction_errors = []
+    self._num_unique_states_visited = []
 
     # Create logging directories.
     base_dir = get_save_directory()
     self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
     self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
+    self._scalar_plotting_dir = os.path.join(base_dir, 'plots', 'scalar_plots')
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
+    os.makedirs(self._scalar_plotting_dir, exist_ok=True)
 
   def step(self):
     prefetching_split = next(self._iterator)
@@ -296,7 +301,7 @@ class CFN(acme.Learner):
       oar,
       self._networks,
       state.random_prior_mean,
-      jnp.sqrt(state.random_prior_var + 1e-4)
+      jnp.sqrt(state.random_prior_var + 1e-12)
     )
     
     assert predicted_bonuses.shape == (len(hashes),), predicted_bonuses.shape
@@ -312,6 +317,23 @@ class CFN(acme.Learner):
       approx_bonus_info=approx_bonus_info,
       save_path=os.path.join(self._scatter_plotting_dir, f'bonus_scatterplot_{state.steps}.png'),
     )
+
+    bonus_prediction_error = plotting_utils.compute_bonus_prediction_error(
+      true_count_info=self._hash2counts,
+      approx_bonus_info=approx_bonus_info)
+    self._bonus_prediction_errors.append(bonus_prediction_error)
+    plotting_utils.plot_quantity_over_iteration(self._bonus_prediction_errors,
+                                           save_path=os.path.join(self._scalar_plotting_dir, 'mse.png'),
+                                           quantity_name='MSE')
+    with open(os.path.join(self._scalar_plotting_dir, 'mse.pkl'), 'wb+') as f:
+      pickle.dump(self._bonus_prediction_errors, f)
+
+    self._num_unique_states_visited.append(len(self._hash2obs))
+    plotting_utils.plot_quantity_over_iteration(self._num_unique_states_visited,
+                                                save_path=os.path.join(self._scalar_plotting_dir, 'num_obs.png'),
+                                                quantity_name='num_unique_states_visited')
+    with open(os.path.join(self._scalar_plotting_dir, 'num_visited_states.pkl'), 'wb+') as f:
+      pickle.dump(self._num_unique_states_visited, f)
       
   # TODO(ab/sl): add the count dictionaries so that they checkpoint correctly.
   def get_variables(self, names: List[str]) -> List[networks_lib.Params]:
