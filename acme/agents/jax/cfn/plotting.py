@@ -207,3 +207,49 @@ def plot_average_bonus_for_each_hash_bit(hash2bonus, save_path):
   plt.grid()
   plt.savefig(save_path)
   plt.close()
+
+
+def plot_average_value_for_interesting_hash_bits(
+    node_to_node_values: dict,
+    src_node_hash_bit: int,
+    dest_node_hash_bit: int, 
+    src_node_hash_bit_vals: tuple,
+    dest_node_hash_bit_vals: tuple,
+    save_path: str):
+  # Get all the values with dest_node_hash_bit as the nested key.
+  src_node_to_values = collections.defaultdict(list)
+  for (src_hash, dest_hash), value in node_to_node_values.items():
+    if dest_hash[dest_node_hash_bit] in dest_node_hash_bit_vals:
+      src_node_to_values[src_hash].append(value)
+
+  if len(src_node_to_values) == 0:
+    return
+
+  # Split src_node_to_values into 2 groups based on src_node_hash_bit.
+  src_node_to_values_interesting = []
+  src_node_to_values_boring = []
+  for src_hash in src_node_to_values:
+    if src_hash[src_node_hash_bit] in src_node_hash_bit_vals:
+      src_node_to_values_interesting.extend(src_node_to_values[src_hash])
+    else:
+      src_node_to_values_boring.extend(src_node_to_values[src_hash])
+
+  if len(src_node_to_values_interesting) == 0 or len(src_node_to_values_boring) == 0:
+    return
+
+  # Plot the average value for each group.
+  plt.figure(figsize=(12, 12))
+  plt.subplot(121)
+  plt.hist(src_node_to_values_interesting, bins=10)
+  plt.title("Average value for interesting src hash bits")
+  plt.xlabel("Average value")
+  plt.ylabel("Number of occurences")
+  plt.grid()
+  plt.subplot(122)
+  plt.hist(src_node_to_values_boring, bins=10)
+  plt.title("Average value for boring src hash bits")
+  plt.xlabel("Average value")
+  plt.ylabel("Number of occurences")
+  plt.grid()
+  plt.savefig(save_path)
+  plt.close()

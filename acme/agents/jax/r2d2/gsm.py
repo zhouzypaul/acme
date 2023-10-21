@@ -20,12 +20,13 @@ from acme.agents.jax.rnd import networks as rnd_networks
 from acme.agents.jax.cfn.networks import CFNNetworks
 from acme.agents.jax.rnd.networks import compute_rnd_reward
 from acme.agents.jax.cfn.networks import compute_cfn_reward
-from acme.agents.jax.cfn.plotting import plot_average_bonus_for_each_hash_bit
 from acme.jax import variable_utils
 from acme.jax import networks as networks_lib
 from acme.core import Saveable
 from acme.agents.jax.r2d2.goal_sampler import GoalSampler
 from acme.utils.paths import get_save_directory
+
+import acme.agents.jax.cfn.plotting as cfn_plotting
 
 
 class GoalSpaceManager(Saveable):
@@ -92,6 +93,7 @@ class GoalSpaceManager(Saveable):
     self._discovered_goals_dir = os.path.join(base_dir, 'plots', 'discovered_goals')
     self._node_expansion_prob_dir = os.path.join(base_dir, 'plots', 'node_expansion_prob')
     self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
+    self._hash_bit_vf_diff_dir = os.path.join(base_dir, 'plots', 'hash_bit_vf_diff')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -99,6 +101,7 @@ class GoalSpaceManager(Saveable):
     os.makedirs(self._discovered_goals_dir, exist_ok=True)
     os.makedirs(self._node_expansion_prob_dir, exist_ok=True)
     os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
+    os.makedirs(self._hash_bit_vf_diff_dir, exist_ok=True)
     print(f'[GSM] Going to save plots to {self._spatial_plotting_dir} and {self._scatter_plotting_dir}')
 
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
@@ -602,17 +605,34 @@ class GoalSpaceManager(Saveable):
         self._plot_discovered_goals(iteration)
         self._plot_hash2bonus(iteration)
 
-        plot_average_bonus_for_each_hash_bit(
+        cfn_plotting.plot_average_bonus_for_each_hash_bit(
           self._thread_safe_deepcopy(self._hash2bonus),
           save_path=os.path.join(self._hash_bit_plotting_dir, f'mean_bonus_{iteration}.png'))
+        
+        node_to_node_values = {}
+        nodes = list(self._hash2idx.keys())
+        for src in nodes:
+          for dest in nodes:
+            node_to_node_values[(src, dest)] = self._transition_matrix[
+              self._hash2idx[src], self._hash2idx[dest]]
+
+        cfn_plotting.plot_average_value_for_interesting_hash_bits(
+          node_to_node_values,
+          src_node_hash_bit=2,   # Key bit
+          dest_node_hash_bit=3,  # Door bit 
+          src_node_hash_bit_vals=(1,),  # has_key = True
+          dest_node_hash_bit_vals=(0, 1),  # door is either open or unlocked
+          save_path=os.path.join(self._hash_bit_vf_diff_dir, f'vf_diff_{iteration}.png')
+        )
+        
 
       if len(src_dest_pairs) > 10:
         # TODO(ab): get from env and pass around
         # start_state_features = (1, 5, 0, 0)  
         # start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
-        # start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
+        start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
         # start_state_features = (3, 1, 0, 1, 2, 0, 0, 0, 0, 0, 0)  # S3R1
-        start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0, 0)  # S5R3
+        # start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0, 0)  # S5R3
         if start_state_features in self._hash2idx:
           row_idx = self._hash2idx[start_state_features]
           pprint.pprint(self._transition_matrix[row_idx, :len(self._hash2idx)])
