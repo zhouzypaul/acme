@@ -19,6 +19,7 @@ from acme.utils.paths import get_save_directory
 from acme.wrappers.observation_action_reward import OAR
 import acme.agents.jax.cfn.plotting as plotting_utils
 
+import pickle
 import os
 import numpy as np
 import jax.numpy as jnp
