@@ -32,7 +32,7 @@ class GoalSampler:
       exploration_goal: OARG,
       exploration_goal_probability: float = 0.,
       method: str = 'amdp',
-      ignore_non_rewarding_terminal_nodes: bool = True):
+      ignore_non_rewarding_terminal_nodes: bool = False):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -126,8 +126,6 @@ class GoalSampler:
       return random.choice(potential_goals)
 
     if method == 'novelty':
-      if any([self.is_death_node(g) for g in goal_dict]):
-        print(f'Death node made it into candidate goals: {goal_dict}')
       dist = self._get_target_node_probability_dist(current_node)
       if dist is None or len(dist[0]) <= 1:
         reachables = list(goal_dict.keys())
