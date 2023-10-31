@@ -64,7 +64,7 @@ class GoalSampler:
 
   def begin_episode(self, current_node: Tuple) -> Tuple:
     goal_dict = self.get_candidate_goals(current_node)
-    if len(goal_dict) > 1:
+    if len(goal_dict) > 0:
       t0 = time.time()
       target_node = self._select_expansion_node(
         current_node, goal_dict, method='novelty')
