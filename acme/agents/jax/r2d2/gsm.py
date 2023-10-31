@@ -41,10 +41,12 @@ class GoalSpaceManager(Saveable):
       exploration_networks: Union[rnd_networks.RNDNetworks, CFNNetworks],
       exploration_variable_client: variable_utils.VariableClient,
       tensor_increments: int = 1000,
-      exploration_algorithm_is_cfn: bool = True
+      exploration_algorithm_is_cfn: bool = True,
+      prob_augmenting_bonus_constant : float = 0.
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
+    self._prob_augmenting_bonus_constant = prob_augmenting_bonus_constant
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -73,6 +75,9 @@ class GoalSpaceManager(Saveable):
     self._hash2idx = {}
     self._idx2hash = {}
     self._idx_dict_lock = threading.Lock()
+
+    self._edges = set()
+    self._edges_set_lock = threading.Lock()
     
     self._rng_key = rng_key
     self._variable_client = variable_client
@@ -94,6 +99,7 @@ class GoalSpaceManager(Saveable):
     self._node_expansion_prob_dir = os.path.join(base_dir, 'plots', 'node_expansion_prob')
     self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
     self._hash_bit_vf_diff_dir = os.path.join(base_dir, 'plots', 'hash_bit_vf_diff')
+    self._skill_graph_plotting_dir = os.path.join(base_dir, 'plots', 'skill_graph')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -102,6 +108,7 @@ class GoalSpaceManager(Saveable):
     os.makedirs(self._node_expansion_prob_dir, exist_ok=True)
     os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
     os.makedirs(self._hash_bit_vf_diff_dir, exist_ok=True)
+    os.makedirs(self._skill_graph_plotting_dir, exist_ok=True)
     print(f'[GSM] Going to save plots to {self._spatial_plotting_dir} and {self._scatter_plotting_dir}')
 
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
@@ -114,9 +121,10 @@ class GoalSpaceManager(Saveable):
       exploration_goal_probability=0.
     )
     expansion_node = goal_sampler.begin_episode(current_node)
-    abstract_policy = goal_sampler._amdp.get_policy()
 
-    return expansion_node, abstract_policy
+    if goal_sampler._amdp:
+      abstract_policy = goal_sampler._amdp.get_policy()
+      return expansion_node, abstract_policy
   
   def get_descendants(self, current_node: Tuple): 
     return GoalSampler(
@@ -254,7 +262,8 @@ class GoalSpaceManager(Saveable):
     hash2obs: Dict,
     hash2count: Dict,
     edge2count: Dict,
-    hash2discount: Dict
+    hash2discount: Dict,
+    expansion_node_new_node_hash_pairs: List[Tuple[Tuple, Tuple]],
   ):
     """Update based on goals achieved by the different actors."""
     self._update_obs_dict(hash2obs)
@@ -262,6 +271,7 @@ class GoalSpaceManager(Saveable):
     self._update_on_policy_count_dict(edge2count)
     self._update_idx_dict(hash2obs)
     self._hash2discount.update(hash2discount)
+    self._update_edges_set(expansion_node_new_node_hash_pairs)
     
   def _update_count_dict(self, hash2count: Dict):
     with self._count_dict_lock:
@@ -287,6 +297,29 @@ class GoalSpaceManager(Saveable):
           idx = len(self._hash2idx)
           self._hash2idx[hash] = idx
           self._idx2hash[idx] = hash
+
+  def _update_edges_set(
+    self,
+    expansion_node_new_node_pairs: List[Tuple[Tuple, Tuple]]
+  ):
+    with self._edges_set_lock:
+
+      # Add the new nodes to their corresponding expansion nodes.
+      for expansion_node, new_node_hash in expansion_node_new_node_pairs:
+        self._edges.add((expansion_node, new_node_hash))
+
+        # Connect the new node to all the nodes that the expansion node is connected to.
+        for connected_node in self._get_one_step_connected_nodes(expansion_node):
+          self._edges.add((connected_node, new_node_hash))
+
+      print(f'[GSM] Number of edges: {len(self._edges)}')
+
+  def _get_one_step_connected_nodes(self, node: Tuple) -> List[Tuple]:
+    connected_nodes = []
+    for edge in self._edges:
+      if edge[1] == node:
+        connected_nodes.append(edge[0])
+    return connected_nodes
   
   def _construct_oarg(self, obs, action, reward, goal_features) -> OARG:
     """Convert the obs, action, etc from the GSM into an OARG object.
@@ -312,9 +345,17 @@ class GoalSpaceManager(Saveable):
         src_idx = self._hash2idx[src]
         dest_idx = self._hash2idx[dest]
         
-        # TODO(ab): incorporate count-based bonus.
         prob = np.clip(value, 0., 1.)
-        self._transition_matrix[src_idx, dest_idx] = prob
+        if (src, dest) in self._edges or prob > 0.5:
+          print(f'[GSM] Updating transition matrix from {src} to {dest} with prob {prob}')
+          bonus = 1 / np.sqrt(self._on_policy_counts[src][dest] + 1)
+          print(f'[GSM] Bonus = {bonus} c = {self._prob_augmenting_bonus_constant}')
+          weighted_bonus = self._prob_augmenting_bonus_constant * bonus
+
+          # NOTE: We are adding the bonus to the unclipped value.
+          augmented_prob = np.clip(value + weighted_bonus, 0., 1.)
+
+          self._transition_matrix[src_idx, dest_idx] = augmented_prob
     
     if len(self._hash2idx) >= self._n_actions:
       self._resize_transition_tensor()
@@ -542,6 +583,19 @@ class GoalSpaceManager(Saveable):
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
     plt.close()
 
+  def _plot_skill_graph(self, episode):
+    """Spatially plot the nodes and edges of the skill-graph."""
+    edges = list(self._edges)
+    for edge in edges:
+      x1 = edge[0][0]
+      y1 = edge[0][1]
+      x2 = edge[1][0]
+      y2 = edge[1][1]
+      plt.scatter([x1, x2], [y1, y2], color='black')
+      plt.plot([x1, x2], [y1, y2], color='black', alpha=0.3)
+    plt.savefig(os.path.join(self._skill_graph_plotting_dir, f'skill_graph_{episode}.png'))
+    plt.close()
+
   def step(self):
     t0 = time.time()
     iteration: int = next(self._iteration_iterator)
@@ -604,6 +658,7 @@ class GoalSpaceManager(Saveable):
 
         self._plot_discovered_goals(iteration)
         self._plot_hash2bonus(iteration)
+        self._plot_skill_graph(iteration)
 
         cfn_plotting.plot_average_bonus_for_each_hash_bit(
           self._thread_safe_deepcopy(self._hash2bonus),
@@ -629,8 +684,8 @@ class GoalSpaceManager(Saveable):
       if len(src_dest_pairs) > 10:
         # TODO(ab): get from env and pass around
         # start_state_features = (1, 5, 0, 0)  
-        # start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
-        start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
+        start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
+        # start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
         # start_state_features = (3, 1, 0, 1, 2, 0, 0, 0, 0, 0, 0)  # S3R1
         # start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0, 0)  # S5R3
         if start_state_features in self._hash2idx:
