@@ -259,7 +259,7 @@ class EnvironmentLoop(core.Worker):
     self,
     timestep: dm_env.TimeStep,
     episode_logs: Dict
-  ) -> Tuple[List[GoalBasedTransition], List[Tuple[OARG, OARG]]]:
+  ) -> Tuple[List[GoalBasedTransition], List[Tuple[OARG, OARG]], Tuple]:
     """Single episode rollout of the DSG algorithm."""
     
     def reached_expansion_node(ts: dm_env.TimeStep, node: Tuple) -> bool:
@@ -269,6 +269,7 @@ class EnvironmentLoop(core.Worker):
       return False
     
     needs_reset = False
+    expansion_node = None
     overall_attempted_edges: List[Tuple[OARG, OARG]] = []
     
     if self._goal_space_manager:
@@ -280,7 +281,10 @@ class EnvironmentLoop(core.Worker):
       expansion_node = tuple(self.task_goal.goals)
       current_node = self._get_current_node(timestep)
       if self._goal_space_manager:
-        expansion_node, abstract_policy = self._goal_space_manager.begin_episode(current_node)
+        planning_results = self._goal_space_manager.begin_episode(current_node)
+        if planning_results is not None:
+          print(f'[EnvironmentLoop] Planning result (expansion node): {planning_results[0]}')
+          expansion_node, abstract_policy = planning_results
       print(f'[EnvironmentLoop] Expansion Node: {expansion_node}')
       print(f'[EnvironmentLoop] begin_episode() took {time.time() - t0}s.')
 
@@ -318,7 +322,7 @@ class EnvironmentLoop(core.Worker):
     
     print(f"Episode traj len: {len(episode_logs['episode_trajectory'])}. Num attempted edges: {len(overall_attempted_edges)}")
 
-    return episode_logs, overall_attempted_edges
+    return episode_logs, overall_attempted_edges, expansion_node
 
   def run_episode(self, is_warmup_episode: bool) -> loggers.LoggingData:
     """Run one episode.
@@ -350,10 +354,11 @@ class EnvironmentLoop(core.Worker):
     timestep = self._environment.reset()
     env_reset_duration = time.time() - env_reset_start
     start_state = copy.deepcopy(timestep.observation)
+    expansion_node = tuple(timestep.observation.goals)
     self._start_ts = timestep
     
     if not is_warmup_episode:
-      episode_logs, attempted_edges = self.episodic_rollout(timestep, episode_logs)
+      episode_logs, attempted_edges, expansion_node = self.episodic_rollout(timestep, episode_logs)
     else:
       t0 = time.time()
       if self._goal_space_manager:
@@ -364,7 +369,7 @@ class EnvironmentLoop(core.Worker):
     # Extract new goals to add to the goal-space.
     explore_traj_key = 'exploration_trajectory' if not is_warmup_episode else 'episode_trajectory'
 
-    if episode_logs[explore_traj_key]:
+    if episode_logs[explore_traj_key] or is_warmup_episode:
       new_hash2goals = self.extract_new_goals(episode_logs[explore_traj_key])
       
     # HER.
@@ -382,8 +387,15 @@ class EnvironmentLoop(core.Worker):
         episode_logs['episode_trajectory'] + episode_logs['exploration_trajectory']
       )
       t1 = time.time()
+
+      expansion_node_new_node_pairs = [(expansion_node, new_node) for new_node in new_hash2goals]
       
-      self.stream_achieved_goals_to_gsm(filtered_trajectory, attempted_edges)
+      self.stream_achieved_goals_to_gsm(
+        filtered_trajectory,
+        attempted_edges,
+        expansion_node_new_node_pairs
+      )
+
       print(f'Took {t1 - t0}s to filter achieved goals')
       print(f'Took {time.time() - t1}s to stream achieved goals to the GSM')
     
@@ -485,6 +497,24 @@ class EnvironmentLoop(core.Worker):
     return timestep, needs_reset, episode_logs
   
   def extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
+    
+    def extract(
+        visited_states: Dict,
+        unseen_goal_hashes: List[Tuple],
+        novelties: List[float],
+        method: str = 'max_novelty'
+    ) -> Dict:
+      """Extract new goals from the interesting trajectory."""
+      if method == 'all':
+        return {g: visited_states[g] for g in unseen_goal_hashes}
+      if method == 'max_novelty':
+        most_novel_goal_hash: Tuple = unseen_goal_hashes[np.argmax(novelties)]
+        most_novel_state: OARG = visited_states[most_novel_goal_hash]
+        print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
+
+        return {most_novel_goal_hash: most_novel_state}
+      raise NotImplementedError(method)
+
     goal_space = self.goal_dict
 
     visited_states = {
@@ -509,24 +539,28 @@ class EnvironmentLoop(core.Worker):
 
       reward_mean = self._exploration_actor._rnd_state.reward_mean
       reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
-      thresh = reward_mean + (2 * reward_std)  # TODO(ab): make this a hyperparam
+      thresh = reward_mean #  + (2 * reward_std)  # TODO(ab): make this a hyperparam
+      # thresh = 0  # TODO(ab): Hack for an experiment
       
       if max(novelty_scores) > thresh:
-        most_novel_goal_hash: Tuple = new_goal_hashes[np.argmax(novelty_scores)]
-        most_novel_state: OARG = visited_states[most_novel_goal_hash]
-        print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
 
-        discovered_goal = {most_novel_goal_hash: most_novel_state}
+        discovered_goals = extract(
+          visited_states,
+          new_goal_hashes,
+          novelty_scores,
+          method='all'
+        )
+        
         start_state_hash = tuple(self._start_ts.observation.goals)
 
         if start_state_hash not in goal_space:
           print(f'Adding start state {start_state_hash} to goal space.')
           return {
-            **discovered_goal,
+            **discovered_goals,
             start_state_hash: self._start_ts.observation
           }
 
-        return discovered_goal
+        return discovered_goals
 
     return {}
 
@@ -745,9 +779,13 @@ class EnvironmentLoop(core.Worker):
   def stream_achieved_goals_to_gsm(
     self,
     trajectory: List[GoalBasedTransition],
-    attempted_edges: List[Tuple[OARG, OARG]]
+    attempted_edges: List[Tuple[OARG, OARG]],
+    expansion_node_new_node_pairs: List[Tuple[Tuple, Tuple]]
   ):
     """Send the goals achieved during the episode to the GSM."""
+    def goals2key(goals: Tuple) -> Tuple:
+      return tuple([int(g) for g in goals])
+    
     def obs2key(obs: OARG) -> Tuple:
       return tuple([int(g) for g in obs.goals])
   
@@ -786,9 +824,22 @@ class EnvironmentLoop(core.Worker):
     edge2count = attempted2counts()
     hash2discount = extract_discounts()
 
+    # Filter out pairs in which both nodes are the same.
+    expansion_node_new_node_pairs = [
+      (goals2key(expansion_node), goals2key(new_node))
+      for expansion_node, new_node in expansion_node_new_node_pairs
+      if expansion_node != new_node
+    ]
+
+    print(f'[EnvironmentLoop] expansion_node_new_node_pairs: {expansion_node_new_node_pairs}')
+
     # futures allows us to update() asynchronously
-    self._goal_space_manager.futures.update(
-      hash2obs, hash2count, edge2count, hash2discount
+    self._goal_space_manager.update(
+      hash2obs,
+      hash2count,
+      edge2count,
+      hash2discount,
+      expansion_node_new_node_pairs
     )
   
   def replay_trajectory_with_new_goal(
