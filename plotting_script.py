@@ -1,7 +1,12 @@
+import os
 import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+
+# old log dir: /home/akhil/acme/
+LOG_DIR = os.path.expanduser('~/git-repos/acme/examples/baselines/rl_discrete/local_testing')
 
 
 experiment_names = [
@@ -14,8 +19,10 @@ experiment_names = [
   # 'doorkey16x16_expanded_info2_gsm_varsrc1',
   # 'doorkey16x16_expanded_info2_futures1',
   # 'doorkey16x16_baseline',
-  'four_rooms_gcnetwork_512_512_always_learn_about_task_noveltyHER_amdp_on_gsm',
-  'four_rooms_gcnetwork_512_512_always_learn_about_task_noveltyHER_expanded_minigrid2'
+  # 'four_rooms_gcnetwork_512_512_always_learn_about_task_noveltyHER_amdp_on_gsm',
+  # 'four_rooms_gcnetwork_512_512_always_learn_about_task_noveltyHER_expanded_minigrid2',\
+  'sparse_node_sparse_edges_dev_doorkey_nsigmas0_add_all_nodes_in_novel_trajectory1',
+  'sparse_edges_dev_doorkey1'
 ]
 
 exp2label = {
@@ -27,7 +34,9 @@ exp2label = {
   'doorkey16x16_baseline': 'DoorKey Baseline',
   'doorkey16x16_gsm_var_src_unexpanded_info': 'DoorKey GSM VariableSrc',
   'four_rooms_gcnetwork_512_512_always_learn_about_task_noveltyHER_amdp_on_gsm': 'AMDP on GSM',
-  'four_rooms_gcnetwork_512_512_always_learn_about_task_noveltyHER_expanded_minigrid2': 'AMDP on Actors'
+  'four_rooms_gcnetwork_512_512_always_learn_about_task_noveltyHER_expanded_minigrid2': 'AMDP on Actors',
+  'sparse_node_sparse_edges_dev_doorkey_nsigmas0_add_all_nodes_in_novel_trajectory1': 'Sparse Traj, Sparse Edge',
+  'sparse_edges_dev_doorkey1': 'Sparse Edge'
 }
 
 
@@ -44,7 +53,7 @@ def moving_average(a, n=25):
 
 def plot_evaluation_return():
   for experiment_name in experiment_names:
-    filename = f'/home/akhil/acme/{experiment_name}/logs/evaluator/logs.csv'
+    filename = f'{LOG_DIR}/{experiment_name}/logs/evaluator/logs.csv'
     df = pd.read_csv(filename)
     # plt.plot(df['evaluator_steps'], df['episode_return'], label=exp2label[experiment_name])
     plt.plot(moving_average(df['episode_return'].to_numpy(), n=100), label=exp2label[experiment_name])
