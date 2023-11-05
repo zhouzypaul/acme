@@ -32,11 +32,13 @@ from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.r2d2.subgoal_sampler import SubgoalSampler
 from acme.utils.utils import GoalBasedTransition
 from acme.utils.utils import termination, truncation, continuation
-from acme.utils.utils import scores2probabilities
+from acme.utils.utils import scores2probabilities, remove_duplicates_keep_last
 from acme import specs as env_specs
 from acme.utils.paths import get_save_directory
 from acme.agents.jax.cfn.cfn import CFN
 from acme.agents.jax.cfn.networks import compute_cfn_reward, CFNNetworks
+from acme import dsc
+from acme.agents.jax.r2d2.networks import R2D2Networks
 
 import dm_env
 from dm_env import specs
@@ -91,7 +93,8 @@ class EnvironmentLoop(core.Worker):
       use_random_policy_for_exploration: bool = True,
       pure_exploration_probability: float = 1.,
       cfn: Optional[CFN] = None,
-      exploration_networks: Optional[CFNNetworks] = None
+      exploration_networks: Optional[CFNNetworks] = None,
+      exploitation_networks: Optional[R2D2Networks] = None
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -111,6 +114,7 @@ class EnvironmentLoop(core.Worker):
     self._pure_exploration_probability = pure_exploration_probability
     self._cfn = cfn
     self._exploration_networks = exploration_networks
+    self._exploitation_networks = exploitation_networks
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -388,7 +392,39 @@ class EnvironmentLoop(core.Worker):
       )
       t1 = time.time()
 
-      expansion_node_new_node_pairs = [(expansion_node, new_node) for new_node in new_hash2goals]
+      # TODO(ab): Connect them all together (n^2).
+      # expansion_node_new_node_pairs = [(expansion_node, new_node) for new_node in new_hash2goals]
+      expansion_node_new_node_pairs = []
+
+      if new_hash2goals:
+
+        # Convert exploration trajectory to a list of new nodes. E.g, [n1, n2, n1, n1]
+        new_node_trajectory = self.convert_trajectory_to_node_trajectory(
+          episode_logs[explore_traj_key],
+          new_hash2goals,
+          maintain_index_distances=False
+        )
+
+        assert None not in new_node_trajectory, new_node_trajectory
+
+        deduplicated_new_node_trajectory = remove_duplicates_keep_last(new_node_trajectory)
+
+        for i in range(len(deduplicated_new_node_trajectory) - 1):
+          expansion_node_new_node_pairs.append((
+            deduplicated_new_node_trajectory[i],
+            deduplicated_new_node_trajectory[i + 1]
+          ))
+
+        # Connect a node from the existing graph to the first new node.
+        # TODO(ab): there might be a better node inside the graph than 
+        if deduplicated_new_node_trajectory and \
+          expansion_node != deduplicated_new_node_trajectory[0]:
+          expansion_node_new_node_pairs.append((
+            expansion_node,
+            deduplicated_new_node_trajectory[0]
+          ))
+
+        print(f'Edges to be added to the GSM: {expansion_node_new_node_pairs}')
       
       self.stream_achieved_goals_to_gsm(
         filtered_trajectory,
@@ -495,6 +531,36 @@ class EnvironmentLoop(core.Worker):
     assert needs_reset, 'Currently, we run the exploration policy till episode end.'
     
     return timestep, needs_reset, episode_logs
+
+  def convert_trajectory_to_node_trajectory(
+      self,
+      trajectory: List[GoalBasedTransition],
+      source_dict: Dict,
+      maintain_index_distances: bool = False
+  ) -> List[Tuple]:
+    """Convert a list of transitions to a list of nodes that are in the source_dict."""
+    def goals2key(goals: Tuple) -> Tuple:
+      return tuple([int(g) for g in goals])
+
+    def add(node_trajectory: List[Tuple], key: Tuple):
+      item = key if key in source_dict else None
+      if item is not None or maintain_index_distances:
+        node_trajectory.append(item)
+      return node_trajectory
+    
+    hash_trajectory: List[Tuple] = []
+    
+    hash_trajectory = add(
+      hash_trajectory,
+      goals2key(trajectory[0].ts.observation.goals)
+    )
+    
+    for transition in trajectory:
+      visited: OARG = transition.next_ts.observation
+      visited_hash: Tuple = goals2key(visited.goals)
+      hash_trajectory = add(hash_trajectory, visited_hash)
+
+    return hash_trajectory
   
   def extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
     
@@ -502,7 +568,7 @@ class EnvironmentLoop(core.Worker):
         visited_states: Dict,
         unseen_goal_hashes: List[Tuple],
         novelties: List[float],
-        method: str = 'max_novelty'
+        method: str = 'novelty_sampling'
     ) -> Dict:
       """Extract new goals from the interesting trajectory."""
       if method == 'all':
@@ -513,6 +579,42 @@ class EnvironmentLoop(core.Worker):
         print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
 
         return {most_novel_goal_hash: most_novel_state}
+      if method == 'novelty_sampling':
+
+        subgoals = {}
+        most_novel_goal_hash: Tuple = unseen_goal_hashes[np.argmax(novelties)]
+        most_novel_state: OARG = visited_states[most_novel_goal_hash]
+        print(f'Most novel goal {most_novel_goal_hash} to be added to goal space.')
+
+        # Extract traj segment between expansion node and most novel goal (excluding on both ends)
+        most_novel_goal_idx = unseen_goal_hashes.index(most_novel_goal_hash)
+        traj_segment = unseen_goal_hashes[:most_novel_goal_idx]
+
+        if traj_segment:
+          print(f'Saw {len(unseen_goal_hashes)} unseen goals, {len(traj_segment)} before the most novel one.')
+          print(f'Traj segment: {traj_segment}')
+
+          subgoals = dsc.sample_random_subgoals(
+            traj_segment,
+            visited_states,
+            hash2int,
+            num_subgoals=3,
+            method='weighted'
+          )
+
+          print(f'Extracted {len(subgoals)} subgoals: {subgoals.keys()}')
+
+        return {most_novel_goal_hash: most_novel_state, **subgoals}
+
+      if method == 'dsc':
+        value_table = dsc.construct_value_table(
+          self._exploitation_networks,
+          self._actor._params,
+          self._actor._random_key,
+          visited_states,
+          lambda obs, goal: self.augment_obs_with_goal(obs, goal, 'concat')[0]
+        )
+
       raise NotImplementedError(method)
 
     goal_space = self.goal_dict
@@ -532,6 +634,8 @@ class EnvironmentLoop(core.Worker):
     visited_hashes: List[Tuple] = list(visited_states.keys())
     new_goal_hashes: List[Tuple] = [g for g in visited_hashes if g not in goal_space]
 
+    print(f'Extracting new goals from {len(new_goal_hashes)} unseen goal hashes.')
+
     if new_goal_hashes:
       # novelty_scores: List[float] = [self._get_intrinsic_reward(visited_states[g]) \
       #                                for g in new_goal_hashes]
@@ -539,7 +643,7 @@ class EnvironmentLoop(core.Worker):
 
       reward_mean = self._exploration_actor._rnd_state.reward_mean
       reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
-      thresh = reward_mean #  + (2 * reward_std)  # TODO(ab): make this a hyperparam
+      thresh = reward_mean + (0 * reward_std)  # TODO(ab): make this a hyperparam
       # thresh = 0  # TODO(ab): Hack for an experiment
       
       if max(novelty_scores) > thresh:
@@ -548,7 +652,7 @@ class EnvironmentLoop(core.Worker):
           visited_states,
           new_goal_hashes,
           novelty_scores,
-          method='all'
+          method='novelty_sampling'
         )
         
         start_state_hash = tuple(self._start_ts.observation.goals)

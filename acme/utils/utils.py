@@ -63,6 +63,22 @@ def scores2probabilities(scores: np.ndarray) -> np.ndarray:
   return probabilities
 
 
+def remove_duplicates_keep_last(lst):
+  seen = set()
+  # Start with an empty list where we'll store our elements
+  # in reverse order (i.e., last occurrence first).
+  last_occurrences = []
+  # Iterate over the list in reverse order.
+  for element in reversed(lst):
+    # If the element hasn't been seen yet, add it to our
+    # last_occurrences list and mark it as seen.
+    if element not in seen:
+      last_occurrences.append(element)
+      seen.add(element)
+  # Reverse to get the correct order back and return.
+  return last_occurrences[::-1]
+
+
 def create_log_dir(experiment_name):
   path = os.path.join(os.getcwd(), experiment_name)
   try:

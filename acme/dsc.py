@@ -2,8 +2,86 @@
 
 import collections
 import numpy as np
+import jax.numpy as jnp
 
 from typing import Tuple, Dict, List
+from acme.wrappers.oar_goal import OARG
+from acme.utils import utils
+
+
+def construct_value_table(
+    networks,
+    params,
+    rng_key,
+    hash2oarg,
+    obs_augment_fn,
+  ) -> Dict:
+  src_dest_pairs = []
+  augmented_observations = []
+  actions = []
+  rewards = []
+  goals = []
+
+  for src in hash2oarg:
+    for dest in hash2oarg:
+      if src != dest:
+        obs = hash2oarg[src]
+        goal = hash2oarg[dest]
+        oarg: OARG = obs_augment_fn(obs, goal)
+        augmented_observations.append(oarg.observation)
+        actions.append(oarg.action)
+        rewards.append(oarg.reward)
+        goals.append(oarg.goals)
+        src_dest_pairs.append((src, dest))
+    
+  if augmented_observations:
+    augmented_observations = jnp.asarray(
+      augmented_observations)[jnp.newaxis, ...]
+    augmented_observations = jnp.asarray(augmented_observations)
+    actions = jnp.asarray(actions)[jnp.newaxis, ...]
+    rewards = jnp.asarray(rewards)[jnp.newaxis, ...]
+    goals = jnp.asarray(goals)[jnp.newaxis, ...]
+
+  batch_oarg = OARG(augmented_observations, actions, rewards, goals)
+  lstm_state = networks.init_recurrent_state(
+    rng_key,
+    batch_oarg.observation.shape[1]
+  )
+
+  return _construct_value_table(
+    networks,
+    params,
+    rng_key,
+    src_dest_pairs,
+    batch_oarg,
+    lstm_state
+  )
+
+def _construct_value_table(
+    networks,
+    params,
+    rng_key,
+    src_dest_pairs,
+    batch_oarg,
+    lstm_state
+  ):
+  value_table = {}
+
+  values, _ = networks.unroll(
+    params,
+    rng_key,
+    batch_oarg,
+    lstm_state)
+  values = values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
+  
+  assert len(values) == len(src_dest_pairs)
+  
+  for (src, dest), value in zip(src_dest_pairs, values):
+    if src not in value_table:
+      value_table[src] = {}
+    value_table[src][dest] = value.item()
+
+  return value_table
 
 
 def compute_trajectory_probability(
@@ -85,4 +163,37 @@ def recursive_skill_chaining(
 
   return list(subgoals)
 
+
+def sample_random_subgoals(
+    trajectory: List[Tuple],
+    hash2oarg: Dict,
+    hash2intrinsic: Dict,
+    num_subgoals: int,
+    method: str = 'weighted'
+) -> Dict:
+  """Given segment of trajectory between expansion node 
+  and the most novel goal (only containing novel goals),
+  sample subgoals in between.
+  """
+  assert method in ('weighted', 'uniform'), method
+
+  num_subgoals = min(num_subgoals, len(trajectory))
+
+  # Compute novelty scores
+  scores = np.zeros(len(trajectory))
   
+  for i, node in enumerate(trajectory):
+    scores[i] = hash2intrinsic[node]
+
+  probs = utils.scores2probabilities(scores) if method == 'weighted' else None
+
+  selected_idx = np.random.choice(
+    range(len(trajectory)),
+    p=probs,
+    size=num_subgoals,
+    replace=False
+  )
+
+  subgoals = [trajectory[i] for i in selected_idx]
+
+  return {k: hash2oarg[k] for k in subgoals}

@@ -42,11 +42,13 @@ class GoalSpaceManager(Saveable):
       exploration_variable_client: variable_utils.VariableClient,
       tensor_increments: int = 1000,
       exploration_algorithm_is_cfn: bool = True,
-      prob_augmenting_bonus_constant : float = 0.
+      prob_augmenting_bonus_constant : float = 0.1,
+      connect_nodes_one_step_away: bool = False
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
     self._prob_augmenting_bonus_constant = prob_augmenting_bonus_constant
+    self._connect_nodes_one_step_away = connect_nodes_one_step_away
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -309,8 +311,9 @@ class GoalSpaceManager(Saveable):
         self._edges.add((expansion_node, new_node_hash))
 
         # Connect the new node to all the nodes that the expansion node is connected to.
-        for connected_node in self._get_one_step_connected_nodes(expansion_node):
-          self._edges.add((connected_node, new_node_hash))
+        if self._connect_nodes_one_step_away:
+          for connected_node in self._get_one_step_connected_nodes(expansion_node):
+            self._edges.add((connected_node, new_node_hash))
 
       print(f'[GSM] Number of edges: {len(self._edges)}')
 
@@ -347,9 +350,9 @@ class GoalSpaceManager(Saveable):
         
         prob = np.clip(value, 0., 1.)
         if (src, dest) in self._edges or prob > 0.5:
-          print(f'[GSM] Updating transition matrix from {src} to {dest} with prob {prob}')
+          # print(f'[GSM] Updating transition matrix from {src} to {dest} with prob {prob}')
           bonus = 1 / np.sqrt(self._on_policy_counts[src][dest] + 1)
-          print(f'[GSM] Bonus = {bonus} c = {self._prob_augmenting_bonus_constant}')
+          # print(f'[GSM] Bonus = {bonus} c = {self._prob_augmenting_bonus_constant}')
           weighted_bonus = self._prob_augmenting_bonus_constant * bonus
 
           # NOTE: We are adding the bonus to the unclipped value.
@@ -684,10 +687,10 @@ class GoalSpaceManager(Saveable):
       if len(src_dest_pairs) > 10:
         # TODO(ab): get from env and pass around
         # start_state_features = (1, 5, 0, 0)  
-        start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
+        # start_state_features = (8, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)  # FourRooms
         # start_state_features = (2, 10, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0)  # DoorKey
         # start_state_features = (3, 1, 0, 1, 2, 0, 0, 0, 0, 0, 0)  # S3R1
-        # start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0, 0)  # S5R3
+        start_state_features = (7, 7, 0, 1, 1, 1, 1, 2, 1, 0, 0, 0)  # S5R3
         if start_state_features in self._hash2idx:
           row_idx = self._hash2idx[start_state_features]
           pprint.pprint(self._transition_matrix[row_idx, :len(self._hash2idx)])
