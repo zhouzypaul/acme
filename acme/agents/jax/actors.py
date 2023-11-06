@@ -112,12 +112,16 @@ class GenericIntrinsicActor(GenericActor):
     intrinsic_reward_scale: float,
     extrinsic_reward_scale: float,
     condition_actor_on_intrinsic_reward: bool,
+    use_stale_rewards: bool,
     *args,
     **kwargs
   ):
     self._intrinsic_reward_scale = intrinsic_reward_scale
     self._extrinsic_reward_scale = extrinsic_reward_scale
     self._condition_actor_on_intrinsic_reward = condition_actor_on_intrinsic_reward
+    self._use_stale_rewards = use_stale_rewards
+    if not use_stale_rewards:
+      assert not condition_actor_on_intrinsic_reward, "Cant use fresh and conditioning."
     super().__init__(*args, **kwargs)
   
   @property
@@ -140,7 +144,9 @@ class GenericIntrinsicActor(GenericActor):
   
   def observe(self, action: network_lib.Action, next_timestep: dm_env.TimeStep,
               extras: Optional[dict] = None):
-    if self._adder:
+    
+    # TODO(ab/sl): if we implement fresh_rewards with conditioning, we need to update this.
+    if self._adder and self._use_stale_rewards:
       combined_reward = (self._extrinsic_reward_scale * next_timestep.reward) \
           + (self._intrinsic_reward_scale * self._state.prev_intrinsic_reward)
       next_timestep = next_timestep._replace(reward=combined_reward)
@@ -152,6 +158,7 @@ class GenericIntrinsicActor(GenericActor):
         next_oar = next_oar._replace(reward=next_timestep.reward)
         next_timestep = next_timestep._replace(observation=next_oar)
 
+    if self._adder:
       self._adder.add(
           action, next_timestep,
           extras=self._get_extras(self._state) if extras is None else extras)
@@ -160,7 +167,7 @@ class GenericIntrinsicActor(GenericActor):
 class CFNIntrinsicActor(GenericIntrinsicActor):
   def __init__(
       self,
-      cfn_variable_client: variable_utils.VariableClient,
+      cfn_variable_client: Optional[variable_utils.VariableClient],
       cfn_adder: adders.Adder,
       *args,
       **kwargs,

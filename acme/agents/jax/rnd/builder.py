@@ -145,6 +145,7 @@ class RNDBuilder(Generic[rnd_networks.DirectRLNetworks, Policy],
         variable_client=variable_client,
         adder=adder,
         condition_actor_on_intrinsic_reward=self._config.condition_actor_on_intrinsic_reward,
+        use_stale_rewards=self._config.use_stale_rewards,
       )
     return self._rl_agent.make_actor(random_key, policy, environment_spec,
                                      variable_source, adder)

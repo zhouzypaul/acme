@@ -150,8 +150,9 @@ def build_experiment_config():
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
 
-  if FLAGS.use_cfn and not FLAGS.use_stale_rewards:
-    raise Exception("Fresh CFN not supported at this time. Please try again later.")
+  if not FLAGS.use_stale_rewards:
+    reason = 'because intrinsic learner does not have access to o_{t-1}'
+    assert not FLAGS.condition_actor_on_intrinsic_reward, f"NotImplementedError({reason})"
 
   # Create an environment factory.
   def environment_factory(seed: int) -> dm_env.Environment:

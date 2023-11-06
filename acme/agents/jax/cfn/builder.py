@@ -87,6 +87,13 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
 
     optimizer = optax.adam(learning_rate=self._config.predictor_learning_rate)
 
+    # TODO(ab/sl): should this be the target_update_period?
+    cfn_var_client = variable_utils.VariableClient(
+      cfn,
+      key='cfn_variables',
+      update_period=1  #  self._rl_agent._config.target_update_period
+    ) if (not self._config.use_stale_rewards) else None
+
     return cfn_learning.CFNLearner(
         direct_rl_learner_factory=direct_rl_learner_factory,
         iterator=dataset,
@@ -102,7 +109,10 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
         use_stale_rewards=self._config.use_stale_rewards,
         cfn=cfn,
         value_plotting_freq=self._config.value_plotting_freq,
-        tx_pair=self._rl_agent._config.tx_pair,)
+        tx_pair=self._rl_agent._config.tx_pair,
+        cfn_variable_client=cfn_var_client,  
+        cfn_var_to_std_eps=self._config.cfn_var_to_std_epsilon,
+    )
 
   def make_replay_tables(
       self,
@@ -133,35 +143,36 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
       cfn_variable_source: Optional[core.VariableSource] = None,
       cfn_adder: Optional[adders.Adder] = None
   ) -> core.Actor:
-    if self._config.use_stale_rewards:
-      q_learner_variable_client = variable_utils.VariableClient(
+    q_learner_variable_client = variable_utils.VariableClient(
         variable_source,
         key=['actor_variables'],
-        update_period=self._rl_agent._config.variable_update_period
-      )
+        update_period=self._rl_agent._config.variable_update_period)
+    
+    cfn_variable_client = None
+
+    if self._config.use_stale_rewards:
+      assert cfn_variable_source is not None, 'need cfn params to compute intrinsic reward'
       cfn_variable_client = variable_utils.VariableClient(
         cfn_variable_source,
         key=[""],
         update_period=self._config.variable_update_period
-      ) if cfn_variable_source else None
-
-      actor_backend = 'cpu' if force_cpu else self._rl_agent._config.actor_backend
-      print('actor backend', actor_backend)
-
-      return CFNIntrinsicActor(
-        cfn_variable_client=cfn_variable_client,
-        intrinsic_reward_scale=self._config.intrinsic_reward_coefficient,
-        extrinsic_reward_scale=self._config.extrinsic_reward_coefficient,
-        actor=policy,
-        random_key=random_key,
-        variable_client=q_learner_variable_client,
-        adder=adder,
-        cfn_adder=cfn_adder,
-        condition_actor_on_intrinsic_reward=self._config.condition_actor_on_intrinsic_reward,
       )
+      
+    actor_backend = 'cpu' if force_cpu else self._rl_agent._config.actor_backend
+    print('actor backend', actor_backend)
 
-    return self._rl_agent.make_actor(random_key, policy, environment_spec,
-                                     variable_source, adder)
+    return CFNIntrinsicActor(
+      cfn_variable_client=cfn_variable_client,
+      intrinsic_reward_scale=self._config.intrinsic_reward_coefficient,
+      extrinsic_reward_scale=self._config.extrinsic_reward_coefficient,
+      actor=policy,
+      random_key=random_key,
+      variable_client=q_learner_variable_client,
+      adder=adder,
+      cfn_adder=cfn_adder,
+      condition_actor_on_intrinsic_reward=self._config.condition_actor_on_intrinsic_reward,
+      use_stale_rewards=self._config.use_stale_rewards,
+    )
   
   def make_policy(self,
     networks: Networks,
@@ -170,14 +181,13 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
   ) -> R2D2Policy:
     rl_actor_core = self._rl_agent.make_policy(
       networks.direct_rl_networks, environment_spec, evaluation)
-    if self._config.use_stale_rewards:
-      return get_cfn_actor_core(
-        networks, rl_actor_core, self._config.intrinsic_reward_coefficient,
-        self._config.extrinsic_reward_coefficient, self._config.use_reward_normalization,
-        self._config.cfn_output_dimensions,
-        self._config.condition_actor_on_intrinsic_reward,
-        self._config.cfn_var_to_std_epsilon)
-    return rl_actor_core
+    return get_cfn_actor_core(
+      networks, rl_actor_core, self._config.intrinsic_reward_coefficient,
+      self._config.extrinsic_reward_coefficient, self._config.use_reward_normalization,
+      self._config.cfn_output_dimensions,
+      self._config.condition_actor_on_intrinsic_reward,
+      self._config.cfn_var_to_std_epsilon,
+      use_stale_rewards=self._config.use_stale_rewards,)
 
   def make_cfn_object(
       self,

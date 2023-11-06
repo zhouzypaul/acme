@@ -332,6 +332,8 @@ class RNDLearner(acme.Learner):
       prefetch_split_sample = sample
       sample = sample.device
 
+    # TODO(ab/sl): Bug - we are changing r_t but not the reward part of OAR.
+
     # transitions = (
     #   s_t = <o_t, a_{t-1}, r_{t-1}>,
     #   a_t,

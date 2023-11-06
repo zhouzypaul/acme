@@ -5,6 +5,7 @@ import functools
 import time
 from typing import Any, Callable, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
+import jax
 import acme
 from acme import types
 from acme.agents.jax.cfn import networks as cfn_networks
@@ -15,9 +16,11 @@ from acme.utils import loggers
 from acme.utils import reverb_utils
 from acme.jax.utils import PrefetchingSplit
 from acme.utils.paths import get_save_directory
+from acme.jax import variable_utils
 
 from acme.wrappers.observation_action_reward import OAR
 import acme.agents.jax.cfn.plotting as plotting_utils
+from acme.agents.jax.cfn.networks import compute_cfn_reward
 
 import pickle
 import os
@@ -70,19 +73,44 @@ class CFNLearner(acme.Learner):
       cfn=None,
       value_plotting_freq: int = 1000, # Set to -1 to disable
       tx_pair=rlax.SIGNED_HYPERBOLIC_PAIR,
+      cfn_variable_client: Optional[variable_utils.VariableClient] = None,
+      cfn_var_to_std_eps: float = 1e-12,
       ):
+    
+    if use_stale_rewards:
+      assert cfn_variable_client is None, "Don't need to maintain copy of CFN params."
+
+    updated_iterator = iterator
 
     if not use_stale_rewards:
-      raise NotImplementedError("Not Implemented (Error)")
+      updated_iterator = (self._process_sample(sample) for sample in iterator)
 
     self._direct_rl_learner = direct_rl_learner_factory(
-        cfn_network.direct_rl_networks, iterator)
+        cfn_network.direct_rl_networks, updated_iterator)
     
     self._cfn = cfn
     self._rng_key = rng_key
     self._cfn_network = cfn_network
     self._value_plotting_freq = value_plotting_freq
     self._tx_pair = tx_pair
+    self._is_sequence_based = is_sequence_based
+    self._cfn_variable_client = cfn_variable_client
+    self._cfn_var_to_std_eps = cfn_var_to_std_eps
+    self._intrinsic_reward_scale = intrinsic_reward_coefficient
+    self._extrinsic_reward_scale = extrinsic_reward_coefficient
+
+    def batched_intrinsic_reward(transitions, cfn_state):
+      new_func = jax.tree_util.Partial(
+        compute_cfn_reward,
+        predictor_params=cfn_state.params,
+        target_params=cfn_state.target_params,
+        networks=cfn_network,
+        random_prior_mean=cfn_state.random_prior_mean,
+        random_prior_std=jnp.sqrt(cfn_state.random_prior_var + cfn_var_to_std_eps)
+      )
+      return jax.vmap(new_func, in_axes=0)(transitions=transitions)[jnp.newaxis, ...]
+    
+    self._compute_intrinsic_reward = jax.jit(batched_intrinsic_reward)
 
     # import ipdb; ipdb.set_trace()
     base_dir = get_save_directory()
@@ -95,13 +123,72 @@ class CFNLearner(acme.Learner):
 
   def step(self):
     self._direct_rl_learner.step()
+    self.update_cfn_state()
 
     if self._value_plotting_freq > 0 and self._cfn and \
       utils.get_from_first_device(self._direct_rl_learner._state).steps % self._value_plotting_freq == 0:
       self._make_spatial_vf_plot()
 
+  def _process_sample(self, sample: reverb.ReplaySample) -> reverb.ReplaySample:
+    """Uses the replay sample to train and update its reward.
+
+    Args:
+      sample: Replay sample to train on.
+
+    Returns:
+      The sample replay sample with an updated reward.
+    """
+    t0 = time.time(); print('About to start processing sample')
+    # Sample (s, a, r, s') from replay buffer
+    is_prefetch = isinstance(sample, PrefetchingSplit)
+    
+    if is_prefetch:
+      prefetch_split_sample = sample
+      sample = sample.device
+
+    transitions = reverb_utils.replay_sample_to_sars_transition(
+        sample, is_sequence=self._is_sequence_based)
+    extrinsic_reward = transitions.reward
+
+    # Compute the intrinsic reward for s using CFN networks
+    oar = transitions.observation
+
+    # Squeeze the leading device dimension which is always 1
+    assert oar.observation.shape[0] == 1, oar.observation.shape
+    oar = oar._replace(
+      observation=oar.observation.squeeze(axis=0),
+      action=oar.action.squeeze(axis=0),
+      reward=oar.reward.squeeze(axis=0))
+
+    intrinsic_reward = self._compute_intrinsic_reward(oar, self._cfn_state)
+
+    reward_shapes = intrinsic_reward.shape, extrinsic_reward.shape
+    assert intrinsic_reward.shape == extrinsic_reward.shape, reward_shapes
+
+    # Update the reward in the sample and return
+    combined_reward = (self._extrinsic_reward_scale * extrinsic_reward) \
+        + (self._intrinsic_reward_scale * intrinsic_reward)
+    
+    updated_sample = sample._replace(
+      data=sample.data._replace(reward=combined_reward))
+    
+    if is_prefetch:
+      updated_sample = PrefetchingSplit(
+        device=updated_sample, host=prefetch_split_sample.host)
+    print(f'CFN learner took {time.time() - t0} seconds to process sample.')
+    return updated_sample
+
   def get_variables(self, names: List[str]) -> List[Any]:
     return self._direct_rl_learner.get_variables(names)
+  
+  @property
+  def _cfn_state(self) -> CFNTrainingState:
+    params = self._cfn_variable_client.params if self._cfn_variable_client else []
+    return params
+  
+  def update_cfn_state(self, wait: bool = False):
+    if self._cfn_variable_client:
+      self._cfn_variable_client.update(wait)
 
   def save(self) -> NamedTuple:
     return self._direct_rl_learner.save()
