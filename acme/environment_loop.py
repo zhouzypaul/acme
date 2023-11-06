@@ -405,6 +405,15 @@ class EnvironmentLoop(core.Worker):
           maintain_index_distances=False
         )
 
+        # Convert exploration trajectory to a list of known nodes
+        old_node_trajectory = self.convert_trajectory_to_node_trajectory(
+          episode_logs[explore_traj_key],
+          self.goal_dict,
+          maintain_index_distances=False
+        )
+
+        source_node = old_node_trajectory[-1] if old_node_trajectory else expansion_node
+
         assert None not in new_node_trajectory, new_node_trajectory
 
         deduplicated_new_node_trajectory = remove_duplicates_keep_last(new_node_trajectory)
@@ -415,12 +424,11 @@ class EnvironmentLoop(core.Worker):
             deduplicated_new_node_trajectory[i + 1]
           ))
 
-        # Connect a node from the existing graph to the first new node.
-        # TODO(ab): there might be a better node inside the graph than 
+        # Connect a node from the existing graph to the first new node. 
         if deduplicated_new_node_trajectory and \
-          expansion_node != deduplicated_new_node_trajectory[0]:
+          source_node != deduplicated_new_node_trajectory[0]:
           expansion_node_new_node_pairs.append((
-            expansion_node,
+            source_node,
             deduplicated_new_node_trajectory[0]
           ))
 
@@ -1209,7 +1217,7 @@ class EnvironmentLoop(core.Worker):
       self,
       num_episodes: Optional[int] = None,
       num_steps: Optional[int] = None,
-      n_warmup_episodes: int = 10
+      n_warmup_episodes: int = 2
   ) -> int:
     """Perform the run loop.
 
