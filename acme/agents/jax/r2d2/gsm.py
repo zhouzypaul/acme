@@ -588,14 +588,51 @@ class GoalSpaceManager(Saveable):
 
   def _plot_skill_graph(self, episode):
     """Spatially plot the nodes and edges of the skill-graph."""
+
+    def split_edges(edges, hash_bit):
+      """Split edges based on whether the hash bit is on/off for src and dest."""
+      no_no = []
+      no_yes = []
+      yes_no = []
+      yes_yes = []
+      for edge in edges:
+        src_hash = edge[0]
+        dest_hash = edge[1]
+        if src_hash[hash_bit] == 0 and dest_hash[hash_bit] == 0:
+          no_no.append(edge)
+        elif src_hash[hash_bit] == 0 and dest_hash[hash_bit] == 1:
+          no_yes.append(edge)
+        elif src_hash[hash_bit] == 1 and dest_hash[hash_bit] == 0:
+          yes_no.append(edge)
+        elif src_hash[hash_bit] == 1 and dest_hash[hash_bit] == 1:
+          yes_yes.append(edge)
+      return no_no, no_yes, yes_no, yes_yes
+
+    def plot_edges(e):
+      for edge in e:
+        x1 = edge[0][0]
+        y1 = edge[0][1]
+        x2 = edge[1][0]
+        y2 = edge[1][1]
+        plt.scatter([x1, x2], [y1, y2], color='black')
+        plt.plot([x1, x2], [y1, y2], color='black', alpha=0.3)
+    
     edges = list(self._edges)
-    for edge in edges:
-      x1 = edge[0][0]
-      y1 = edge[0][1]
-      x2 = edge[1][0]
-      y2 = edge[1][1]
-      plt.scatter([x1, x2], [y1, y2], color='black')
-      plt.plot([x1, x2], [y1, y2], color='black', alpha=0.3)
+    no_no, no_yes, yes_no, yes_yes = split_edges(edges, hash_bit=2)
+    plt.figure(figsize=(14, 14))
+    plt.subplot(2, 2, 1)
+    plot_edges(no_no)
+    plt.title('No Key -> No Key')
+    plt.subplot(2, 2, 2)
+    plot_edges(no_yes)
+    plt.title('No Key -> Yes Key')
+    plt.subplot(2, 2, 3)
+    plot_edges(yes_no)
+    plt.title('Yes Key -> No Key')
+    plt.subplot(2, 2, 4)
+    plot_edges(yes_yes)
+    plt.title('Yes Key -> Yes Key')
+    
     plt.savefig(os.path.join(self._skill_graph_plotting_dir, f'skill_graph_{episode}.png'))
     plt.close()
 
@@ -710,14 +747,15 @@ class GoalSpaceManager(Saveable):
     t0 = time.time()
     print('[GSM] Checkpointing..')
     to_return = self.get_variables()
-    assert len(to_return) == 9, len(to_return)
+    to_return = (*to_return, self._edges)
+    assert len(to_return) == 10, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
   def restore(self, state: Tuple[Dict]):
     t0 = time.time()
     print('About to start restoring GSM from checkpoint.')
-    assert len(state) == 9, len(state)
+    assert len(state) == 10, len(state)
     self._hash2obs = state[0]
     self._hash2counts = collections.defaultdict(int, state[1])
     self._hash2bonus = state[2]
@@ -727,6 +765,8 @@ class GoalSpaceManager(Saveable):
     self._hash2idx = state[6]
     self._transition_matrix = self.restore_transition_tensor(state[7])
     self._idx2hash = state[8]
+    self._edges = state[9]
+    assert isinstance(self._edges, set), type(state[9])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
 
