@@ -43,12 +43,14 @@ class GoalSpaceManager(Saveable):
       tensor_increments: int = 1000,
       exploration_algorithm_is_cfn: bool = True,
       prob_augmenting_bonus_constant : float = 0.1,
-      connect_nodes_one_step_away: bool = False
+      connect_nodes_one_step_away: bool = False,
+      off_policy_edge_threshold: float = 0.5
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
     self._prob_augmenting_bonus_constant = prob_augmenting_bonus_constant
     self._connect_nodes_one_step_away = connect_nodes_one_step_away
+    self._off_policy_edge_threshold = off_policy_edge_threshold
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -80,6 +82,8 @@ class GoalSpaceManager(Saveable):
 
     self._edges = set()
     self._edges_set_lock = threading.Lock()
+
+    self._off_policy_edges = set()
     
     self._rng_key = rng_key
     self._variable_client = variable_client
@@ -349,16 +353,25 @@ class GoalSpaceManager(Saveable):
         dest_idx = self._hash2idx[dest]
         
         prob = np.clip(value, 0., 1.)
-        if (src, dest) in self._edges or prob > 0.5:
-          # print(f'[GSM] Updating transition matrix from {src} to {dest} with prob {prob}')
+        
+        if (src, dest) not in self._off_policy_edges and prob > self._off_policy_edge_threshold:
+          print(f'[GSM] Adding off-policy edge {src} -> {dest} (prob={prob:.3f})')
+          self._off_policy_edges.add((src, dest))
+        
+        if (src, dest) in self._off_policy_edges and prob <= self._off_policy_edge_threshold:
+          print(f'[GSM] Removing off-policy edge {src} -> {dest} (prob={prob:.3f})')
+          self._off_policy_edges.remove((src, dest))
+
+        if (src, dest) in self._edges or (src, dest) in self._off_policy_edges:
           bonus = 1 / np.sqrt(self._on_policy_counts[src][dest] + 1)
-          # print(f'[GSM] Bonus = {bonus} c = {self._prob_augmenting_bonus_constant}')
           weighted_bonus = self._prob_augmenting_bonus_constant * bonus
 
           # NOTE: We are adding the bonus to the unclipped value.
           augmented_prob = np.clip(value + weighted_bonus, 0., 1.)
 
           self._transition_matrix[src_idx, dest_idx] = augmented_prob
+        else:
+          self._transition_matrix[src_idx, dest_idx] = 0.
     
     if len(self._hash2idx) >= self._n_actions:
       self._resize_transition_tensor()
@@ -586,7 +599,7 @@ class GoalSpaceManager(Saveable):
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
     plt.close()
 
-  def _plot_skill_graph(self, episode):
+  def _plot_skill_graph(self, episode, include_off_policy_edges=True):
     """Spatially plot the nodes and edges of the skill-graph."""
 
     def split_edges(edges, hash_bit):
@@ -608,30 +621,36 @@ class GoalSpaceManager(Saveable):
           yes_yes.append(edge)
       return no_no, no_yes, yes_no, yes_yes
 
-    def plot_edges(e):
+    def plot_edges(e, color):
       for edge in e:
         x1 = edge[0][0]
         y1 = edge[0][1]
         x2 = edge[1][0]
         y2 = edge[1][1]
-        plt.scatter([x1, x2], [y1, y2], color='black')
-        plt.plot([x1, x2], [y1, y2], color='black', alpha=0.3)
+        plt.scatter([x1, x2], [y1, y2], color=color)
+        plt.plot([x1, x2], [y1, y2], color=color, alpha=0.3)
+
+    def split_then_plot(edges, hash_bit, color):
+      no_no, no_yes, yes_no, yes_yes = split_edges(edges, hash_bit=2)
+      
+      plt.subplot(2, 2, 1)
+      plot_edges(no_no, color=color)
+      plt.title('No Key -> No Key')
+      plt.subplot(2, 2, 2)
+      plot_edges(no_yes, color=color)
+      plt.title('No Key -> Yes Key')
+      plt.subplot(2, 2, 3)
+      plot_edges(yes_no, color=color)
+      plt.title('Yes Key -> No Key')
+      plt.subplot(2, 2, 4)
+      plot_edges(yes_yes, color=color)
+      plt.title('Yes Key -> Yes Key')
     
     edges = list(self._edges)
-    no_no, no_yes, yes_no, yes_yes = split_edges(edges, hash_bit=2)
+    off_policy_edges = list(self._off_policy_edges)
     plt.figure(figsize=(14, 14))
-    plt.subplot(2, 2, 1)
-    plot_edges(no_no)
-    plt.title('No Key -> No Key')
-    plt.subplot(2, 2, 2)
-    plot_edges(no_yes)
-    plt.title('No Key -> Yes Key')
-    plt.subplot(2, 2, 3)
-    plot_edges(yes_no)
-    plt.title('Yes Key -> No Key')
-    plt.subplot(2, 2, 4)
-    plot_edges(yes_yes)
-    plt.title('Yes Key -> Yes Key')
+    split_then_plot(edges, hash_bit=2, color='black')
+    split_then_plot(off_policy_edges, hash_bit=2, color='red')
     
     plt.savefig(os.path.join(self._skill_graph_plotting_dir, f'skill_graph_{episode}.png'))
     plt.close()
@@ -747,15 +766,15 @@ class GoalSpaceManager(Saveable):
     t0 = time.time()
     print('[GSM] Checkpointing..')
     to_return = self.get_variables()
-    to_return = (*to_return, self._edges)
-    assert len(to_return) == 10, len(to_return)
+    to_return = (*to_return, self._edges, self._off_policy_edges)
+    assert len(to_return) == 11, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
   def restore(self, state: Tuple[Dict]):
     t0 = time.time()
     print('About to start restoring GSM from checkpoint.')
-    assert len(state) == 10, len(state)
+    assert len(state) == 11, len(state)
     self._hash2obs = state[0]
     self._hash2counts = collections.defaultdict(int, state[1])
     self._hash2bonus = state[2]
@@ -766,9 +785,12 @@ class GoalSpaceManager(Saveable):
     self._transition_matrix = self.restore_transition_tensor(state[7])
     self._idx2hash = state[8]
     self._edges = state[9]
+    self._off_policy_edges = state[10]
     assert isinstance(self._edges, set), type(state[9])
+    assert isinstance(self._off_policy_edges, set), type(state[10])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
+    import ipdb; ipdb.set_trace()
 
   def restore_transition_tensor(self, transition_matrix):
     k = self._tensor_increments
