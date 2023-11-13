@@ -16,9 +16,12 @@ from acme.wrappers.minigrid_wrapper import MiniGridWrapper
 from minigrid.core.world_object import Lava
 
 
+INCLUDE_KEY_POS = False
+
+
 # NOTE: we are assuming a max number of keys and doors
 N_POS_DIMS = 2  # player (x, y) location
-N_KEY_DIMS = 1  # has_key or not
+N_KEY_DIMS = 1 + (INCLUDE_KEY_POS * 2)  # has_key or not, key_x, key_y
 N_DOOR_DIMS = 7 # number of possible doors in the puzzle
 N_OBJECT_DIMS = 1  # is object being carried or not
 N_LAVA_DIMS = 1  # is the location seek/avoid (lava or not)
@@ -71,6 +74,9 @@ class MinigridInfoWrapper(Wrapper):
     
     if info['has_key']:
       assert carrying.type == 'key', self.env.unwrapped.carrying
+
+    key_pos = determine_key_pos(self.env)
+    info['key_pos'] = (0, 0) if key_pos is None else key_pos
 
     door_states = get_all_door_states(self)
     for i, door_state in enumerate(door_states):
@@ -205,6 +211,15 @@ def determine_goal_pos(env):
       if isinstance(tile, Goal):
           return i, j
       
+def determine_key_pos(env):
+  """Convinence hacky function to determine the key location."""
+  from minigrid.core.world_object import Key
+  for i in range(env.grid.width):
+    for j in range(env.grid.height):
+      tile = env.grid.get(i, j)
+      if isinstance(tile, Key):
+          return i, j
+
 
 def determine_is_door_open(env):
   """Convinence hacky function to determine the goal location."""
@@ -249,10 +264,11 @@ def info2goals(info):
   door_array = [0] * N_DOOR_DIMS
   if door_info:
     door_array[:len(door_info)] = door_info
+  key_array = [info['has_key'], *info['key_pos']] if INCLUDE_KEY_POS else [info['has_key']]
   return np.array([
     info['player_x'],
     info['player_y'],
-    info['has_key'],
+    *key_array,
     *door_array,
     info['is_lava'],
     info['has_ball']
