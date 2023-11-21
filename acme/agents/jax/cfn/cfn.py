@@ -52,7 +52,7 @@ class CFN(acme.Learner):
                counter: Optional[counting.Counter] = None,
                logger: Optional[loggers.Logger] = None,
                bonus_plotting_freq = 500,  # set to -1 to disable plotting.,
-               cfn_var_to_std_epsilon: float = 1e-4,
+               cfn_var_to_std_epsilon: float = 1e-12,
   ):
 
     def loss(
@@ -247,6 +247,7 @@ class CFN(acme.Learner):
     self._bonus_plotting_freq = bonus_plotting_freq
     self._hash_to_first_intrinsic_reward = {}
     self._hash_to_first_intrinsic_reward_lock = threading.Lock()
+    self._average_first_intrinsic_rewards = []
     self._bonus_prediction_errors = []
     self._num_unique_states_visited = []
 
@@ -340,6 +341,11 @@ class CFN(acme.Learner):
       xlabel='Intrinsic Reward',
       ylabel='Count',
     )
+    self._average_first_intrinsic_rewards.append(np.mean(list(self._hash_to_first_intrinsic_reward.values())))
+    plotting_utils.plot_quantity_over_iteration(
+      self._average_first_intrinsic_rewards,
+      save_path=os.path.join(self._first_intrinsic_hist_dir, f'first_intrinsic_reward_average.png',),
+      quantity_name='Average First Intrinsic Reward')
 
     bonus_prediction_error = plotting_utils.compute_bonus_prediction_error(
       true_count_info=self._hash2counts,

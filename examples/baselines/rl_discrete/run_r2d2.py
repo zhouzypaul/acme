@@ -88,7 +88,7 @@ flags.DEFINE_integer('cfn_value_plotting_freq', 1_000, 'How often to make CFN pl
 flags.DEFINE_bool('condition_actor_on_intrinsic_reward', False, 'Whether to condition actor LSTM on intrinsic reward')
 flags.DEFINE_bool('use_identity_tx', False, 'Whether to use undo R2D2s hyperbolic squash.')
 flags.DEFINE_bool('cfn_use_orthogonal_init', False, 'Whether to use orthogonal init for CFN networks')
-flags.DEFINE_float('cfn_var_to_std_epsilon', 1e-4, 'Epsilon to add to variance before taking square root.')
+flags.DEFINE_float('cfn_var_to_std_epsilon', 1e-12, 'Epsilon to add to variance before taking square root.')
 flags.DEFINE_bool('cfn_use_forgetting', False, 'Whether to use forgetting in CFN')
 
 FLAGS = flags.FLAGS

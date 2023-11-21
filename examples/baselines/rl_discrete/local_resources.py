@@ -1,6 +1,7 @@
 from launchpad.nodes.python.local_multi_processing import PythonProcess
 from absl import flags
 import psutil
+import os
 
 FLAGS = flags.FLAGS
 
@@ -34,6 +35,8 @@ def make_process_dict(gpu_str="-1", pin_to=None):
     "TF_FORCE_GPU_ALLOW_GROWTH": "true",
     "ACME_ID": FLAGS.acme_id,
     "ACME_DIR": FLAGS.acme_dir,
+    "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+    "PYTHONUNBUFFERED": "true", # Can be anything besides 0 and it will be unbuffered 
   # "JAX_DISABLE_JIT": "1",
   },
   )
