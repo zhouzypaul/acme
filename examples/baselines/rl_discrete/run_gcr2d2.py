@@ -37,6 +37,8 @@ start_time = datetime.now()
 flags.DEFINE_bool(
     'run_distributed', True, 'Should an agent be executed in a distributed '
     'way. If False, will run single-threaded.')
+flags.DEFINE_string('lp_launch_type', 'local_mp', 'Launch type for Launchpad.')
+flags.DEFINE_string('terminal', 'tmux_session', 'Terminal for Launchpad.')
 flags.DEFINE_string('env_name', 'MiniGrid-Empty-8x8-v0', 'What environment to run.')
 flags.DEFINE_integer('seed', 0, 'Random seed (experiment).')
 flags.DEFINE_integer('num_steps', 50_000_000,
@@ -269,7 +271,7 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
 
 
 def main(_):
-  FLAGS.append_flags_into_file('/tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
+  FLAGS.append_flags_into_file('tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
   config = build_experiment_config()
   exploration_config = build_exploration_policy_experiment_config()
 
@@ -287,7 +289,7 @@ def main(_):
     lp.launch(program, 
               xm_resources=lp_utils.make_xm_docker_resources(program),
               local_resources=_get_local_resources(FLAGS.lp_launch_type),
-              terminal='tmux_session')
+              terminal=FLAGS.terminal)
   else:
     experiments.run_experiment(experiment=config)
   

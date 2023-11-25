@@ -156,3 +156,5 @@ examples/baselines/rl_discrete/testing_results
 *.csv
 *.json
 .onager
+*.err
+*.out

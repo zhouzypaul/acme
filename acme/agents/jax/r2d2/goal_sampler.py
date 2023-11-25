@@ -175,7 +175,7 @@ class GoalSampler:
         probs[np.argmax(scores)] = 1.
       else:
         raise NotImplementedError(sampling_type)
-      print(f'[GoalSampler] Reachable prob pairs: {list(zip(reachable_goals, probs))}')
+      
       return reachable_goals, probs
     
     if default_behavior == 'exploration':

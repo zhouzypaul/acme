@@ -616,7 +616,7 @@ def make_distributed_experiment(
       variable_sources[0],
       cfn if exploration_experiment.is_cfn else exploration_learner,
       # TODO(ab): How to set the number of threads for the GSM?
-      courier_kwargs={'thread_pool_size': 42}
+      courier_kwargs={'thread_pool_size': 64}
       )
     gsm = gsm_node.create_handle()
     program.add_node(gsm_node, label='gsm')
