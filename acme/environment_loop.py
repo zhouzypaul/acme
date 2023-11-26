@@ -123,6 +123,8 @@ class EnvironmentLoop(core.Worker):
     self._goal_achievement_rates = collections.defaultdict(float)
     self._goal_pursual_counts = collections.defaultdict(int)
     self._node2successes = collections.defaultdict(list)
+    
+    self._planner_failure_history = []
 
     self._env_spec = env_specs.make_environment_spec(self._environment)
 
@@ -133,9 +135,11 @@ class EnvironmentLoop(core.Worker):
     base_dir = get_save_directory()
     self._exploration_traj_dir = os.path.join(base_dir, 'plots', 'exploration_trajectories')
     self._target_node_plot_dir = os.path.join(base_dir, 'plots', 'target_node_plots')
+    self._n_planner_failures_dir = os.path.join(base_dir, 'plots', 'n_planner_failures')
     
     os.makedirs(self._exploration_traj_dir, exist_ok=True)
     os.makedirs(self._target_node_plot_dir, exist_ok=True)
+    os.makedirs(self._n_planner_failures_dir, exist_ok=True)
     
     print(f'Going to save exploration trajectories to {self._exploration_traj_dir}')
     print(f'Going to save target node plots to {self._target_node_plot_dir}')
@@ -303,6 +307,10 @@ class EnvironmentLoop(core.Worker):
 
       subgoal_seq = subgoal_sampler.get_subgoal_sequence(current_node, expansion_node)
       print(f'[EnvironmentLoop] Subgoal seq to {expansion_node}: {subgoal_seq}')
+
+      # Planner failure: is the subgoal_seq all start-states?
+      planner_failure = subgoal_seq and all([s == current_node for s in subgoal_seq])
+      self._planner_failure_history.append(planner_failure)
 
       t0 = time.time()
       timestep, needs_reset, attempted_edges, episode_logs = self.in_graph_rollout(
@@ -1132,6 +1140,15 @@ class EnvironmentLoop(core.Worker):
                              f'exploration_traj_episode_{episode}.png'))
     plt.close()
 
+  def visualize_n_planner_failures(self, episode):
+    """Visualize the number of times the n-planner failed to find a plan."""
+    # Use a circle-dash marker
+    plt.plot(np.cumsum(self._planner_failure_history), marker='o', linestyle='-')
+    plt.xlabel('Episode')
+    plt.title(f'N-Planner Failures @ Episode {episode}')
+    plt.savefig(os.path.join(self._n_planner_failures_dir,
+                             f'n_planner_failures.png'))
+    plt.close()
 
   # TODO(ab): fix this function and move to the GSM.
   def visualize_goal_space(
@@ -1264,6 +1281,7 @@ class EnvironmentLoop(core.Worker):
 
         if self._actor_id == 1 and episode_count % 10 == 0:
           self.visualize_goal_space(self._start_ts, self._node2successes, episode_count)
+          self.visualize_n_planner_failures(episode_count)
 
     return step_count
 
