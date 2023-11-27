@@ -477,7 +477,8 @@ def make_distributed_experiment(
     gsm = GoalSpaceManager(env, rng_num, networks,
                            variable_client,
                            exploration_networks,
-                           exploration_var_client)
+                           exploration_var_client,
+                           rmax_factor=experiment.builder._config.amdp_rmax_factor)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(

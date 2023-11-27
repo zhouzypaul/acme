@@ -61,6 +61,9 @@ flags.DEFINE_integer('cfn_spi', 0, 'Samples per insert for CFN optimization')
 flags.DEFINE_integer('cfn_policy_spi', 8, 'Samples per insert for the exploration policy')
 flags.DEFINE_integer('cfn_max_replay_size', 2_000_000, 'Max replay size for CFN optimization')
 
+# GSM flags.
+flags.DEFINE_float('amdp_rmax_factor', 2., 'Rmax factor for AMDP')
+
 
 FLAGS = flags.FLAGS
 
@@ -97,7 +100,8 @@ def build_experiment_config():
       target_update_period=1200,
       variable_update_period=100,
       # The default hyperbolic transform makes the vf preds small (~0.4 max)
-      tx_pair=rlax.IDENTITY_PAIR
+      tx_pair=rlax.IDENTITY_PAIR,
+      amdp_rmax_factor=FLAGS.amdp_rmax_factor,
   )
   return experiments.ExperimentConfig(
       builder=r2d2.R2D2Builder(config),

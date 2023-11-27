@@ -11,6 +11,7 @@ class AMDP:
     discount_dict,
     count_dict, 
     target_node,
+    rmax_factor: float = 2.,
     gamma: float = 0.99,
     max_vi_iterations: int = 10,
     vi_tol: float = 1e-3,
@@ -24,6 +25,7 @@ class AMDP:
     self._target_node =  target_node
     self._gamma =  gamma
     self._verbose = verbose
+    self._rmax_factor = rmax_factor
 
     # TODO(ab): pass this from GoalSampler rather than recomputing it.
     self._idx2hash = {v: k for k, v in hash2idx.items()}
@@ -33,7 +35,7 @@ class AMDP:
 
     self._reward_vector, self._discount_vector = self._abstract_reward_function(target_node)
     self._vf, self._policy = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
-    print(f'[AMDP] Created and Solved AMDP with {self._policy.shape} abstract states.')
+    print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states.')
 
   def get_policy(self) -> Dict:
     """Serialize the policy vector into a dictionary with goal_hash -> goal_hash."""
@@ -47,7 +49,7 @@ class AMDP:
     for node, idx in self._hash2idx.items():
       is_goal_node = node == target_node
       extrinsic_reward = self._reward_dict.get(node, 0.)
-      intrinsic_reward = 2 * int(is_goal_node)
+      intrinsic_reward = self._rmax_factor * int(is_goal_node)
       reward_vector[idx] = extrinsic_reward + intrinsic_reward
 
       extrinsic_discount = self._discount_dict.get(node, 1.)

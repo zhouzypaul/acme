@@ -44,13 +44,15 @@ class GoalSpaceManager(Saveable):
       exploration_algorithm_is_cfn: bool = True,
       prob_augmenting_bonus_constant : float = 0.1,
       connect_nodes_one_step_away: bool = False,
-      off_policy_edge_threshold: float = 0.5
+      off_policy_edge_threshold: float = 0.5,
+      rmax_factor: float = 2.,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
     self._prob_augmenting_bonus_constant = prob_augmenting_bonus_constant
     self._connect_nodes_one_step_away = connect_nodes_one_step_away
     self._off_policy_edge_threshold = off_policy_edge_threshold
+    self._rmax_factor = rmax_factor
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -124,7 +126,8 @@ class GoalSpaceManager(Saveable):
       task_goal_probability=0.1,
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
-      exploration_goal_probability=0.
+      exploration_goal_probability=0.,
+      rmax_factor=self._rmax_factor
     )
     expansion_node = goal_sampler.begin_episode(current_node)
 
@@ -138,7 +141,8 @@ class GoalSpaceManager(Saveable):
       task_goal_probability=0.1,
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
-      exploration_goal_probability=0.
+      exploration_goal_probability=0.,
+      rmax_factor=self._rmax_factor
     ).get_descendants(current_node)
 
   def get_variables(self, names=()):

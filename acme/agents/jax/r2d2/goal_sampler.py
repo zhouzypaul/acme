@@ -32,7 +32,8 @@ class GoalSampler:
       exploration_goal: OARG,
       exploration_goal_probability: float = 0.,
       method: str = 'amdp',
-      ignore_non_rewarding_terminal_nodes: bool = False):
+      ignore_non_rewarding_terminal_nodes: bool = False,
+      rmax_factor: float = 2.):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -52,6 +53,7 @@ class GoalSampler:
     self.transition_tensor = transition_tensor
     self.hash2idx = hash2idx
     self.idx2hash = idx2hash
+    self.rmax_factor = rmax_factor
     
     self._n_courier_errors = 0
     
@@ -77,6 +79,7 @@ class GoalSampler:
         discount_dict=self.discount_dict,
         count_dict=self.on_policy_edge_count_dict,
         target_node=target_node,
+        rmax_factor=self.rmax_factor,
       )
       print(f'[GoalSampler] Took {t1 - t0}s to select expansion node.')
       print(f'[GoalSampler] Took {time.time() - t1}s to create & solve AMDP.')
