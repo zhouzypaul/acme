@@ -409,6 +409,26 @@ class GoalSpaceManager(Saveable):
       task_goal = self.task_goal
       return {tuple(task_goal.goals): task_goal}
     
+    def nodes2oarg(nodes: Dict) -> OARG:
+      keys = []
+      observations = []
+      actions = []
+      rewards = []
+      goals = []
+      for key in nodes:
+        oarg = nodes[key]
+        keys.append(key)
+        observations.append(oarg.observation)
+        actions.append(oarg.action)
+        rewards.append(oarg.reward)
+        goals.append(oarg.goals)
+      return keys, OARG(
+        observation=jnp.asarray(observations),
+        action=jnp.asarray(actions)[jnp.newaxis, ...],
+        reward=jnp.asarray(rewards)[jnp.newaxis, ...],
+        goals=jnp.asarray(goals)[jnp.newaxis, ...]
+      )
+    
     # TODO(ab): why get all nodes if we are going to subsample 50?
     t0 = time.time()
     nodes = get_nodes()
@@ -463,9 +483,11 @@ class GoalSpaceManager(Saveable):
       print(f'[GSM-Profiling] Took {t4 - t3}s to create goal pairs.')
       print(f'[GSM-Profiling] Took {t5 - t4}s to create goal tensors.')
 
-      return src_dest_pairs, OARG(augmented_observations, actions, rewards, goals)
+      src_keys, src_oarg = nodes2oarg(nodes)
+
+      return src_dest_pairs, OARG(augmented_observations, actions, rewards, goals), src_keys, src_oarg
     
-    return None, None
+    return None, None, None, None
   
   @staticmethod
   def _default_dict_to_dict(dd):
@@ -659,7 +681,7 @@ class GoalSpaceManager(Saveable):
     t0 = time.time()
     iteration: int = next(self._iteration_iterator)
 
-    src_dest_pairs, batch_oarg = self._construct_obs_matrix()
+    src_dest_pairs, batch_oarg, cfn_nodes, cfn_oarg = self._construct_obs_matrix()
     if batch_oarg is not None:
       
       lstm_state = self.get_recurrent_state(batch_oarg.observation.shape[1])
@@ -678,8 +700,8 @@ class GoalSpaceManager(Saveable):
       self._update_transition_tensor(src_dest_pairs, values)
 
       if self._exploration_algorithm_is_cfn:
-        cfn_oar = batch_oarg._replace(
-          observation=batch_oarg.observation[0, ..., :3])
+        cfn_oar = cfn_oarg._replace(
+          observation=cfn_oarg.observation[..., :3])
         bonuses = compute_cfn_reward(
           self._exploration_params.params,
           self._exploration_params.target_params,
@@ -687,12 +709,12 @@ class GoalSpaceManager(Saveable):
           self._exploration_networks,
           self._exploration_params.random_prior_mean,
           jnp.sqrt(self._exploration_params.random_prior_var + 1e-4),
-        ).squeeze()
+        )
       else:
         exploration_transitions = OAR(
-          observation=batch_oarg.observation[None, ..., :3],
-          action=batch_oarg.action[None, ...],
-          reward=batch_oarg.reward[None, ...])
+          observation=cfn_oarg.observation[..., :3],
+          action=cfn_oarg.action[None, ...],
+          reward=cfn_oarg.reward[None, ...])
         bonuses = compute_rnd_reward(
           self._exploration_params.params,
           self._exploration_params.target_params,
@@ -700,9 +722,9 @@ class GoalSpaceManager(Saveable):
           self._exploration_networks,
           self._exploration_params.observation_mean,
           self._exploration_params.observation_var,
-        ).squeeze()
-
-      self._update_bonuses([pair[0] for pair in src_dest_pairs], bonuses)
+        )
+      bonuses = bonuses.ravel().tolist()
+      self._update_bonuses(cfn_nodes, bonuses)
 
       if iteration > 0 and iteration % 10 == 0:
         self.visualize_value_function(
@@ -790,7 +812,6 @@ class GoalSpaceManager(Saveable):
     assert isinstance(self._off_policy_edges, set), type(state[10])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
-    import ipdb; ipdb.set_trace()
 
   def restore_transition_tensor(self, transition_matrix):
     k = self._tensor_increments
