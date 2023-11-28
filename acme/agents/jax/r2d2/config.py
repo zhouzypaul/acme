@@ -53,3 +53,6 @@ class R2D2Config:
   max_priority_weight: float = 0.9
 
   actor_backend: str = 'cpu'
+
+  # GSM Flags
+  amdp_rmax_factor: float = 200.
