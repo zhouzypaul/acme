@@ -99,6 +99,9 @@ class GoalSpaceManager(Saveable):
 
     self._already_plotted_goals = set()
 
+    # Monitoring planner performance
+    self._hash2bellman = collections.defaultdict(list)
+
     base_dir = get_save_directory()
     self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
     self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
@@ -108,6 +111,7 @@ class GoalSpaceManager(Saveable):
     self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
     self._hash_bit_vf_diff_dir = os.path.join(base_dir, 'plots', 'hash_bit_vf_diff')
     self._skill_graph_plotting_dir = os.path.join(base_dir, 'plots', 'skill_graph')
+    self._bellman_errors_plotting_dir = os.path.join(base_dir, 'plots', 'bellman_errors')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -117,6 +121,7 @@ class GoalSpaceManager(Saveable):
     os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
     os.makedirs(self._hash_bit_vf_diff_dir, exist_ok=True)
     os.makedirs(self._skill_graph_plotting_dir, exist_ok=True)
+    os.makedirs(self._bellman_errors_plotting_dir, exist_ok=True)
     print(f'[GSM] Going to save plots to {self._spatial_plotting_dir} and {self._scatter_plotting_dir}')
 
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
@@ -133,6 +138,8 @@ class GoalSpaceManager(Saveable):
 
     if goal_sampler._amdp:
       abstract_policy = goal_sampler._amdp.get_policy()
+      max_bellman_errors = goal_sampler._amdp.max_bellman_errors
+      self._hash2bellman[expansion_node].extend(max_bellman_errors)
       return expansion_node, abstract_policy
   
   def get_descendants(self, current_node: Tuple): 
@@ -625,6 +632,21 @@ class GoalSpaceManager(Saveable):
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
     plt.close()
 
+  def _plot_bellman_errors(self, episode):
+    """Randomly sample 4 nodes and plot their bellman errors as a function of iteration."""
+    nodes = list(self._hash2bellman.keys())
+    
+    if nodes:
+      selected_nodes = random.sample(nodes, k=min(len(nodes), 4))
+      plt.figure(figsize=(14, 14))
+      for i, node in enumerate(selected_nodes):
+        plt.subplot(2, 2, i + 1)
+        plt.plot(self._hash2bellman[node], marker='o', linestyle='-')
+        plt.title(f'Goal: {node}')
+      plt.suptitle(f'MBE vs # VI Iterations at GSM Iteration {episode}')
+      plt.savefig(os.path.join(self._bellman_errors_plotting_dir, f'bellman_errors_{episode}.png'))
+      plt.close()
+
   def _plot_skill_graph(self, episode, include_off_policy_edges=True):
     """Spatially plot the nodes and edges of the skill-graph."""
 
@@ -744,6 +766,7 @@ class GoalSpaceManager(Saveable):
         self._plot_discovered_goals(iteration)
         self._plot_hash2bonus(iteration)
         self._plot_skill_graph(iteration)
+        self._plot_bellman_errors(iteration)
 
         cfn_plotting.plot_average_bonus_for_each_hash_bit(
           self._thread_safe_deepcopy(self._hash2bonus),

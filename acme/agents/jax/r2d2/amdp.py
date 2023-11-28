@@ -34,7 +34,7 @@ class AMDP:
     assert self._n_states == self._n_actions, 'Not special-casing the death node here.'
 
     self._reward_vector, self._discount_vector = self._abstract_reward_function(target_node)
-    self._vf, self._policy = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
+    self._vf, self._policy, self.max_bellman_errors = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
     print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states.')
 
   def get_policy(self) -> Dict:
@@ -62,6 +62,7 @@ class AMDP:
     return reward_vector, discount_vector
   
   def _solve_abstract_mdp(self, n_iterations, tol):
+    max_bellman_errors = []
     values = np.zeros((self._n_states,), dtype=np.float32)
 
     for i in range(n_iterations):
@@ -81,6 +82,7 @@ class AMDP:
       assert values.shape == (self._n_states,), values.shape
         
       error = np.max(np.abs(values - prev_values))
+      max_bellman_errors.append(error)
       
       if error < tol:
         break
@@ -97,7 +99,7 @@ class AMDP:
 
     assert values.shape == policy.shape == (self._n_states,), (values.shape, policy.shape)
     
-    return values, policy
+    return values, policy, max_bellman_errors
 
   def get_goal_sequence(
     self, start_node: Tuple, goal_node: Tuple, max_len: int = 10
