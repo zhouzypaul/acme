@@ -43,6 +43,10 @@ from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
 import functools
 import rlax
+import json
+import dataclasses
+from helpers import save_command_used
+from helpers import is_under_git_control, save_git_information
 start_time = datetime.now()
 
 # Flags which modify the behavior of the launcher.
@@ -145,6 +149,9 @@ def make_cfn_builder(r2d2_builder):
     cfn_var_to_std_epsilon=FLAGS.cfn_var_to_std_epsilon,
     cfn_use_forgetting=FLAGS.cfn_use_forgetting,
   )
+  save_config(cfn_config,
+              os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'cfn_config.json'))
+  
   logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)
   builder = cfn_builder.CFNBuilder(
     rl_agent=r2d2_builder,
@@ -284,18 +291,46 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
   from helpers import save_start_and_end_time
   save_start_and_end_time(log_dir, start_time, end_time)
 
-  # log the command used
-  from helpers import save_command_used
-  save_command_used(log_dir)
-
-  # log git stuff
-  from helpers import is_under_git_control, save_git_information
-  if is_under_git_control():
-      save_git_information(log_dir)
+def save_config(config: dataclasses.dataclass, save_path: str):
+  """Serialize the config dataclass and dump to a json file."""
+  def serialize_dataclass(instance):
+    def is_serializable(value):
+      try:
+        json.dumps(value, indent=4)
+        return True
+      except (TypeError, OverflowError):
+        return False
+    return {k: v for k, v in dataclasses.asdict(instance).items() if is_serializable(v)}
+  
+  config_dict = serialize_dataclass(config)
+  json_config_data = json.dumps(config_dict)
+  os.makedirs(os.path.dirname(save_path), exist_ok=True)
+  with open(save_path, 'w') as f:
+    f.write(json_config_data)
 
 
 def main(_):
   config = build_experiment_config()
+
+  log_dir = os.path.join(FLAGS.acme_dir, FLAGS.acme_id)
+
+  save_config(
+    config,
+    os.path.join(log_dir, 'r2d2_config.json'))
+  
+  # Save FLAGS
+  flags_dict = {name: FLAGS[name].value for name in FLAGS}
+  json_flags_data = json.dumps(flags_dict, indent=4)
+  with open(os.path.join(log_dir, 'flags.json'), 'w') as f:
+    f.write(json_flags_data)
+
+  # log the command used
+  save_command_used(log_dir)
+
+  # log git stuff
+  if is_under_git_control():
+    save_git_information(log_dir)
+
   if FLAGS.run_distributed:
     num_actors = FLAGS.num_actors
     num_actors_per_node = FLAGS.num_actors_per_node
