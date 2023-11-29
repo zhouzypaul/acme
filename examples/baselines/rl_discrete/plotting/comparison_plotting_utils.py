@@ -49,7 +49,7 @@ def interpolate_xys(scores):
     flattened_unique = np.sort(np.unique(np.concatenate(all_xs)))
     all_returns = []
     for frames, returns in scores:
-        f = scipy.interpolate.interp1d(frames, returns, kind='linear', fill_value='extrapolate')
+        f = scipy.interpolate.interp1d(frames, returns, kind='nearest', fill_value='extrapolate')
         interpolated_returns = f(flattened_unique)
         all_returns.append(interpolated_returns)
 

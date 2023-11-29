@@ -10,10 +10,9 @@ from plotting_utils import get_summary_data, extract_exploration_amounts, load_c
 
 def get_config(acme_id, group_key):
     try:
-        return re.search(f".*({group_key}_[^_]*)_.*", acme_id).group(1)
+        return re.search(f".*?([+-]+{group_key}|{group_key}_[^_]*)_.*", acme_id).group(1)
     except: # if its at the end of the id name
-        return re.search(f".*({group_key}_[^_]*)$", acme_id).group(1)
-
+        return re.search(f".*?([+-]+{group_key}|{group_key}_[^_]*)$", acme_id).group(1)
 
 def default_make_key(log_dir_name, group_keys):
     keys = [get_config(log_dir_name, group_key) for group_key in group_keys]
@@ -72,6 +71,7 @@ def plot_comparison_learning_curves(
     # stat='eval_episode_lengths',
     group_keys=("rewardscale",),
     group_func=None,
+    filter_func=None, # Only include things that are "true" in filter
     save_path=None,
     show=True,
     smoothen=10,
@@ -112,12 +112,18 @@ def plot_comparison_learning_curves(
     for config in log_dir_path_map:
         if config is None:
             continue
+        if filter_func and not filter_func(config):
+            continue
         curves = log_dir_path_map[config]
         print(config)
         for curve in curves:
             print(f"\t{len(curve[0])}")
         truncated_xs, truncated_all_ys = truncate_and_interpolate(curves, max_frames=truncate_max_frames, min_frames=truncate_min_frames)
+        print(truncated_xs.shape)
+        # import ipdb; ipdb.set_trace()
         if len(truncated_all_ys) < min_seeds:
+            continue
+        if smoothen and smoothen > 0 and len(truncated_xs) < smoothen:
             continue
 
         if min_final_val is not None:
