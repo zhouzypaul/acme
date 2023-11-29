@@ -41,6 +41,10 @@ class AMDP:
     """Serialize the policy vector into a dictionary with goal_hash -> goal_hash."""
     return {node: self._idx2hash[self._policy[idx]] for node, idx in self._hash2idx.items()}
   
+  def get_values(self) -> Dict:
+    """Serialize the value function into a dictionary with goal_hash -> value."""
+    return {node: self._vf[idx] for node, idx in self._hash2idx.items()}
+  
   def _abstract_reward_function(self, target_node) -> Tuple[np.ndarray, np.ndarray]:
     """Assign a reward and discount factor to each node in the AMDP."""
     reward_vector = np.zeros((self._n_states,), dtype=np.float32)

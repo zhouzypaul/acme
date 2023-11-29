@@ -100,7 +100,11 @@ class GoalSpaceManager(Saveable):
     self._already_plotted_goals = set()
 
     # Monitoring planner performance
-    self._hash2bellman = collections.defaultdict(list)
+    def deque_fac():
+      return collections.deque(maxlen=50)
+
+    self._hash2bellman = collections.defaultdict(deque_fac)
+    self._hash2vstar = collections.defaultdict(list)
 
     base_dir = get_save_directory()
     self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
@@ -112,6 +116,7 @@ class GoalSpaceManager(Saveable):
     self._hash_bit_vf_diff_dir = os.path.join(base_dir, 'plots', 'hash_bit_vf_diff')
     self._skill_graph_plotting_dir = os.path.join(base_dir, 'plots', 'skill_graph')
     self._bellman_errors_plotting_dir = os.path.join(base_dir, 'plots', 'bellman_errors')
+    self._amdp_vstar_plotting_dir = os.path.join(base_dir, 'plots', 'amdp_vstar')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -122,6 +127,7 @@ class GoalSpaceManager(Saveable):
     os.makedirs(self._hash_bit_vf_diff_dir, exist_ok=True)
     os.makedirs(self._skill_graph_plotting_dir, exist_ok=True)
     os.makedirs(self._bellman_errors_plotting_dir, exist_ok=True)
+    os.makedirs(self._amdp_vstar_plotting_dir, exist_ok=True)
     print(f'[GSM] Going to save plots to {self._spatial_plotting_dir} and {self._scatter_plotting_dir}')
 
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
@@ -140,6 +146,7 @@ class GoalSpaceManager(Saveable):
       abstract_policy = goal_sampler._amdp.get_policy()
       max_bellman_errors = goal_sampler._amdp.max_bellman_errors
       self._hash2bellman[expansion_node].extend(max_bellman_errors)
+      self._hash2vstar[expansion_node] = goal_sampler._amdp.get_values()
       return expansion_node, abstract_policy
   
   def get_descendants(self, current_node: Tuple): 
@@ -647,6 +654,32 @@ class GoalSpaceManager(Saveable):
       plt.savefig(os.path.join(self._bellman_errors_plotting_dir, f'bellman_errors_{episode}.png'))
       plt.close()
 
+  def _plot_spatial_vstar(self, episode):
+    """Spatially plot the AMDP V* for 4 randomly sampled goal nodes."""
+    def plot_vf(hash2val: Dict, name: str):
+      xs = []; ys = []; values = []
+      for key, val in hash2val.items():
+        xs.append(key[0])
+        ys.append(key[1])
+        values.append(val)
+
+      if values:
+        plt.scatter(xs, ys, c=values, s=100, marker='s')
+        plt.colorbar()
+        plt.title(name)
+
+    nodes = list(self._hash2vstar.keys())
+    
+    if nodes:
+      selected_nodes = random.sample(nodes, k=min(len(nodes), 4))
+      plt.figure(figsize=(14, 14))
+      for i, node in enumerate(selected_nodes):
+        plt.subplot(2, 2, i + 1)
+        plot_vf(self._hash2vstar[node], name=f'Goal: {node}')
+      plt.suptitle(f'AMDP V-Star at GSM Iteration {episode}')
+      plt.savefig(os.path.join(self._amdp_vstar_plotting_dir, f'vstar_{episode}.png'))
+      plt.close()
+
   def _plot_skill_graph(self, episode, include_off_policy_edges=True):
     """Spatially plot the nodes and edges of the skill-graph."""
 
@@ -767,6 +800,7 @@ class GoalSpaceManager(Saveable):
         self._plot_hash2bonus(iteration)
         self._plot_skill_graph(iteration)
         self._plot_bellman_errors(iteration)
+        self._plot_spatial_vstar(iteration)
 
         cfn_plotting.plot_average_bonus_for_each_hash_bit(
           self._thread_safe_deepcopy(self._hash2bonus),

@@ -158,3 +158,6 @@ examples/baselines/rl_discrete/testing_results
 .onager
 *.err
 *.out
+examples/baselines/rl_discrete/launchpad_logging_dir
+*.index
+examples/baselines/rl_discrete/results
