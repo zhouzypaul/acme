@@ -80,7 +80,7 @@ flags.DEFINE_float('intrinsic_reward_coefficient', 0.001, 'weight given to intri
 flags.DEFINE_float('extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')  # NOTE: NGU paper uses 0.3
 flags.DEFINE_boolean('cfn_use_reward_normalization', False, 'Whether to normalize CFN intrinsic reward')
 flags.DEFINE_float('rnd_learning_rate', 1e-4, 'Learning rate for RND')  # NOTE: NGU paper is 5e-4
-flags.DEFINE_string('terminal', 'tmux_session', 'Either terminal or current_terminal')
+flags.DEFINE_string('terminal', 'tmux_session', 'Either tmux_session or output_to_files or current_terminal')
 flags.DEFINE_float('r2d2_learning_rate', 1e-4, 'Learning rate for R2D2')  # NOTE: NGU paper is 2e-4
 flags.DEFINE_float('discount', 0.997, 'Gamma') 
 # These are different from paper to here, so will add as hypers
