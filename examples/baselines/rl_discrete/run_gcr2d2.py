@@ -15,6 +15,19 @@
 """Example running R2D2 on discrete control tasks."""
 
 import os
+import argparse
+
+
+# While this is not a good practice, we need to set the logging directory before importing launchpad.
+# And we cannot parse FLAGS because absl insists on parsing them only once via app.run(main).
+# The "parse_known_args" method allows us to parse only the arguments we need for determining the log_dir.
+parser = argparse.ArgumentParser()
+parser.add_argument('--acme_id', type=str, default=None, help='Experiment identifier to use for Acme.')
+parser.add_argument('--acme_dir', type=str, default='~/acme', help='Directory to do acme logging')
+args = parser.parse_known_args()[0]
+lp_log_dir = os.path.join(args.acme_dir, args.acme_id, 'terminal_output')
+os.environ["LAUNCHPAD_LOGGING_DIR"] = lp_log_dir
+
 import signal
 from absl import flags
 from acme.agents.jax import r2d2
