@@ -172,7 +172,10 @@ def get_rmse_for_each_iteration(count_dict):
 
 
 if __name__ == "__main__":
-    base_dir = "/Users/slobal1/Code/ML/acme_testing/acme_paul/examples/baselines/rl_discrete/ccv_results/results/monte/spi_lr_rscale_sweep"
+    domain = 'doorkey'
+    base_dir = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size"
+    save_path = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size.png"
+    
     def lr_group_func(acme_id):
         if "spi_3" not in acme_id:
             return None
@@ -181,20 +184,25 @@ if __name__ == "__main__":
         if "spi_3" not in acme_id:
             return None
         return get_config(acme_id, "rewardcoefficient")
+    def new_group_func(acme_id):
+        if "size3" not in acme_id or "size3_5" in acme_id:
+            return None
+        return default_make_key(acme_id, ("cfnmaxreplaysize", "cfn_use_forgetting"))
 
     plot_comparison_learning_curves(
         base_dir=base_dir,
         # save_path=None,
         # show=True,
-        save_path="/Users/slobal1/Downloads/matplotlib_plots/r2d2/rnd_rewardcoeff_spi3.png",
+        save_path=save_path,
         show=False,
-        # group_keys=("rewardcoefficient", "spi", "learningrate"),
+        # group_keys=("cfnmaxreplaysize", "cfn_use_forgetting"),
         # group_keys=("learningrate", ),
-        group_func=rc_group_func,
-        # smoothen=10,
-        smoothen=False,
-        truncate_min_frames=50_000_000,
+        group_func=new_group_func,
+        # filter_func=lambda acme_id: "size3" in acme_id and "size3_5" not in acme_id,
+        smoothen=10,
+        # smoothen=False,
+        # truncate_min_frames=50_000_000,
         # min_seeds=5,
         all_seeds=False,
-        title="R2D2 RND sweep"
+        title=f"CFN Forgetting and Max CFN Replay Size {domain}",
         )
