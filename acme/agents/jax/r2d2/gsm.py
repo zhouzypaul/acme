@@ -1,6 +1,7 @@
 import os
 import time
 import ipdb
+import pickle
 import pprint
 import random
 import dm_env
@@ -25,8 +26,6 @@ from acme.jax import networks as networks_lib
 from acme.core import Saveable
 from acme.agents.jax.r2d2.goal_sampler import GoalSampler
 from acme.utils.paths import get_save_directory
-
-import acme.agents.jax.cfn.plotting as cfn_plotting
 
 
 class GoalSpaceManager(Saveable):
@@ -96,39 +95,18 @@ class GoalSpaceManager(Saveable):
 
     self._iteration_iterator = itertools.count()
     self._gsm_loop_last_timestamp = time.time()
+    self._gsm_iteration_times = []
 
     self._already_plotted_goals = set()
 
-    # Monitoring planner performance
-    def deque_fac():
-      return collections.deque(maxlen=50)
-
-    self._hash2bellman = collections.defaultdict(deque_fac)
+    self._hash2bellman = collections.defaultdict(lambda: collections.deque(maxlen=50))
     self._hash2vstar = collections.defaultdict(list)
 
     base_dir = get_save_directory()
-    self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
-    self._scatter_plotting_dir = os.path.join(base_dir, 'plots', 'true_vs_approx_scatterplots')
-    self._gcvf_plotting_dir = os.path.join(base_dir, 'plots', 'gcvf_plots')
-    self._discovered_goals_dir = os.path.join(base_dir, 'plots', 'discovered_goals')
-    self._node_expansion_prob_dir = os.path.join(base_dir, 'plots', 'node_expansion_prob')
-    self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
-    self._hash_bit_vf_diff_dir = os.path.join(base_dir, 'plots', 'hash_bit_vf_diff')
-    self._skill_graph_plotting_dir = os.path.join(base_dir, 'plots', 'skill_graph')
-    self._bellman_errors_plotting_dir = os.path.join(base_dir, 'plots', 'bellman_errors')
-    self._amdp_vstar_plotting_dir = os.path.join(base_dir, 'plots', 'amdp_vstar')
-
-    os.makedirs(self._spatial_plotting_dir, exist_ok=True)
-    os.makedirs(self._scatter_plotting_dir, exist_ok=True)
-    os.makedirs(self._gcvf_plotting_dir, exist_ok=True)
-    os.makedirs(self._discovered_goals_dir, exist_ok=True)
-    os.makedirs(self._node_expansion_prob_dir, exist_ok=True)
-    os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
-    os.makedirs(self._hash_bit_vf_diff_dir, exist_ok=True)
-    os.makedirs(self._skill_graph_plotting_dir, exist_ok=True)
-    os.makedirs(self._bellman_errors_plotting_dir, exist_ok=True)
-    os.makedirs(self._amdp_vstar_plotting_dir, exist_ok=True)
-    print(f'[GSM] Going to save plots to {self._spatial_plotting_dir} and {self._scatter_plotting_dir}')
+    self._base_plotting_dir = os.path.join(base_dir, 'plots')
+    self._gsm_iteration_times_dir = os.path.join(self._base_plotting_dir, 'gsm_iteration_times')
+    os.makedirs(self._base_plotting_dir, exist_ok=True)
+    os.makedirs(self._gsm_iteration_times_dir, exist_ok=True)
 
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
     """Create and solve the AMDP. Then return the abstract policy."""
@@ -785,44 +763,6 @@ class GoalSpaceManager(Saveable):
       bonuses = bonuses.ravel().tolist()
       self._update_bonuses(cfn_nodes, bonuses)
 
-      if iteration > 0 and iteration % 10 == 0:
-        self.visualize_value_function(
-          iteration,
-          task_value_vector=None,
-          exploration_value_vector=None
-        )
-
-        # Skip plotting spatial bonus for CFN because that is happening in cfn.py
-        if not self._exploration_algorithm_is_cfn:
-          self._make_spatial_bonus_plot(iteration)
-
-        self._plot_discovered_goals(iteration)
-        self._plot_hash2bonus(iteration)
-        self._plot_skill_graph(iteration)
-        self._plot_bellman_errors(iteration)
-        self._plot_spatial_vstar(iteration)
-
-        cfn_plotting.plot_average_bonus_for_each_hash_bit(
-          self._thread_safe_deepcopy(self._hash2bonus),
-          save_path=os.path.join(self._hash_bit_plotting_dir, f'mean_bonus_{iteration}.png'))
-        
-        node_to_node_values = {}
-        nodes = list(self._hash2idx.keys())
-        for src in nodes:
-          for dest in nodes:
-            node_to_node_values[(src, dest)] = self._transition_matrix[
-              self._hash2idx[src], self._hash2idx[dest]]
-
-        cfn_plotting.plot_average_value_for_interesting_hash_bits(
-          node_to_node_values,
-          src_node_hash_bit=2,   # Key bit
-          dest_node_hash_bit=3,  # Door bit 
-          src_node_hash_bit_vals=(1,),  # has_key = True
-          dest_node_hash_bit_vals=(0, 1),  # door is either open or unlocked
-          save_path=os.path.join(self._hash_bit_vf_diff_dir, f'vf_diff_{iteration}.png')
-        )
-        
-
       if len(src_dest_pairs) > 10:
         # TODO(ab): get from env and pass around
         # start_state_features = (1, 5, 0, 0)  
@@ -836,9 +776,13 @@ class GoalSpaceManager(Saveable):
 
       dt = time.time() - self._gsm_loop_last_timestamp
       print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)} dt={dt}')
-      self._gsm_loop_last_timestamp = time.time()
+      self._gsm_iteration_times.append(dt)
+
+      with open(os.path.join(self._base_plotting_dir, 'plotting_vars.pkl'), 'wb') as f:
+        pickle.dump(self.save(), f)
 
       self.update_params(wait=False)
+      self._gsm_loop_last_timestamp = time.time()
 
   def run(self):
     for iteration in self._iteration_iterator:
@@ -849,15 +793,23 @@ class GoalSpaceManager(Saveable):
     t0 = time.time()
     print('[GSM] Checkpointing..')
     to_return = self.get_variables()
-    to_return = (*to_return, self._edges, self._off_policy_edges)
-    assert len(to_return) == 11, len(to_return)
+    hash2bell = {k: list(v) for k, v in self._hash2bellman.items()}
+    to_return = (*to_return,
+                 self._edges,
+                 self._off_policy_edges,
+                 self._exploration_params.reward_mean,
+                 self._exploration_params.reward_var,
+                 hash2bell,
+                 self._hash2vstar,
+                 self._gsm_iteration_times)
+    assert len(to_return) == 16, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
   def restore(self, state: Tuple[Dict]):
     t0 = time.time()
     print('About to start restoring GSM from checkpoint.')
-    assert len(state) == 11, len(state)
+    assert len(state) == 16, len(state)
     self._hash2obs = state[0]
     self._hash2counts = collections.defaultdict(int, state[1])
     self._hash2bonus = state[2]
@@ -869,6 +821,11 @@ class GoalSpaceManager(Saveable):
     self._idx2hash = state[8]
     self._edges = state[9]
     self._off_policy_edges = state[10]
+    self._hash2bellman = collections.defaultdict(
+      lambda: collections.deque(maxlen=50),
+      {k: collections.deque(v, maxlen=50) for k, v in state[13].items()})
+    self._hash2vstar = state[14]
+    self._gsm_iteration_times = state[15]
     assert isinstance(self._edges, set), type(state[9])
     assert isinstance(self._off_policy_edges, set), type(state[10])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
