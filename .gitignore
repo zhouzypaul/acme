@@ -161,3 +161,4 @@ examples/baselines/rl_discrete/testing_results
 examples/baselines/rl_discrete/launchpad_logging_dir
 *.index
 examples/baselines/rl_discrete/results
+examples/baselines/rl_discrete/old_local_testing

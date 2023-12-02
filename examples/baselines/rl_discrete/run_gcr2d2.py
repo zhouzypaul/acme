@@ -41,6 +41,7 @@ import launchpad as lp
 from datetime import datetime
 import rlax
 import functools
+from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
 
 start_time = datetime.now()
@@ -76,6 +77,7 @@ flags.DEFINE_integer('cfn_max_replay_size', 2_000_000, 'Max replay size for CFN 
 
 # GSM flags.
 flags.DEFINE_float('amdp_rmax_factor', 2., 'Rmax factor for AMDP')
+flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
 
 
 FLAGS = flags.FLAGS
@@ -228,43 +230,6 @@ def build_exploration_policy_experiment_config():
   )
 
 
-def _get_local_resources(launch_type):
-   assert launch_type in ('local_mp', 'local_mt'), launch_type
-   from launchpad.nodes.python.local_multi_processing import PythonProcess
-   if launch_type == 'local_mp':
-     local_resources = {
-       "learner":PythonProcess(env={
-         "CUDA_VISIBLE_DEVICES": str(0),
-         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-         "TF_FORCE_GPU_ALLOW_GROWTH": "true",
-       }),
-       "actor":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-       "evaluator":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(0)}),
-       "inference_server":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-       "counter":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-       "replay":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-       "gsm": PythonProcess(env={
-         "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
-         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-         "TF_FORCE_GPU_ALLOW_GROWTH": "true",
-        }),
-        "exploration_replay":PythonProcess(env={"CUDA_VISIBLE_DEVICES": str(-1)}),
-        "exploration_learner": PythonProcess(env={
-          "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
-          "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-          "TF_FORCE_GPU_ALLOW_GROWTH": "true",
-        }),
-       "cfn": PythonProcess(env={
-         "CUDA_VISIBLE_DEVICES": str(1),  # TODO(ab): Set automatically
-         "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-         "TF_FORCE_GPU_ALLOW_GROWTH": "true",
-        }),
-     }
-   else:
-     local_resources = {}
-   return local_resources
-
-
 def sigterm_log_endtime_handler(_signo, _stack_frame):
   """
   log end time gracefully on SIGTERM
@@ -288,13 +253,8 @@ def sigterm_log_endtime_handler(_signo, _stack_frame):
 
 
 def main(_):
-  FLAGS.append_flags_into_file('tmp/temp_flags')  # hack: so that subprocesses can load FLAGS
   config = build_experiment_config()
   exploration_config = build_exploration_policy_experiment_config()
-
-  utils.create_log_dir('plots')
-  utils.create_log_dir(os.path.join('plots', 'uvfa_plots'))
-  utils.create_log_dir(os.path.join('plots', 'target_nodes'))
 
   if FLAGS.run_distributed:
     program = experiments.make_distributed_experiment(
@@ -305,7 +265,7 @@ def main(_):
     )
     lp.launch(program, 
               xm_resources=lp_utils.make_xm_docker_resources(program),
-              local_resources=_get_local_resources(FLAGS.lp_launch_type),
+              local_resources=get_local_resources(FLAGS.lp_launch_type),
               terminal=FLAGS.terminal)
   else:
     experiments.run_experiment(experiment=config)
