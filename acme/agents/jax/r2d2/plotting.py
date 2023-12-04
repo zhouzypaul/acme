@@ -53,7 +53,7 @@ class GSMPlotter:
     try:
       with open(self._checkpoint_path, 'rb') as f:
         state = pickle.load(f)
-    except IOError:
+    except:
       print(f'No checkpoint found at {self._checkpoint_path}')
       return {}
     

@@ -117,7 +117,8 @@ def plot_comparison_learning_curves(
         curves = log_dir_path_map[config]
         print(config)
         for curve in curves:
-            print(f"\t{len(curve[0])}")
+            print(f"\t[+] Num points in curve: {len(curve[0])}")
+            print(f'\t[+] Max x-axis val: {np.max(curve[0])}')
         truncated_xs, truncated_all_ys = truncate_and_interpolate(curves, max_frames=truncate_max_frames, min_frames=truncate_min_frames)
         print(truncated_xs.shape)
         # import ipdb; ipdb.set_trace()
@@ -172,9 +173,10 @@ def get_rmse_for_each_iteration(count_dict):
 
 
 if __name__ == "__main__":
-    domain = 'fourrrooms'
-    base_dir = f"local_testing/sweeps/{domain}"
-    save_path = f"local_testing/sweeps/{domain}/dsg_n_sigmas_sweep_fourrooms.png"
+    domain = 'doorkey'
+    experiment = 'n_sigmas'
+    base_dir = f"local_testing/sweeps/{domain}/{experiment}"
+    save_path = f"local_testing/sweeps/{domain}/{experiment}/learning_curves.png"
     
     def lr_group_func(acme_id):
         if "spi_3" not in acme_id:
@@ -199,10 +201,10 @@ if __name__ == "__main__":
         # group_keys=("learningrate", ),
         group_func=new_group_func,
         # filter_func=lambda acme_id: "size3" in acme_id and "size3_5" not in acme_id,
-        smoothen=10,
+        smoothen=100,
         # smoothen=False,
         # truncate_min_frames=50_000_000,
         # min_seeds=5,
         all_seeds=False,
-        title=f"DSG FourRooms (n_sigmas) {domain}",
+        title=f"DSG (n_sigmas) {domain}",
         )

@@ -778,8 +778,7 @@ class GoalSpaceManager(Saveable):
       print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)} dt={dt}')
       self._gsm_iteration_times.append(dt)
 
-      with open(os.path.join(self._base_plotting_dir, 'plotting_vars.pkl'), 'wb') as f:
-        pickle.dump(self.save(), f)
+      self.dump_plotting_vars()
 
       self.update_params(wait=False)
       self._gsm_loop_last_timestamp = time.time()
@@ -789,18 +788,27 @@ class GoalSpaceManager(Saveable):
       self.step()
       print(f'[GSM-RunLoop] Iteration {iteration} Goal Space Size {len(self._hash2obs)}')
 
+  def dump_plotting_vars(self):
+    """Save plotting vars for the GSMPlotter to load and do its magic with."""
+    try:
+      with open(os.path.join(self._base_plotting_dir, 'plotting_vars.pkl'), 'wb') as f:
+        pickle.dump(self.save(), f)
+    except Exception as e:
+      print(f'Failed to dump plotting vars: {e}')
+
   def save(self) -> Tuple[Dict]:
     t0 = time.time()
     print('[GSM] Checkpointing..')
     to_return = self.get_variables()
-    hash2bell = {k: list(v) for k, v in self._hash2bellman.items()}
+    hash2bell = self._thread_safe_deepcopy(self._hash2bellman)
+    hash2bell = {k: list(v) for k, v in hash2bell.items()}
     to_return = (*to_return,
                  self._edges,
                  self._off_policy_edges,
                  self._exploration_params.reward_mean,
                  self._exploration_params.reward_var,
                  hash2bell,
-                 self._hash2vstar,
+                 self._thread_safe_deepcopy(self._hash2vstar),
                  self._gsm_iteration_times)
     assert len(to_return) == 16, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
