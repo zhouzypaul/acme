@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
@@ -173,10 +174,16 @@ def get_rmse_for_each_iteration(count_dict):
 
 
 if __name__ == "__main__":
-    domain = 'doorkey'
-    experiment = 'n_sigmas'
-    base_dir = f"local_testing/sweeps/{domain}/{experiment}"
-    save_path = f"local_testing/sweeps/{domain}/{experiment}/learning_curves.png"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--domain', type=str, default='doorkey')
+    parser.add_argument('--experiment', type=str, default='n_sigmas')
+    parser.add_argument('--base_dir', type=str, default='local_testing/sweeps')
+    parser.add_argument('--save_filename', type=str, default='learning_curves')
+    parser.add_argument('--smoothen', type=int, default=100)
+    args = parser.parse_args()
+
+    base_dir = os.path.join(args.base_dir, args.domain, args.experiment)
+    save_path = os.path.join(base_dir, args.save_filename if 'png' in args.save_filename else f"{args.save_filename}.png")
     
     def lr_group_func(acme_id):
         if "spi_3" not in acme_id:
@@ -201,10 +208,10 @@ if __name__ == "__main__":
         # group_keys=("learningrate", ),
         group_func=new_group_func,
         # filter_func=lambda acme_id: "size3" in acme_id and "size3_5" not in acme_id,
-        smoothen=100,
+        smoothen=args.smoothen,
         # smoothen=False,
         # truncate_min_frames=50_000_000,
         # min_seeds=5,
         all_seeds=False,
-        title=f"DSG (n_sigmas) {domain}",
+        title=f"DSG {args.experiment} {args.domain}",
         )
