@@ -13,7 +13,7 @@ except ImportError:
     print("Could not import seaborn. Plotting will not be as pretty.")
 
 
-def get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return'):
+def get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return', action_repeat=1):
     # Returns XY of summary data. We need some fancy averaging process now, as opposed to before
     # because they may have different x axes.
     df = pd.read_csv(csv_path)
@@ -24,7 +24,7 @@ def get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return'):
         print('failed for id', csv_path)
         return
     if xkey == 'actor_steps':
-        x_axis = 4 * x_axis
+        x_axis = action_repeat * x_axis
     # returns = df['episode_return']
     y_axis = df[ykey]
 

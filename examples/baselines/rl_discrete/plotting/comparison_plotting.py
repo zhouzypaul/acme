@@ -117,7 +117,8 @@ def plot_comparison_learning_curves(
         curves = log_dir_path_map[config]
         print(config)
         for curve in curves:
-            print(f"\t{len(curve[0])}")
+            print(f"\t[+] Num points in curve: {len(curve[0])}")
+            print(f'\t[+] Max x-axis val: {np.max(curve[0])}')
         truncated_xs, truncated_all_ys = truncate_and_interpolate(curves, max_frames=truncate_max_frames, min_frames=truncate_min_frames)
         print(truncated_xs.shape)
         # import ipdb; ipdb.set_trace()
@@ -173,8 +174,8 @@ def get_rmse_for_each_iteration(count_dict):
 
 if __name__ == "__main__":
     domain = 'doorkey'
-    base_dir = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size"
-    save_path = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size.png"
+    base_dir = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size_rs"
+    save_path = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size_rs.png"
     
     def lr_group_func(acme_id):
         if "spi_3" not in acme_id:
@@ -185,7 +186,7 @@ if __name__ == "__main__":
             return None
         return get_config(acme_id, "rewardcoefficient")
     def new_group_func(acme_id):
-        if "size3" not in acme_id or "size3_5" in acme_id:
+        if "rs001" not in acme_id or "size3_5" in acme_id:
             return None
         return default_make_key(acme_id, ("cfnmaxreplaysize", "cfn_use_forgetting"))
 

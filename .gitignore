@@ -161,3 +161,4 @@ examples/baselines/rl_discrete/launchpad_logging_dir
 *.txt
 *.out
 *.err
+examples/baselines/rl_discrete/old_local_testing
