@@ -56,3 +56,4 @@ class R2D2Config:
 
   # GSM Flags
   amdp_rmax_factor: float = 200.
+  n_sigmas_threshold_for_goal_creation: int = 0

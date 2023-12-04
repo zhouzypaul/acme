@@ -94,7 +94,8 @@ class EnvironmentLoop(core.Worker):
       pure_exploration_probability: float = 1.,
       cfn: Optional[CFN] = None,
       exploration_networks: Optional[CFNNetworks] = None,
-      exploitation_networks: Optional[R2D2Networks] = None
+      exploitation_networks: Optional[R2D2Networks] = None,
+      n_sigmas_threshold_for_goal_creation: int = 0
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -115,6 +116,7 @@ class EnvironmentLoop(core.Worker):
     self._cfn = cfn
     self._exploration_networks = exploration_networks
     self._exploitation_networks = exploitation_networks
+    self._n_sigmas_threshold_for_goal_creation = n_sigmas_threshold_for_goal_creation
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -659,8 +661,7 @@ class EnvironmentLoop(core.Worker):
 
       reward_mean = self._exploration_actor._rnd_state.reward_mean
       reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
-      thresh = reward_mean + (0 * reward_std)  # TODO(ab): make this a hyperparam
-      # thresh = 0  # TODO(ab): Hack for an experiment
+      thresh = reward_mean + (self._n_sigmas_threshold_for_goal_creation * reward_std)
       
       if max(novelty_scores) > thresh:
 

@@ -78,7 +78,7 @@ flags.DEFINE_integer('cfn_max_replay_size', 2_000_000, 'Max replay size for CFN 
 # GSM flags.
 flags.DEFINE_float('amdp_rmax_factor', 2., 'Rmax factor for AMDP')
 flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
-
+flags.DEFINE_integer("n_sigmas_threshold_for_goal_creation", 0, "Number of sigmas above reward mean for new goal/node creation")
 
 FLAGS = flags.FLAGS
 
@@ -117,6 +117,7 @@ def build_experiment_config():
       # The default hyperbolic transform makes the vf preds small (~0.4 max)
       tx_pair=rlax.IDENTITY_PAIR,
       amdp_rmax_factor=FLAGS.amdp_rmax_factor,
+      n_sigmas_threshold_for_goal_creation=FLAGS.n_sigmas_threshold_for_goal_creation,
   )
   return experiments.ExperimentConfig(
       builder=r2d2.R2D2Builder(config),
