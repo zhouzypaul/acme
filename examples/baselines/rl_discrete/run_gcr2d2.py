@@ -81,9 +81,10 @@ flags.DEFINE_integer('cfn_policy_spi', 8, 'Samples per insert for the exploratio
 flags.DEFINE_integer('cfn_max_replay_size', 2_000_000, 'Max replay size for CFN optimization')
 
 # GSM flags.
-flags.DEFINE_float('amdp_rmax_factor', 2., 'Rmax factor for AMDP')
+flags.DEFINE_float('amdp_rmax_factor', 200., 'Rmax factor for AMDP')
 flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
-flags.DEFINE_integer("n_sigmas_threshold_for_goal_creation", 0, "Number of sigmas above reward mean for new goal/node creation")
+flags.DEFINE_integer("n_sigmas_threshold_for_goal_creation", 1, "Number of sigmas above reward mean for new goal/node creation")
+flags.DEFINE_float("prob_augmenting_bonus_constant", 0.1, "Probability of augmenting bonus constant")
 
 FLAGS = flags.FLAGS
 
@@ -123,6 +124,7 @@ def build_experiment_config():
       tx_pair=rlax.IDENTITY_PAIR,
       amdp_rmax_factor=FLAGS.amdp_rmax_factor,
       n_sigmas_threshold_for_goal_creation=FLAGS.n_sigmas_threshold_for_goal_creation,
+      prob_augmenting_bonus_constant=FLAGS.prob_augmenting_bonus_constant,
   )
   return experiments.ExperimentConfig(
       builder=r2d2.R2D2Builder(config),

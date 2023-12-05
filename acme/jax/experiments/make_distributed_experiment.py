@@ -476,12 +476,13 @@ def make_distributed_experiment(
     explore_env_spec = specs.make_environment_spec(exploration_env)
     exploration_networks = exploration_experiment.network_factory(
       explore_env_spec)
-    
+    c_augment = experiment.builder._config.prob_augmenting_bonus_constant
     gsm = GoalSpaceManager(env, rng_num, networks,
                            variable_client,
                            exploration_networks,
                            exploration_var_client,
-                           rmax_factor=experiment.builder._config.amdp_rmax_factor)
+                           rmax_factor=experiment.builder._config.amdp_rmax_factor,
+                           prob_augmenting_bonus_constant=c_augment)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(

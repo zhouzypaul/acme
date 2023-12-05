@@ -52,7 +52,7 @@ class AMDP:
 
     for node, idx in self._hash2idx.items():
       is_goal_node = node == target_node
-      extrinsic_reward = self._reward_dict.get(node, 0.)
+      extrinsic_reward = (self._rmax_factor // 2) * self._reward_dict.get(node, 0.)
       intrinsic_reward = self._rmax_factor * int(is_goal_node)
       reward_vector[idx] = extrinsic_reward + intrinsic_reward
 
