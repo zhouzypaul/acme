@@ -43,8 +43,10 @@ class GoalSpaceManager(Saveable):
       exploration_algorithm_is_cfn: bool = True,
       prob_augmenting_bonus_constant : float = 0.1,
       connect_nodes_one_step_away: bool = False,
-      off_policy_edge_threshold: float = 0.5,
+      off_policy_edge_threshold: float = 0.75,
       rmax_factor: float = 2.,
+      use_pessimistic_graph_for_planning: bool = False,
+      max_vi_iterations: int = 20,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -52,6 +54,8 @@ class GoalSpaceManager(Saveable):
     self._connect_nodes_one_step_away = connect_nodes_one_step_away
     self._off_policy_edge_threshold = off_policy_edge_threshold
     self._rmax_factor = rmax_factor
+    self._use_pessimistic_graph_for_planning = use_pessimistic_graph_for_planning
+    self._max_vi_iterations = max_vi_iterations
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -108,6 +112,12 @@ class GoalSpaceManager(Saveable):
     os.makedirs(self._base_plotting_dir, exist_ok=True)
     os.makedirs(self._gsm_iteration_times_dir, exist_ok=True)
 
+    print(f'[GSM] Created GSM with R-Max factor {self._rmax_factor}',
+          f'Off-policy edge threshold {self._off_policy_edge_threshold}',
+          f'Prob augmenting bonus constant {self._prob_augmenting_bonus_constant}',
+          f'Use pessimistic graph for planning {self._use_pessimistic_graph_for_planning}',
+          f'Max VI iterations {max_vi_iterations}')
+
   def begin_episode(self, current_node: Tuple) -> Tuple[Tuple, Dict]:
     """Create and solve the AMDP. Then return the abstract policy."""
     goal_sampler = GoalSampler(
@@ -116,7 +126,8 @@ class GoalSpaceManager(Saveable):
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
       exploration_goal_probability=0.,
-      rmax_factor=self._rmax_factor
+      rmax_factor=self._rmax_factor,
+      max_vi_iterations=self._max_vi_iterations
     )
     expansion_node = goal_sampler.begin_episode(current_node)
 
@@ -350,22 +361,24 @@ class GoalSpaceManager(Saveable):
         
         prob = np.clip(value, 0., 1.)
         
-        if (src, dest) not in self._off_policy_edges and prob > self._off_policy_edge_threshold:
-          print(f'[GSM] Adding off-policy edge {src} -> {dest} (prob={prob:.3f})')
+        # NOTE: We are adding the bonus to the unclipped value.
+        bonus = 1 / np.sqrt(self._on_policy_counts[src][dest] + 1)
+        weighted_bonus = self._prob_augmenting_bonus_constant * bonus
+        
+        optimistic_prob = np.clip(value + weighted_bonus, 0., 1.)
+        pessimistic_prob = np.clip(value - weighted_bonus, 0., 1.) if \
+          self._use_pessimistic_graph_for_planning else prob
+        
+        if (src, dest) not in self._off_policy_edges and pessimistic_prob > self._off_policy_edge_threshold:
+          print(f'[GSM] Adding off-policy edge {src} -> {dest} (prob={pessimistic_prob:.3f})')
           self._off_policy_edges.add((src, dest))
         
-        if (src, dest) in self._off_policy_edges and prob <= self._off_policy_edge_threshold:
-          print(f'[GSM] Removing off-policy edge {src} -> {dest} (prob={prob:.3f})')
+        if (src, dest) in self._off_policy_edges and pessimistic_prob <= self._off_policy_edge_threshold:
+          print(f'[GSM] Removing off-policy edge {src} -> {dest} (prob={pessimistic_prob:.3f})')
           self._off_policy_edges.remove((src, dest))
 
         if (src, dest) in self._edges or (src, dest) in self._off_policy_edges:
-          bonus = 1 / np.sqrt(self._on_policy_counts[src][dest] + 1)
-          weighted_bonus = self._prob_augmenting_bonus_constant * bonus
-
-          # NOTE: We are adding the bonus to the unclipped value.
-          augmented_prob = np.clip(value + weighted_bonus, 0., 1.)
-
-          self._transition_matrix[src_idx, dest_idx] = augmented_prob
+          self._transition_matrix[src_idx, dest_idx] = optimistic_prob
         else:
           self._transition_matrix[src_idx, dest_idx] = 0.
     
