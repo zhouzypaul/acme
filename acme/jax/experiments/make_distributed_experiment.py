@@ -477,12 +477,18 @@ def make_distributed_experiment(
     exploration_networks = exploration_experiment.network_factory(
       explore_env_spec)
     c_augment = experiment.builder._config.prob_augmenting_bonus_constant
+    pessimism = experiment.builder._config.use_pessimistic_graph_for_planning
+    off_policy_threshold = experiment.builder._config.off_policy_edge_threshold
+    vi_iterations = experiment.builder._config.max_vi_iterations
     gsm = GoalSpaceManager(env, rng_num, networks,
                            variable_client,
                            exploration_networks,
                            exploration_var_client,
                            rmax_factor=experiment.builder._config.amdp_rmax_factor,
-                           prob_augmenting_bonus_constant=c_augment)
+                           prob_augmenting_bonus_constant=c_augment,
+                           use_pessimistic_graph_for_planning=pessimism,
+                           off_policy_edge_threshold=off_policy_threshold,
+                           max_vi_iterations=vi_iterations)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(

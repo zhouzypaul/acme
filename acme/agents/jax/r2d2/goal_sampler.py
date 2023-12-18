@@ -33,7 +33,8 @@ class GoalSampler:
       exploration_goal_probability: float = 0.,
       method: str = 'amdp',
       ignore_non_rewarding_terminal_nodes: bool = False,
-      rmax_factor: float = 2.):
+      rmax_factor: float = 2.,
+      max_vi_iterations: int = 20):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -54,6 +55,7 @@ class GoalSampler:
     self.hash2idx = hash2idx
     self.idx2hash = idx2hash
     self.rmax_factor = rmax_factor
+    self.max_vi_iterations = max_vi_iterations
     
     self._n_courier_errors = 0
     
@@ -80,6 +82,7 @@ class GoalSampler:
         count_dict=self.on_policy_edge_count_dict,
         target_node=target_node,
         rmax_factor=self.rmax_factor,
+        max_vi_iterations=self.max_vi_iterations,
       )
       print(f'[GoalSampler] Took {t1 - t0}s to select expansion node.')
       print(f'[GoalSampler] Took {time.time() - t1}s to create & solve AMDP.')

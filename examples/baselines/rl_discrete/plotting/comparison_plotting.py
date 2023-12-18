@@ -180,6 +180,7 @@ if __name__ == "__main__":
     parser.add_argument('--base_dir', type=str, default='local_testing/sweeps')
     parser.add_argument('--save_filename', type=str, default='learning_curves')
     parser.add_argument('--smoothen', type=int, default=100)
+    parser.add_argument('--hyperparams', nargs='+', default='nsigmasthresholdforgoalcreation')
     args = parser.parse_args()
 
     base_dir = os.path.join(args.base_dir, args.domain, args.experiment)
@@ -196,7 +197,7 @@ if __name__ == "__main__":
     def new_group_func(acme_id):
         # if "size3" not in acme_id or "size3_5" in acme_id:
         #     return None
-        return default_make_key(acme_id, ("nsigmasthresholdforgoalcreation",))
+        return default_make_key(acme_id, args.hyperparams)
 
     plot_comparison_learning_curves(
         base_dir=base_dir,

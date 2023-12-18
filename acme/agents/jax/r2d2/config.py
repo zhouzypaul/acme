@@ -58,3 +58,6 @@ class R2D2Config:
   amdp_rmax_factor: float = 200.
   n_sigmas_threshold_for_goal_creation: int = 0
   prob_augmenting_bonus_constant: float = 0.1
+  use_pessimistic_graph_for_planning: bool = True
+  off_policy_edge_threshold: float = 0.75
+  max_vi_iterations: int = 10
