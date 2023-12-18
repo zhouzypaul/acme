@@ -106,6 +106,10 @@ class GoalSpaceManager(Saveable):
     self._hash2bellman = collections.defaultdict(lambda: collections.deque(maxlen=50))
     self._hash2vstar = collections.defaultdict(list)
 
+    # Learning curve for each goal
+    self._hash2successes = collections.defaultdict(list)
+    self._hash2successes_lock = threading.Lock()
+
     base_dir = get_save_directory()
     self._base_plotting_dir = os.path.join(base_dir, 'plots')
     self._gsm_iteration_times_dir = os.path.join(self._base_plotting_dir, 'gsm_iteration_times')
@@ -277,6 +281,7 @@ class GoalSpaceManager(Saveable):
     edge2count: Dict,
     hash2discount: Dict,
     expansion_node_new_node_hash_pairs: List[Tuple[Tuple, Tuple]],
+    hash2success: Dict,
   ):
     """Update based on goals achieved by the different actors."""
     self._update_obs_dict(hash2obs)
@@ -285,6 +290,7 @@ class GoalSpaceManager(Saveable):
     self._update_idx_dict(hash2obs)
     self._hash2discount.update(hash2discount)
     self._update_edges_set(expansion_node_new_node_hash_pairs)
+    self._update_on_policy_success_dict(hash2success)
     
   def _update_count_dict(self, hash2count: Dict):
     with self._count_dict_lock:
@@ -302,6 +308,11 @@ class GoalSpaceManager(Saveable):
       for key in hash2count:
         src, dest = key
         self._on_policy_counts[src][dest] += hash2count[key]
+
+  def _update_on_policy_success_dict(self, hash2success: Dict):
+    with self._hash2successes_lock:
+      for key in hash2success:
+        self._hash2successes[key].append(hash2success[key])
 
   def _update_idx_dict(self, hash2obs: Dict):
     with self._idx_dict_lock:
@@ -822,15 +833,16 @@ class GoalSpaceManager(Saveable):
                  self._exploration_params.reward_var,
                  hash2bell,
                  self._thread_safe_deepcopy(self._hash2vstar),
-                 self._gsm_iteration_times)
-    assert len(to_return) == 16, len(to_return)
+                 self._gsm_iteration_times,
+                 self._hash2successes)
+    assert len(to_return) == 17, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
   def restore(self, state: Tuple[Dict]):
     t0 = time.time()
     print('About to start restoring GSM from checkpoint.')
-    assert len(state) == 16, len(state)
+    assert len(state) == 17, len(state)
     self._hash2obs = state[0]
     self._hash2counts = collections.defaultdict(int, state[1])
     self._hash2bonus = state[2]
@@ -847,6 +859,7 @@ class GoalSpaceManager(Saveable):
       {k: collections.deque(v, maxlen=50) for k, v in state[13].items()})
     self._hash2vstar = state[14]
     self._gsm_iteration_times = state[15]
+    self._hash2successes = state[16]
     assert isinstance(self._edges, set), type(state[9])
     assert isinstance(self._off_policy_edges, set), type(state[10])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')

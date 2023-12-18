@@ -34,6 +34,7 @@ class GSMPlotter:
     self._bellman_errors_plotting_dir = os.path.join(base_dir, 'plots', 'bellman_errors')
     self._amdp_vstar_plotting_dir = os.path.join(base_dir, 'plots', 'amdp_vstar')
     self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
+    self._gc_learning_curves_plotting_dir = os.path.join(base_dir, 'plots', 'gc_learning_curves')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -48,6 +49,7 @@ class GSMPlotter:
     os.makedirs(self._bellman_errors_plotting_dir, exist_ok=True)
     os.makedirs(self._amdp_vstar_plotting_dir, exist_ok=True)
     os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
+    os.makedirs(self._gc_learning_curves_plotting_dir, exist_ok=True)
 
   def get_gsm_variables(self):
     try:
@@ -76,6 +78,7 @@ class GSMPlotter:
         {k: collections.deque(v, maxlen=50) for k, v in state[13].items()}),
       hash2vstar=state[14],
       gsm_iteration_times=state[15],
+      hash2success=state[16],
     )
 
   def __call__(self, episode=0):
@@ -97,6 +100,7 @@ class GSMPlotter:
       self._plot_bellman_errors(vars['hash2bellman'], episode)
       self._plot_spatial_vstar(vars['hash2vstar'], episode)
       self._plot_gsm_iteration_times(vars['gsm_iteration_times'])
+      self._plot_per_goal_success_curves(vars['hash2success'], episode)
 
       cfn_plotting.plot_average_bonus_for_each_hash_bit(
         vars['hash2bonus'],
@@ -301,6 +305,21 @@ class GSMPlotter:
         plt.title(f'Goal: {node}')
       plt.suptitle(f'Max BE vs # VI Iterations at GSM Iteration {episode}')
       plt.savefig(os.path.join(self._bellman_errors_plotting_dir, f'bellman_errors_{episode}.png'))
+      plt.close()
+
+  def _plot_per_goal_success_curves(self, hash2success, episode):
+    """Make 3x3 subplots of the success curves for 9 randomly sampled goals."""
+    nodes = list(hash2success.keys())
+    
+    if nodes:
+      selected_nodes = random.sample(nodes, k=min(len(nodes), 9))
+      plt.figure(figsize=(14, 14))
+      for i, node in enumerate(selected_nodes):
+        plt.subplot(3, 3, i + 1)
+        plt.plot(hash2success[node], marker='o', linestyle='-')
+        plt.title(f'Goal: {node}')
+      plt.suptitle(f'Goal Success Curves at GSM Iteration {episode}')
+      plt.savefig(os.path.join(self._gc_learning_curves_plotting_dir, f'success_curves_{episode}.png'))
       plt.close()
 
   def _plot_spatial_vstar(self, hash2vstar, episode):
