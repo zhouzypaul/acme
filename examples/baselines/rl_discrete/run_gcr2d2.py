@@ -85,6 +85,9 @@ flags.DEFINE_float('amdp_rmax_factor', 200., 'Rmax factor for AMDP')
 flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
 flags.DEFINE_integer("n_sigmas_threshold_for_goal_creation", 1, "Number of sigmas above reward mean for new goal/node creation")
 flags.DEFINE_float("prob_augmenting_bonus_constant", 0.1, "Probability of augmenting bonus constant")
+flags.DEFINE_bool("use_pessimistic_graph_for_planning", False, "Whether to use pessimistic graph for planning or not")
+flags.DEFINE_float("off_policy_edge_threshold", 0.75, "Threshold for off-policy edges")
+flags.DEFINE_integer("max_vi_iterations", 10, "Max number of VI iterations for AMDP")
 
 FLAGS = flags.FLAGS
 
@@ -125,7 +128,11 @@ def build_experiment_config():
       amdp_rmax_factor=FLAGS.amdp_rmax_factor,
       n_sigmas_threshold_for_goal_creation=FLAGS.n_sigmas_threshold_for_goal_creation,
       prob_augmenting_bonus_constant=FLAGS.prob_augmenting_bonus_constant,
+      use_pessimistic_graph_for_planning=FLAGS.use_pessimistic_graph_for_planning,
+      off_policy_edge_threshold=FLAGS.off_policy_edge_threshold,
+      max_vi_iterations=FLAGS.max_vi_iterations,
   )
+  save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
       builder=r2d2.R2D2Builder(config),
       network_factory=r2d2.make_atari_networks,
@@ -219,6 +226,8 @@ def build_exploration_policy_experiment_config():
       tx_pair=rlax.IDENTITY_PAIR,
       discount=0.99,
   )
+  save_config(
+    config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'exploration_policy_config.json'))
   
   if FLAGS.use_rnd:
     agent_builder = make_rnd_builder(r2d2.R2D2Builder(config))
@@ -275,10 +284,6 @@ def main(_):
   exploration_config = build_exploration_policy_experiment_config()
 
   log_dir = os.path.join(FLAGS.acme_dir, FLAGS.acme_id)
-
-  save_config(
-    config,
-    os.path.join(log_dir, 'r2d2_config.json'))
   
   # Save FLAGS
   flags_dict = {name: FLAGS[name].value for name in FLAGS}
