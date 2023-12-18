@@ -86,7 +86,7 @@ class EnvironmentLoop(core.Worker):
       label: str = 'environment_loop',
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
       goal_space_manager: GoalSpaceManager = None,
-      task_goal_probability: float = 0.1,
+      task_goal_probability: float = 0.,
       always_learn_about_task_goal: bool = True,
       always_learn_about_exploration_goal: bool = False,
       actor_id: int = 0,
