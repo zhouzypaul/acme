@@ -87,7 +87,8 @@ flags.DEFINE_integer("n_sigmas_threshold_for_goal_creation", 1, "Number of sigma
 flags.DEFINE_float("prob_augmenting_bonus_constant", 0.1, "Probability of augmenting bonus constant")
 flags.DEFINE_bool("use_pessimistic_graph_for_planning", False, "Whether to use pessimistic graph for planning or not")
 flags.DEFINE_float("off_policy_edge_threshold", 0.75, "Threshold for off-policy edges")
-flags.DEFINE_integer("max_vi_iterations", 10, "Max number of VI iterations for AMDP")
+flags.DEFINE_integer("max_vi_iterations", 50, "Max number of VI iterations for AMDP")
+flags.DEFINE_float("novelty_threshold_for_goal_creation", -1., "Threshold for novelty for new goal/node creation")
 
 FLAGS = flags.FLAGS
 
@@ -131,6 +132,7 @@ def build_experiment_config():
       use_pessimistic_graph_for_planning=FLAGS.use_pessimistic_graph_for_planning,
       off_policy_edge_threshold=FLAGS.off_policy_edge_threshold,
       max_vi_iterations=FLAGS.max_vi_iterations,
+      novelty_threshold_for_goal_creation=FLAGS.novelty_threshold_for_goal_creation,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

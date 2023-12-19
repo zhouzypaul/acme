@@ -61,3 +61,6 @@ class R2D2Config:
   use_pessimistic_graph_for_planning: bool = True
   off_policy_edge_threshold: float = 0.75
   max_vi_iterations: int = 10
+
+  # When this is <= 0, we use mean + n * std as the novelty threshold.
+  novelty_threshold_for_goal_creation: float = -1.

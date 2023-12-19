@@ -95,7 +95,8 @@ class EnvironmentLoop(core.Worker):
       cfn: Optional[CFN] = None,
       exploration_networks: Optional[CFNNetworks] = None,
       exploitation_networks: Optional[R2D2Networks] = None,
-      n_sigmas_threshold_for_goal_creation: int = 0
+      n_sigmas_threshold_for_goal_creation: int = 0,
+      novelty_threshold_for_goal_creation: float = -1.
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -117,6 +118,7 @@ class EnvironmentLoop(core.Worker):
     self._exploration_networks = exploration_networks
     self._exploitation_networks = exploitation_networks
     self._n_sigmas_threshold_for_goal_creation = n_sigmas_threshold_for_goal_creation
+    self._novelty_threshold_for_goal_creation = novelty_threshold_for_goal_creation
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -634,6 +636,19 @@ class EnvironmentLoop(core.Worker):
         )
 
       raise NotImplementedError(method)
+    
+    def should_create_new_goals(novelty_scores: List[float]) -> bool:
+      """Should we create new goals from the trajectory?"""
+      if self._novelty_threshold_for_goal_creation > 0:
+        thresh = self._novelty_threshold_for_goal_creation
+      else:
+        reward_mean = self._exploration_actor._rnd_state.reward_mean
+        reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
+        thresh = reward_mean + (self._n_sigmas_threshold_for_goal_creation * reward_std)
+      max_novelty = max(novelty_scores)
+      should_create = max_novelty > thresh
+      print(f'Novelty threshold: {thresh}. Should create? {max_novelty, should_create}')
+      return should_create
 
     goal_space = self.goal_dict
 
@@ -658,12 +673,8 @@ class EnvironmentLoop(core.Worker):
       # novelty_scores: List[float] = [self._get_intrinsic_reward(visited_states[g]) \
       #                                for g in new_goal_hashes]
       novelty_scores: List[float] = [hash2int[g] for g in new_goal_hashes]
-
-      reward_mean = self._exploration_actor._rnd_state.reward_mean
-      reward_std = jnp.sqrt(self._exploration_actor._rnd_state.reward_var + 1e-4)
-      thresh = reward_mean + (self._n_sigmas_threshold_for_goal_creation * reward_std)
       
-      if max(novelty_scores) > thresh:
+      if should_create_new_goals(novelty_scores):
 
         discovered_goals = extract(
           visited_states,
