@@ -198,6 +198,13 @@ class GoalSpaceManager(Saveable):
       # TODO(ab): assign it a goal that is not achievable
       goals=exploration_goal_feats
     )
+
+  @property
+  def exploration_hash(self) -> Tuple:
+    obs = self._environment.observation_spec()
+    exploration_goal_feats = -1 * np.ones(
+      self._environment.task_goal_features.shape, dtype=obs.goals.dtype)
+    return tuple(exploration_goal_feats)
     
   @property
   def _params(self):
@@ -312,7 +319,8 @@ class GoalSpaceManager(Saveable):
   def _update_on_policy_success_dict(self, hash2success: Dict):
     with self._hash2successes_lock:
       for key in hash2success:
-        self._hash2successes[key].append(hash2success[key])
+        if key != self.exploration_hash:
+          self._hash2successes[key].append(hash2success[key])
 
   def _update_idx_dict(self, hash2obs: Dict):
     with self._idx_dict_lock:

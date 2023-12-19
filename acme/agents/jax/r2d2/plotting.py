@@ -17,6 +17,8 @@ import acme.agents.jax.cfn.plotting as cfn_plotting
 class GSMPlotter:
   def __init__(self, time_between_plots=60 * 5):
     self._time_between_plots = time_between_plots
+    self._reward_means = []
+    self._reward_variances = []
 
     base_dir = get_save_directory()
     self._already_plotted_goals = set()
@@ -35,6 +37,7 @@ class GSMPlotter:
     self._amdp_vstar_plotting_dir = os.path.join(base_dir, 'plots', 'amdp_vstar')
     self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
     self._gc_learning_curves_plotting_dir = os.path.join(base_dir, 'plots', 'gc_learning_curves')
+    self._novelty_threshold_plotting_dir = os.path.join(base_dir, 'plots', 'novelty_threshold')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -50,6 +53,7 @@ class GSMPlotter:
     os.makedirs(self._amdp_vstar_plotting_dir, exist_ok=True)
     os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
     os.makedirs(self._gc_learning_curves_plotting_dir, exist_ok=True)
+    os.makedirs(self._novelty_threshold_plotting_dir, exist_ok=True)
 
   def get_gsm_variables(self):
     try:
@@ -71,8 +75,8 @@ class GSMPlotter:
       idx2hash=state[8],
       edges=state[9],
       off_policy_edges=state[10],
-      reward_mean=0,
-      reward_var=0,
+      reward_mean=state[11],
+      reward_var=state[12],
       hash2bellman=collections.defaultdict(
         lambda: collections.deque(maxlen=50),
         {k: collections.deque(v, maxlen=50) for k, v in state[13].items()}),
@@ -95,12 +99,15 @@ class GSMPlotter:
         vars['reward_mean'],
         vars['reward_var'],
         episode)
+      self._reward_means.append(vars['reward_mean'])
+      self._reward_variances.append(vars['reward_var'])
       self._plot_hash2bonus(vars['hash2bonus'], episode)
       self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], episode)
       self._plot_bellman_errors(vars['hash2bellman'], episode)
       self._plot_spatial_vstar(vars['hash2vstar'], episode)
       self._plot_gsm_iteration_times(vars['gsm_iteration_times'])
       self._plot_per_goal_success_curves(vars['hash2success'], episode)
+      self._plot_reward_mean_and_variance(episode=-1)
 
       cfn_plotting.plot_average_bonus_for_each_hash_bit(
         vars['hash2bonus'],
@@ -321,6 +328,24 @@ class GSMPlotter:
       plt.suptitle(f'Goal Success Curves at GSM Iteration {episode}')
       plt.savefig(os.path.join(self._gc_learning_curves_plotting_dir, f'success_curves_{episode}.png'))
       plt.close()
+
+  def _plot_reward_mean_and_variance(self, episode):
+    """Make a plot showing reward mean and shade the region one std dev above it."""
+    plt.figure(figsize=(14, 14))
+    means = np.asarray(self._reward_means)
+    variances = np.asarray(self._reward_variances)
+    stds = np.sqrt(variances + 1e-12)
+    plt.plot(self._reward_means, marker='o', linestyle='-', linewidth=4)
+    plt.fill_between(
+      range(len(self._reward_means)),
+      means - stds,
+      means + stds,
+      alpha=0.5
+    )
+    plt.savefig(
+      os.path.join(self._novelty_threshold_plotting_dir,
+                   f'reward_mean_and_variance_{episode}.png'))
+    plt.close()
 
   def _plot_spatial_vstar(self, hash2vstar, episode):
     """Spatially plot the AMDP V* for 4 randomly sampled goal nodes."""
