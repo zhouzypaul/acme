@@ -172,6 +172,17 @@ class EnvironmentLoop(core.Worker):
       # TODO(ab): assign it a goal that is not achievable
       goals=exploration_goal_feats
     )
+  
+  @property
+  def exploration_hash(self) -> Tuple:
+    obs = self._environment.observation_spec()
+    exploration_goal_feats = -1 * np.ones(
+      self._environment.task_goal_features.shape, dtype=obs.goals.dtype)
+    return tuple(exploration_goal_feats)
+  
+  @property
+  def task_goal_hash(self) -> Tuple:
+    return tuple(self._environment.task_goal_features)
 
   def _reached(self, current_hash, goal_hash) -> bool:
     assert isinstance(current_hash, np.ndarray), type(current_hash)
@@ -488,6 +499,8 @@ class EnvironmentLoop(core.Worker):
     while not needs_reset and not termination_func(timestep, target_node):
       goal = subgoal_sampler(self._get_current_node(timestep))
 
+      obs0 = copy.deepcopy(timestep.observation)
+
       timestep, needs_reset, episode_logs = self.gc_rollout(
         timestep._replace(step_type=dm_env.StepType.FIRST),
         goal, episode_logs, use_random_actions=False
@@ -495,7 +508,8 @@ class EnvironmentLoop(core.Worker):
       
       assert timestep.last(), timestep
 
-      attempted_edges.append((timestep.observation, goal, timestep.reward > 0.))
+      # Log the attempted edge and whether it was successful.
+      attempted_edges.append((obs0, goal, timestep.reward > 0.))
 
       key = tuple(goal.goals)
       delta = timestep.reward - self._goal_achievement_rates[key]
@@ -934,8 +948,8 @@ class EnvironmentLoop(core.Worker):
       attempted_hashes = [(obs2key(x), obs2key(y)) for x, y, _ in attempted_edges]
       return dict(collections.Counter(attempted_hashes))
     
-    def dest2success() -> Dict:
-      return {obs2key(dest): bool(success) for _, dest, success in attempted_edges}
+    def edge2success() -> Dict:
+      return {(obs2key(src), obs2key(dest)): bool(success) for src, dest, success in attempted_edges}
     
     def extract_discounts() -> Dict:
       """Terminal states in the MDP have a discount of 0."""
@@ -958,7 +972,7 @@ class EnvironmentLoop(core.Worker):
     hash2obs = extract_goal_to_obs()
     edge2count = attempted2counts()
     hash2discount = extract_discounts()
-    hash2success = dest2success()
+    edge2successes = edge2success()
 
     # Filter out pairs in which both nodes are the same.
     expansion_node_new_node_pairs = [
@@ -978,7 +992,7 @@ class EnvironmentLoop(core.Worker):
       edge2count,
       hash2discount,
       expansion_node_new_node_pairs,
-      hash2success
+      edge2successes
     )
 
     print(f'[EnvironmentLoop] Took {time.time() - t0}s to update the GSM.')
@@ -1185,10 +1199,11 @@ class EnvironmentLoop(core.Worker):
     num_attempts = []
     success_rates = []
     for node in node2rate:
-      x_locations.append(node[0])
-      y_locations.append(node[1])
-      success_rates.append(node2rate[node])
-      num_attempts.append(node2attempts[node])
+      if node != self.exploration_hash and node != self.task_goal_hash:
+        x_locations.append(node[0])
+        y_locations.append(node[1])
+        success_rates.append(node2rate[node])
+        num_attempts.append(node2attempts[node])
 
     # Visualize all graph nodes, not just descendants.
     start_node = tuple([int(g) for g in ts0.observation.goals])

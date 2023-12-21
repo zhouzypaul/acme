@@ -47,6 +47,7 @@ class GoalSpaceManager(Saveable):
       rmax_factor: float = 2.,
       use_pessimistic_graph_for_planning: bool = False,
       max_vi_iterations: int = 20,
+      goal_space_size: int = 100,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -56,6 +57,7 @@ class GoalSpaceManager(Saveable):
     self._rmax_factor = rmax_factor
     self._use_pessimistic_graph_for_planning = use_pessimistic_graph_for_planning
     self._max_vi_iterations = max_vi_iterations
+    self._goal_space_size = goal_space_size
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -107,8 +109,8 @@ class GoalSpaceManager(Saveable):
     self._hash2vstar = collections.defaultdict(list)
 
     # Learning curve for each goal
-    self._hash2successes = collections.defaultdict(list)
-    self._hash2successes_lock = threading.Lock()
+    self._edge2successes = collections.defaultdict(list)
+    self._edge2successes_lock = threading.Lock()
 
     base_dir = get_save_directory()
     self._base_plotting_dir = os.path.join(base_dir, 'plots')
@@ -131,6 +133,7 @@ class GoalSpaceManager(Saveable):
       exploration_goal=self.exploration_goal,
       exploration_goal_probability=0.,
       rmax_factor=self._rmax_factor,
+      goal_space_size=self._goal_space_size,
       max_vi_iterations=self._max_vi_iterations
     )
     expansion_node = goal_sampler.begin_episode(current_node)
@@ -149,7 +152,8 @@ class GoalSpaceManager(Saveable):
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
       exploration_goal_probability=0.,
-      rmax_factor=self._rmax_factor
+      rmax_factor=self._rmax_factor,
+      goal_space_size=self._goal_space_size,
     ).get_descendants(current_node)
 
   def get_variables(self, names=()):
@@ -288,7 +292,7 @@ class GoalSpaceManager(Saveable):
     edge2count: Dict,
     hash2discount: Dict,
     expansion_node_new_node_hash_pairs: List[Tuple[Tuple, Tuple]],
-    hash2success: Dict,
+    edge2success: Dict,
   ):
     """Update based on goals achieved by the different actors."""
     self._update_obs_dict(hash2obs)
@@ -297,7 +301,7 @@ class GoalSpaceManager(Saveable):
     self._update_idx_dict(hash2obs)
     self._hash2discount.update(hash2discount)
     self._update_edges_set(expansion_node_new_node_hash_pairs)
-    self._update_on_policy_success_dict(hash2success)
+    self._update_edge_success_dict(edge2success)
     
   def _update_count_dict(self, hash2count: Dict):
     with self._count_dict_lock:
@@ -316,11 +320,11 @@ class GoalSpaceManager(Saveable):
         src, dest = key
         self._on_policy_counts[src][dest] += hash2count[key]
 
-  def _update_on_policy_success_dict(self, hash2success: Dict):
-    with self._hash2successes_lock:
-      for key in hash2success:
-        if key != self.exploration_hash:
-          self._hash2successes[key].append(hash2success[key])
+  def _update_edge_success_dict(self, edge2success: Dict):
+    with self._edge2successes_lock:
+      for key in edge2success:
+        if self.exploration_hash not in key:
+          self._edge2successes[key].append(edge2success[key])
 
   def _update_idx_dict(self, hash2obs: Dict):
     with self._idx_dict_lock:
@@ -842,7 +846,7 @@ class GoalSpaceManager(Saveable):
                  hash2bell,
                  self._thread_safe_deepcopy(self._hash2vstar),
                  self._gsm_iteration_times,
-                 self._hash2successes)
+                 self._edge2successes)
     assert len(to_return) == 17, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
@@ -867,11 +871,14 @@ class GoalSpaceManager(Saveable):
       {k: collections.deque(v, maxlen=50) for k, v in state[13].items()})
     self._hash2vstar = state[14]
     self._gsm_iteration_times = state[15]
-    self._hash2successes = state[16]
+    self._edge2successes = state[16]
     assert isinstance(self._edges, set), type(state[9])
     assert isinstance(self._off_policy_edges, set), type(state[10])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
+
+    # _edges = self.get_all_edges_with(src=(8, 11, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0))
+    # print(f'Edges from (8, 11, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0): {_edges}')
 
   def restore_transition_tensor(self, transition_matrix):
     k = self._tensor_increments
@@ -882,3 +889,15 @@ class GoalSpaceManager(Saveable):
     n_real_nodes = len(transition_matrix)
     transition_tensor[:n_real_nodes, :n_real_nodes] = transition_matrix
     return transition_tensor
+  
+  def get_all_edges_with(self, src=None, dest=None):
+    """Get all edges that have src or dest as a node."""
+    edges = set()
+    for edge in self._edges:
+      if src is not None and edge[0] == src:
+        prob = self._transition_matrix[self._hash2idx[src], self._hash2idx[edge[1]]]
+        edges.add((edge, prob))
+      if dest is not None and edge[1] == dest:
+        prob = self._transition_matrix[self._hash2idx[edge[0]], self._hash2idx[dest]]
+        edges.add((edge, prob))
+    return edges
