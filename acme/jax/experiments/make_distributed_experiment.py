@@ -482,6 +482,7 @@ def make_distributed_experiment(
     pessimism = experiment.builder._config.use_pessimistic_graph_for_planning
     off_policy_threshold = experiment.builder._config.off_policy_edge_threshold
     vi_iterations = experiment.builder._config.max_vi_iterations
+    goal_space_size = experiment.builder._config.goal_space_size
     gsm = GoalSpaceManager(env, rng_num, networks,
                            variable_client,
                            exploration_networks,
@@ -490,7 +491,8 @@ def make_distributed_experiment(
                            prob_augmenting_bonus_constant=c_augment,
                            use_pessimistic_graph_for_planning=pessimism,
                            off_policy_edge_threshold=off_policy_threshold,
-                           max_vi_iterations=vi_iterations)
+                           max_vi_iterations=vi_iterations,
+                           goal_space_size=goal_space_size)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(

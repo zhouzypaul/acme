@@ -34,7 +34,8 @@ class GoalSampler:
       method: str = 'amdp',
       ignore_non_rewarding_terminal_nodes: bool = False,
       rmax_factor: float = 2.,
-      max_vi_iterations: int = 20):
+      max_vi_iterations: int = 20,
+      goal_space_size: int = 100):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -56,6 +57,7 @@ class GoalSampler:
     self.idx2hash = idx2hash
     self.rmax_factor = rmax_factor
     self.max_vi_iterations = max_vi_iterations
+    self._goal_space_size = goal_space_size
     
     self._n_courier_errors = 0
     
@@ -65,6 +67,8 @@ class GoalSampler:
     # This is to avoid picking death nodes as expansion nodes b/c 
     # the exploration policy can't be run from there anyway.
     self._ignore_non_rewarding_terminal_nodes = ignore_non_rewarding_terminal_nodes
+
+    print(f'Created GoalSampler with GS size {goal_space_size} and method {method}.')
 
   def begin_episode(self, current_node: Tuple) -> Tuple:
     goal_dict = self.get_candidate_goals(current_node)
@@ -154,7 +158,7 @@ class GoalSampler:
     self,
     current_node: Tuple,
     default_behavior: str = 'none',
-    sampling_type: str = 'sum_sample'
+    sampling_type: str = 'sort_then_sample'
   ) -> Tuple[List[Tuple], np.ndarray]:
     assert default_behavior in ('task', 'exploration', 'none'), default_behavior
     assert sampling_type in ('argmax', 'sum_sample', 'sort_then_sample'), sampling_type
@@ -172,7 +176,8 @@ class GoalSampler:
       elif sampling_type == 'sort_then_sample':  # NOTE: Untested.
         # Sort by score, then sample based on scores from the top 10%.
         idx = np.argsort(scores)[::-1]  # descending order sort.
-        n_non_zero_probs = len(scores) // 10 if len(scores) > 50 else len(scores)
+        # n_non_zero_probs = len(scores) // 10 if len(scores) > 50 else len(scores)
+        n_non_zero_probs = min(self._goal_space_size, len(scores))
         non_zero_probs_idx  = idx[:n_non_zero_probs]
         probs = np.zeros_like(scores)
         probs[non_zero_probs_idx] = scores2probabilities(scores[non_zero_probs_idx])

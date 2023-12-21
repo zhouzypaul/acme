@@ -64,3 +64,6 @@ class R2D2Config:
 
   # When this is <= 0, we use mean + n * std as the novelty threshold.
   novelty_threshold_for_goal_creation: float = -1.
+
+  # When this is -1, it means that we use sum_sampling in GoalSampler.
+  goal_space_size: int = 100
