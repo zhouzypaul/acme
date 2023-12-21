@@ -15,10 +15,12 @@ import acme.agents.jax.cfn.plotting as cfn_plotting
 
 
 class GSMPlotter:
-  def __init__(self, time_between_plots=60 * 5):
+  def __init__(self, time_between_plots=5 * 60, key_bit=2, door_bit=3):
     self._time_between_plots = time_between_plots
     self._reward_means = []
     self._reward_variances = []
+    self._key_bit = key_bit
+    self._door_bit = door_bit
 
     base_dir = get_save_directory()
     self._already_plotted_goals = set()
@@ -38,6 +40,9 @@ class GSMPlotter:
     self._hash_bit_plotting_dir = os.path.join(base_dir, 'plots', 'hash_bit_plots')
     self._gc_learning_curves_plotting_dir = os.path.join(base_dir, 'plots', 'gc_learning_curves')
     self._novelty_threshold_plotting_dir = os.path.join(base_dir, 'plots', 'novelty_threshold')
+    self._key_competence_plotting_dir = os.path.join(base_dir, 'plots', 'key_competence')
+    self._door_competence_plotting_dir = os.path.join(base_dir, 'plots', 'door_competence')
+    self._on_policy_count_plotting_dir = os.path.join(base_dir, 'plots', 'on_policy_counts')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -54,6 +59,9 @@ class GSMPlotter:
     os.makedirs(self._hash_bit_plotting_dir, exist_ok=True)
     os.makedirs(self._gc_learning_curves_plotting_dir, exist_ok=True)
     os.makedirs(self._novelty_threshold_plotting_dir, exist_ok=True)
+    os.makedirs(self._key_competence_plotting_dir, exist_ok=True)
+    os.makedirs(self._door_competence_plotting_dir, exist_ok=True)
+    os.makedirs(self._on_policy_count_plotting_dir, exist_ok=True)
 
   def get_gsm_variables(self):
     try:
@@ -67,7 +75,7 @@ class GSMPlotter:
       hash2obs=state[0],
       hash2counts=collections.defaultdict(int, state[1]),
       hash2bonus=state[2],
-      on_policy_counts=_dict_to_default_dict(state[3], int),
+      on_policy_counts=state[3],
       hash2reward=state[4],
       hash2discount=state[5],
       hash2idx=state[6],
@@ -82,10 +90,13 @@ class GSMPlotter:
         {k: collections.deque(v, maxlen=50) for k, v in state[13].items()}),
       hash2vstar=state[14],
       gsm_iteration_times=state[15],
-      hash2success=state[16],
+      edge2success=state[16],
     )
 
   def __call__(self, episode=0):
+    def extract_hash_to_success(edge2success):
+      return {edge[1]: edge2success[edge] for edge in edge2success}
+
     vars = self.get_gsm_variables()
     if vars:
       self.visualize_value_function(
@@ -106,8 +117,12 @@ class GSMPlotter:
       self._plot_bellman_errors(vars['hash2bellman'], episode)
       self._plot_spatial_vstar(vars['hash2vstar'], episode)
       self._plot_gsm_iteration_times(vars['gsm_iteration_times'])
-      self._plot_per_goal_success_curves(vars['hash2success'], episode)
+      self._plot_per_goal_success_curves(
+        extract_hash_to_success(vars['edge2success']), episode)
       self._plot_reward_mean_and_variance(episode=-1)
+      self._plot_key_bit_success_curves(vars['edge2success'], episode)
+      self._plot_door_bit_success_curves(vars['edge2success'], episode)
+      self._plot_on_policy_counts(vars['on_policy_counts'], episode)
 
       cfn_plotting.plot_average_bonus_for_each_hash_bit(
         vars['hash2bonus'],
@@ -328,6 +343,91 @@ class GSMPlotter:
       plt.suptitle(f'Goal Success Curves at GSM Iteration {episode}')
       plt.savefig(os.path.join(self._gc_learning_curves_plotting_dir, f'success_curves_{episode}.png'))
       plt.close()
+
+  def _plot_success_curve_for_interesting_hash_bit(self, hash_bit, hash_bit_vals, edge2success, save_path):
+    """Plot success curves for some edges that transition from low -> high for the given hash_bit."""
+    def get_success_curves():
+      interesting_success_curves = {}
+      for (src, dest), success_curve in edge2success.items():
+        if src[hash_bit] not in hash_bit_vals and \
+          dest[hash_bit] in hash_bit_vals and \
+            len(success_curve) > 10:
+          interesting_success_curves[(src, dest)] = success_curve
+      return interesting_success_curves
+    
+    interesting_success_curves = get_success_curves()
+    edges = list(interesting_success_curves.keys())
+    selected_edges = random.sample(edges, k=min(len(edges), 6))
+
+    if selected_edges:
+      plt.figure(figsize=(14, 14))
+
+    for i, edge in enumerate(selected_edges):
+      plt.subplot(3, 2, i + 1)
+      plt.plot(interesting_success_curves[edge], marker='o', linestyle='-')
+      plt.title(f'{edge}')
+
+    if selected_edges:
+      plt.savefig(save_path)
+      plt.close()
+
+  def _plot_key_bit_success_curves(self, edge2success, episode):
+    """Plot success curves for edges that transition from low -> high for the key bit."""
+    self._plot_success_curve_for_interesting_hash_bit(
+      hash_bit=self._key_bit,
+      hash_bit_vals=(1,),
+      edge2success=edge2success,
+      save_path=os.path.join(self._key_competence_plotting_dir, f'success_curves_key_{episode}.png')
+    )
+  
+  def _plot_door_bit_success_curves(self, edge2success, episode):
+    """Plot success curves for edges that transition from low -> high for the door bit."""
+    self._plot_success_curve_for_interesting_hash_bit(
+      hash_bit=self._door_bit,
+      hash_bit_vals=(0, 1),  # Door unlocked or open
+      edge2success=edge2success,
+      save_path=os.path.join(self._door_competence_plotting_dir, f'success_curves_door_{episode}.png')
+    )
+
+  def _plot_on_policy_counts(self, edge_counts, episode):
+    """Plot the counts for the src node in 1 subplot and the dest node in another."""
+    def get_total_count(src=None, dest=None) -> int:
+      total_count = 0
+      for src_node in edge_counts:
+        for dest_node in edge_counts[src_node]:
+          if src is not None and src_node == src:
+            total_count += edge_counts[src][dest_node]
+          elif dest is not None and dest_node == dest:
+            total_count += edge_counts[src_node][dest]
+      return total_count
+    
+    def spatial_plot(hash2counts, title):
+      hashes = list(hash2counts.keys())
+      xs, ys, counts = [], [], []
+      for hash in hashes:
+        if hash2counts[hash] > 0:
+          xs.append(hash[0])
+          ys.append(hash[1])
+          counts.append(np.log(hash2counts[hash]))
+      plt.scatter(xs, ys, c=counts, s=60, marker='s')
+      plt.colorbar()
+      plt.title(title)
+    
+    src_counts = {src: get_total_count(src=src) for src in edge_counts}
+    dst_counts = {dst: get_total_count(dest=dst) for dst in edge_counts}
+    
+    # Delete the entry from src_counts with the highest value
+    # so that the colorbar is not dominated by a single node.
+    del src_counts[max(src_counts, key=src_counts.get)]
+
+    plt.figure(figsize=(14, 14))
+    plt.subplot(121)
+    spatial_plot(src_counts, title='log(src counts)')
+    plt.subplot(122)
+    spatial_plot(dst_counts, title='log(dest counts)')
+    plt.suptitle('On-Policy Counts')
+    plt.savefig(os.path.join(self._on_policy_count_plotting_dir, f'edge_counts_{episode}.png'))
+    plt.close()
 
   def _plot_reward_mean_and_variance(self, episode):
     """Make a plot showing reward mean and shade the region one std dev above it."""
