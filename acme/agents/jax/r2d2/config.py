@@ -67,3 +67,5 @@ class R2D2Config:
 
   # When this is -1, it means that we use sum_sampling in GoalSampler.
   goal_space_size: int = 100
+
+  task_goal_probability: float = 0.
