@@ -84,7 +84,7 @@ class SubgoalSampler:
       self,
       start_node: Tuple,
       goal_node: Tuple,
-      max_len: int = 10
+      max_len: int = 20
   ) -> List[Tuple]:
     """Get the sequence of subgoals from start -> goal."""
     i = 0
