@@ -1,3 +1,4 @@
+import random
 import numpy as np
 from typing import Dict, Tuple, List
 
@@ -33,6 +34,13 @@ class AMDP:
     self._n_states, self._n_actions = transition_tensor.shape
     assert self._n_states == self._n_actions, 'Not special-casing the death node here.'
 
+    if target_node not in self._hash2idx:
+      goal_node = self.sample_rewarding_node()
+      if goal_node is not None:
+        print(f'[AMDP] *** Switched target node from {target_node} -> {goal_node} ***')
+        target_node = goal_node
+        self._target_node = target_node
+
     self._reward_vector, self._discount_vector = self._abstract_reward_function(target_node)
     self._vf, self._policy, self.max_bellman_errors = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
     print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states.')
@@ -44,6 +52,13 @@ class AMDP:
   def get_values(self) -> Dict:
     """Serialize the value function into a dictionary with goal_hash -> value."""
     return {node: self._vf[idx] for node, idx in self._hash2idx.items()}
+  
+  def sample_rewarding_node(self):
+    """If the target node is the task goal, then switch it out for a rewarding node."""
+    rewarding_nodes = [node for node, rew in self._reward_dict.items() if rew > 0]
+    terminal_rewarding_nodes = [node for node in rewarding_nodes if self._discount_dict[node] == 0]
+    if len(terminal_rewarding_nodes) > 0:
+      return random.choice(terminal_rewarding_nodes)
   
   def _abstract_reward_function(self, target_node) -> Tuple[np.ndarray, np.ndarray]:
     """Assign a reward and discount factor to each node in the AMDP."""
@@ -106,7 +121,7 @@ class AMDP:
     return values, policy, max_bellman_errors
 
   def get_goal_sequence(
-    self, start_node: Tuple, goal_node: Tuple, max_len: int = 10
+    self, start_node: Tuple, goal_node: Tuple, max_len: int = 20
   ) -> List[Tuple]:
     """Get the sequence of subgoals from start -> goal."""
     i = 0
