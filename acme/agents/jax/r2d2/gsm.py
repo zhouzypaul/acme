@@ -104,6 +104,7 @@ class GoalSpaceManager(Saveable):
     self._gsm_iteration_times = []
 
     self._already_plotted_goals = set()
+    self.has_seen_task_goal = False
 
     self._hash2bellman = collections.defaultdict(lambda: collections.deque(maxlen=50))
     self._hash2vstar = collections.defaultdict(list)
@@ -313,6 +314,9 @@ class GoalSpaceManager(Saveable):
       oarg = self._construct_oarg(*hash2obs[goal], goal)
       self._hash2obs[goal] = oarg
       self._hash2reward[goal] = oarg.reward
+
+      if oarg.reward > 0:
+        self.has_seen_task_goal = True
         
   def _update_on_policy_count_dict(self, hash2count: Dict):
     with self._on_policy_count_dict_lock:
@@ -333,6 +337,9 @@ class GoalSpaceManager(Saveable):
           idx = len(self._hash2idx)
           self._hash2idx[hash] = idx
           self._idx2hash[idx] = hash
+
+  def get_has_seen_task_goal(self):
+    return self.has_seen_task_goal
 
   def _update_edges_set(
     self,
@@ -846,8 +853,9 @@ class GoalSpaceManager(Saveable):
                  hash2bell,
                  self._thread_safe_deepcopy(self._hash2vstar),
                  self._gsm_iteration_times,
-                 self._edge2successes)
-    assert len(to_return) == 17, len(to_return)
+                 self._edge2successes,
+                 self.has_seen_task_goal)
+    assert len(to_return) == 18, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
@@ -872,8 +880,10 @@ class GoalSpaceManager(Saveable):
     self._hash2vstar = state[14]
     self._gsm_iteration_times = state[15]
     self._edge2successes = state[16]
+    self.has_seen_task_goal = state[17]
     assert isinstance(self._edges, set), type(state[9])
     assert isinstance(self._off_policy_edges, set), type(state[10])
+    assert isinstance(self.has_seen_task_goal, bool), type(state[17])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
 
