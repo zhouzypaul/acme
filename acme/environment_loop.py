@@ -86,7 +86,7 @@ class EnvironmentLoop(core.Worker):
       label: str = 'environment_loop',
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
       goal_space_manager: GoalSpaceManager = None,
-      task_goal_probability: float = 0.,
+      task_goal_probability: float = 0.1,
       always_learn_about_task_goal: bool = True,
       always_learn_about_exploration_goal: bool = False,
       actor_id: int = 0,
@@ -123,6 +123,7 @@ class EnvironmentLoop(core.Worker):
     self.goal_dict = {}
     self.count_dict = {}
     self._n_courier_errors = 0
+    self._has_seen_task_goal = False
 
     self._goal_achievement_rates = collections.defaultdict(float)
     self._goal_pursual_counts = collections.defaultdict(int)
@@ -274,6 +275,9 @@ class EnvironmentLoop(core.Worker):
     try:
       self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
       self.goal_dict = self._goal_space_manager.get_goal_dict()
+      self._has_seen_task_goal = self._goal_space_manager.get_has_seen_task_goal()
+      if self._has_seen_task_goal:
+        print(f'[EnvironmentLoop] Has seen task goal.')
     except Exception as e:  # If error, keep the old stale copy of the dicts
       self._n_courier_errors += 1
       print(f'[GoalSampler] Warning: Courier error # {self._n_courier_errors}. Exception: {e}')
@@ -314,7 +318,7 @@ class EnvironmentLoop(core.Worker):
       subgoal_sampler = SubgoalSampler(
         abstract_policy,
         self.goal_dict,
-        task_goal_probability=self._task_goal_probability,
+        task_goal_probability=self._task_goal_probability if self._has_seen_task_goal else 0.,
         task_goal=self.task_goal,
         exploration_goal_probability=0.,
         exploration_goal=self.exploration_goal,
@@ -1134,7 +1138,8 @@ class EnvironmentLoop(core.Worker):
       task_goal = self.task_goal
 
       if self._always_learn_about_task_goal and \
-        not self.goal_reward_func(hindsight_goal, task_goal)[0]:
+        not self.goal_reward_func(hindsight_goal, task_goal)[0] and \
+          self._has_seen_task_goal:
         print(f'[HER] replaying wrt to task goal {task_goal.goals}')
         self.replay_trajectory_with_new_goal(trajectory, task_goal)
 
