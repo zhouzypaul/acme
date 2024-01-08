@@ -246,6 +246,27 @@ def test_planning_at_different_horizons():
     plt.close()
 
 
+def test_low_probability_graph(size=4, transition_probability=1e-10):
+    """
+    Generates a simple linear graph of a given size with low transition probabilities.
+
+    :param size: Number of states in the graph.
+    :param transition_probability: The low probability for transition between states.
+    :return: Transition matrix representing the graph.
+    """
+    transition_matrix = np.zeros((size, size))
+    for i in range(size - 1):
+        transition_matrix[i, i + 1] = transition_probability
+    
+    hash2idx = {i: i for i in range(size)}
+    target_node = size - 1
+    planner = make_amdp_planner(transition_matrix, hash2idx, target_node,
+                                amdp_reward_factor=1e10, max_vi_iterations=100)
+    computed_policy = planner.get_policy()
+    print('[Underflow test] value function: ', planner.get_values())
+    print('[Underflow test] computed_policy: ', computed_policy)
+
+
 if __name__ == '__main__':
     test_linear_graph()
     test_branching_graph()
@@ -255,3 +276,4 @@ if __name__ == '__main__':
     test_graph_with_dead_ends()
     test_planning_at_different_horizons()
     negative_value_probability()
+    test_low_probability_graph(size=40, transition_probability=0.1)
