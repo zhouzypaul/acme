@@ -182,6 +182,7 @@ if __name__ == "__main__":
     parser.add_argument('--save_filename', type=str, default='learning_curves')
     parser.add_argument('--smoothen', type=int, default=100)
     parser.add_argument('--hyperparams', nargs='+', default='nsigmasthresholdforgoalcreation')
+    parser.add_argument('--all_seeds', action='store_true', default=False)
     args = parser.parse_args()
 
     base_dir = os.path.join(args.base_dir, args.domain, args.experiment)
@@ -214,6 +215,6 @@ if __name__ == "__main__":
         # smoothen=False,
         # truncate_min_frames=50_000_000,
         # min_seeds=5,
-        all_seeds=False,
+        all_seeds=args.all_seeds,
         title=f"DSG {args.experiment} {args.domain}",
         )
