@@ -51,14 +51,27 @@ def plot_all_learning_curves(id_to_csv):
         returns = df['episode_return']
         
         # sparsify data for plotting
-        every_n = 5
+        every_n = 1
         frames = frames[frames.index % every_n == 0]
         returns = returns[returns.index % every_n == 0]
+
+        # Apply moving average filter before plotting
+        n = 100
+        cumsum, moving_aves = [0], []
+        for i, x in enumerate(returns, 1):
+            cumsum.append(cumsum[i-1] + x)
+            if i >= n:
+                moving_ave = (cumsum[i] - cumsum[i-n])/n
+                # can do stuff with moving_ave here
+                moving_aves.append(moving_ave)
+        returns = moving_aves
         
-        plt.plot(frames, returns, label=acme_id)
+        plt.plot(returns, label=acme_id, linewidth=3.0)
     # plt.legend()
     plt.show()
-    save_path = os.path.expanduser('~/acme/learning_curves.png')
+    save_path = os.path.expanduser(
+        f"{os.path.join(args.base_dir, args.acme_id, 'learning_curves.png')}"
+    )
     print(f"Saving to {save_path}")
     plt.savefig(save_path)
 
