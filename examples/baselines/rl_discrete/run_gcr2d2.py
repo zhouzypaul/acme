@@ -90,7 +90,11 @@ flags.DEFINE_float("off_policy_edge_threshold", 0.75, "Threshold for off-policy 
 flags.DEFINE_integer("max_vi_iterations", 50, "Max number of VI iterations for AMDP")
 flags.DEFINE_float("novelty_threshold_for_goal_creation", -1., "Threshold for novelty for new goal/node creation")
 flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for target node sampling. -1 means sum_sampling.")
+
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
+flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
+flags.DEFINE_string("planner_backup_strategy", "graph_search", "Backup strategy for the planner. One of ['graph_search', 'task'].")
+flags.DEFINE_bool("use_planning_in_evaluator", False, "Whether to use planning in the evaluator or not.")
 
 FLAGS = flags.FLAGS
 
@@ -111,7 +115,10 @@ def build_experiment_config():
       max_episode_len=max_episode_steps
     )
 
-  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
+  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)\
+  
+  if not FLAGS.use_planning_in_evaluator:
+    assert FLAGS.task_goal_probability > 0, "If not planning in eval, then drive behavior with task goal."
 
   # Configure the agent.
   config = r2d2.R2D2Config(
@@ -137,6 +144,9 @@ def build_experiment_config():
       novelty_threshold_for_goal_creation=FLAGS.novelty_threshold_for_goal_creation,
       goal_space_size=FLAGS.goal_space_size,
       task_goal_probability=FLAGS.task_goal_probability,
+      use_planning_in_evaluator=FLAGS.use_planning_in_evaluator,
+      should_switch_goal=FLAGS.switch_task_expansion_node,
+      subgoal_sampler_default_behavior=FLAGS.planner_backup_strategy,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

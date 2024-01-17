@@ -35,7 +35,8 @@ class GoalSampler:
       ignore_non_rewarding_terminal_nodes: bool = False,
       rmax_factor: float = 2.,
       max_vi_iterations: int = 20,
-      goal_space_size: int = 100):
+      goal_space_size: int = 100,
+      should_switch_goal: bool = False,):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -58,6 +59,7 @@ class GoalSampler:
     self.rmax_factor = rmax_factor
     self.max_vi_iterations = max_vi_iterations
     self._goal_space_size = goal_space_size
+    self._should_switch_goal = should_switch_goal
     
     self._n_courier_errors = 0
     
@@ -87,6 +89,7 @@ class GoalSampler:
         target_node=target_node,
         rmax_factor=self.rmax_factor,
         max_vi_iterations=self.max_vi_iterations,
+        should_switch_goal=self._should_switch_goal,
       )
       print(f'[GoalSampler] Took {t1 - t0}s to select expansion node.')
       print(f'[GoalSampler] Took {time.time() - t1}s to create & solve AMDP.')

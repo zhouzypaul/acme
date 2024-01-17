@@ -69,3 +69,7 @@ class R2D2Config:
   goal_space_size: int = 100
 
   task_goal_probability: float = 0.
+  
+  use_planning_in_evaluator: bool = False
+  should_switch_goal: bool = False
+  subgoal_sampler_default_behavior: str = 'graph_search'

@@ -30,6 +30,7 @@ from acme.utils import observers as observers_lib
 from acme.utils import experiment_utils
 import jax
 from typing_extensions import Protocol
+from acme.agents.jax.r2d2.gsm import GoalSpaceManager
 
 
 class MakeActorFn(Protocol, Generic[builders.Policy]):
@@ -175,7 +176,8 @@ class ExperimentConfig(Generic[builders.Networks, builders.Policy,
   is_cfn: bool = False
 
   # TODO(stanczyk): Make get_evaluator_factories a standalone function.
-  def get_evaluator_factories(self):
+  def get_evaluator_factories(self,
+                              task_goal_as_subgoal_probability: float = 0.0):
     """Constructs the evaluator factories."""
     if self.evaluator_factories is not None:
       return self.evaluator_factories
@@ -200,7 +202,8 @@ class ExperimentConfig(Generic[builders.Networks, builders.Policy,
             network_factory=self.network_factory,
             policy_factory=eval_policy_factory,
             logger_factory=self.logger_factory,
-            observers=self.observers)
+            observers=self.observers,
+            task_goal_as_subgoal_probability=task_goal_as_subgoal_probability)
     ]
 
 
@@ -282,6 +285,7 @@ def default_evaluator_factory(
     policy_factory: PolicyFactory[builders.Networks, builders.Policy],
     logger_factory: loggers.LoggerFactory,
     observers: Sequence[observers_lib.EnvLoopObserver] = (),
+    task_goal_as_subgoal_probability: float = 0.0,
 ) -> EvaluatorFactory[builders.Policy]:
   """Returns a default evaluator process."""
 
@@ -290,6 +294,7 @@ def default_evaluator_factory(
       variable_source: core.VariableSource,
       counter: counting.Counter,
       make_actor: MakeActorFn[builders.Policy],
+      gsm: Optional[GoalSpaceManager] = None,
   ):
     """The evaluation process."""
 
@@ -312,7 +317,10 @@ def default_evaluator_factory(
         actor=actor,
         counter=counter,
         logger=logger,
-        observers=observers)
+        observers=observers,
+        goal_space_manager=gsm,
+        task_goal_probability=task_goal_as_subgoal_probability,
+        is_evaluator=True)
 
   return evaluator
 

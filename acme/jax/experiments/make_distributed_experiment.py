@@ -454,6 +454,7 @@ def make_distributed_experiment(
     n_sigmas = experiment.builder._config.n_sigmas_threshold_for_goal_creation
     novelty_thresh = experiment.builder._config.novelty_threshold_for_goal_creation
     task_goal_prob = experiment.builder._config.task_goal_probability
+    default_behavior = experiment.builder._config.subgoal_sampler_default_behavior
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
         environment, actor, exploration_actor, counter, logger,
@@ -463,6 +464,7 @@ def make_distributed_experiment(
         n_sigmas_threshold_for_goal_creation=n_sigmas,
         novelty_threshold_for_goal_creation=novelty_thresh,
         task_goal_probability=task_goal_prob,
+        planner_backup_strategy=default_behavior,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -495,7 +497,8 @@ def make_distributed_experiment(
                            use_pessimistic_graph_for_planning=pessimism,
                            off_policy_edge_threshold=off_policy_threshold,
                            max_vi_iterations=vi_iterations,
-                           goal_space_size=goal_space_size)
+                           goal_space_size=goal_space_size,
+                           should_switch_goal=experiment.builder._config.should_switch_goal)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(
@@ -678,11 +681,13 @@ def make_distributed_experiment(
       else:
         program.add_node(lp.MultiThreadingColocation(colocation_nodes))
 
+  should_plan_during_eval = experiment.builder._config.use_planning_in_evaluator and create_goal_space_manager
   for evaluator in experiment.get_evaluator_factories():
     evaluator_key, key = jax.random.split(key)
     program.add_node(
         lp.CourierNode(evaluator, evaluator_key, learner, counter,
-                       experiment.builder.make_actor),
+                       experiment.builder.make_actor,
+                       gsm=gsm if should_plan_during_eval else None), 
         label='evaluator')
 
   if make_snapshot_models and experiment.checkpointing:
