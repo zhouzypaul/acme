@@ -96,7 +96,9 @@ class EnvironmentLoop(core.Worker):
       exploration_networks: Optional[CFNNetworks] = None,
       exploitation_networks: Optional[R2D2Networks] = None,
       n_sigmas_threshold_for_goal_creation: int = 0,
-      novelty_threshold_for_goal_creation: float = -1.
+      novelty_threshold_for_goal_creation: float = -1.,
+      is_evaluator: bool = False,
+      planner_backup_strategy: str = 'graph_search'
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -119,11 +121,16 @@ class EnvironmentLoop(core.Worker):
     self._exploitation_networks = exploitation_networks
     self._n_sigmas_threshold_for_goal_creation = n_sigmas_threshold_for_goal_creation
     self._novelty_threshold_for_goal_creation = novelty_threshold_for_goal_creation
+    self._planner_backup_strategy = planner_backup_strategy
 
     self.goal_dict = {}
     self.count_dict = {}
     self._n_courier_errors = 0
     self._has_seen_task_goal = False
+    self._is_evaluator = is_evaluator
+    self._edges = set()
+    self._reward_dict = {}
+    self._discount_dict = {}
 
     self._goal_achievement_rates = collections.defaultdict(float)
     self._goal_pursual_counts = collections.defaultdict(int)
@@ -276,6 +283,8 @@ class EnvironmentLoop(core.Worker):
       self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
       self.goal_dict = self._goal_space_manager.get_goal_dict()
       self._has_seen_task_goal = self._goal_space_manager.get_has_seen_task_goal()
+      self._edges = self._goal_space_manager.get_on_policy_edges()
+      self._reward_dict, self._discount_dict = self._goal_space_manager.get_extrinsic_reward_dicts()
       if self._has_seen_task_goal:
         print(f'[EnvironmentLoop] Has seen task goal.')
     except Exception as e:  # If error, keep the old stale copy of the dicts
@@ -308,7 +317,8 @@ class EnvironmentLoop(core.Worker):
       expansion_node = tuple(self.task_goal.goals)
       current_node = self._get_current_node(timestep)
       if self._goal_space_manager:
-        planning_results = self._goal_space_manager.begin_episode(current_node)
+        planning_results = self._goal_space_manager.begin_episode(
+          current_node, task_goal_probability=1.0 if self._is_evaluator else 0.1)
         if planning_results is not None:
           print(f'[EnvironmentLoop] Planning result (expansion node): {planning_results[0]}')
           expansion_node, abstract_policy = planning_results
@@ -322,7 +332,12 @@ class EnvironmentLoop(core.Worker):
         task_goal=self.task_goal,
         exploration_goal_probability=0.,
         exploration_goal=self.exploration_goal,
-        sampling_method='amdp' if self._goal_space_manager else 'task')
+        edges=self._edges,
+        expansion_node=expansion_node,
+        reward_dict=self._reward_dict,
+        discount_dict=self._discount_dict,
+        sampling_method='amdp' if self._goal_space_manager else 'task',
+        default_behavior=self._planner_backup_strategy if self._goal_space_manager else 'task')
 
       subgoal_seq = subgoal_sampler.get_subgoal_sequence(current_node, expansion_node)
       print(f'[EnvironmentLoop] Subgoal seq to {expansion_node}: {subgoal_seq}')
@@ -400,18 +415,18 @@ class EnvironmentLoop(core.Worker):
     # Extract new goals to add to the goal-space.
     explore_traj_key = 'exploration_trajectory' if not is_warmup_episode else 'episode_trajectory'
 
-    if episode_logs[explore_traj_key] or is_warmup_episode:
+    if (episode_logs[explore_traj_key] or is_warmup_episode) and not self._is_evaluator:
       new_hash2goals = self.extract_new_goals(episode_logs[explore_traj_key])
       
     # HER.
-    if not is_warmup_episode:
+    if not is_warmup_episode and not self._is_evaluator:
       self.hingsight_experience_replay(start_state, episode_logs['episode_trajectory'])
     
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_logs['episode_steps'])
     
     # Stream the episodic trajectory to the goal space manager.
-    if self._goal_space_manager is not None:
+    if self._goal_space_manager is not None and not self._is_evaluator:
       t0 = time.time()
       filtered_trajectory = self.filter_achieved_goals(
         new_hash2goals,
@@ -892,7 +907,7 @@ class EnvironmentLoop(core.Worker):
       episode_logs['episode_return'] = tree.map_structure(
         operator.iadd,
         episode_logs['episode_return'],
-        next_timestep.reward
+        extrinsic_reward
       )
       timestep = next_timestep
       
@@ -1139,7 +1154,7 @@ class EnvironmentLoop(core.Worker):
 
       if self._always_learn_about_task_goal and \
         not self.goal_reward_func(hindsight_goal, task_goal)[0] and \
-          self._has_seen_task_goal:
+          self._has_seen_task_goal and self._task_goal_probability > 0:
         print(f'[HER] replaying wrt to task goal {task_goal.goals}')
         self.replay_trajectory_with_new_goal(trajectory, task_goal)
 
