@@ -123,6 +123,7 @@ class GSMPlotter:
       self._plot_key_bit_success_curves(vars['edge2success'], episode)
       self._plot_door_bit_success_curves(vars['edge2success'], episode)
       self._plot_on_policy_counts(vars['on_policy_counts'], episode)
+      self._plot_task_goal_success_curve(vars['edge2success'])
 
       cfn_plotting.plot_average_bonus_for_each_hash_bit(
         vars['hash2bonus'],
@@ -388,6 +389,24 @@ class GSMPlotter:
       edge2success=edge2success,
       save_path=os.path.join(self._door_competence_plotting_dir, f'success_curves_door_{episode}.png')
     )
+
+  def _plot_task_goal_success_curve(self, hash2success):
+    """Plot the success curve for the task goal."""
+    def get_curve():
+      for goal in hash2success:
+        if -1 in goal and not all(goal == -1):
+          return hash2success[goal]
+    
+    def smoothen_curve(curve, n=10):
+      return np.convolve(curve, np.ones(n) / n, mode='valid')
+      
+    curve = get_curve()
+    
+    if curve is not None:
+      plt.plot(smoothen_curve(curve), marker='o', linestyle='-')
+      plt.title('Task Goal Success Curve')
+      plt.savefig(os.path.join(self._gc_learning_curves_plotting_dir, f'task_goal_success_curve.png'))
+      plt.close()
 
   def _plot_on_policy_counts(self, edge_counts, episode):
     """Plot the counts for the src node in 1 subplot and the dest node in another."""
