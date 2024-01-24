@@ -95,6 +95,7 @@ flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task 
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
 flags.DEFINE_string("planner_backup_strategy", "graph_search", "Backup strategy for the planner. One of ['graph_search', 'task'].")
 flags.DEFINE_bool("use_planning_in_evaluator", False, "Whether to use planning in the evaluator or not.")
+flags.DEFINE_integer('option_timeout', 400, 'Max number of steps for which to pursue a goal.')
 
 FLAGS = flags.FLAGS
 
@@ -147,6 +148,7 @@ def build_experiment_config():
       use_planning_in_evaluator=FLAGS.use_planning_in_evaluator,
       should_switch_goal=FLAGS.switch_task_expansion_node,
       subgoal_sampler_default_behavior=FLAGS.planner_backup_strategy,
+      option_timeout=FLAGS.option_timeout
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

@@ -455,6 +455,7 @@ def make_distributed_experiment(
     novelty_thresh = experiment.builder._config.novelty_threshold_for_goal_creation
     task_goal_prob = experiment.builder._config.task_goal_probability
     default_behavior = experiment.builder._config.subgoal_sampler_default_behavior
+
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
         environment, actor, exploration_actor, counter, logger,
@@ -465,6 +466,7 @@ def make_distributed_experiment(
         novelty_threshold_for_goal_creation=novelty_thresh,
         task_goal_probability=task_goal_prob,
         planner_backup_strategy=default_behavior,
+        max_option_duration=experiment.builder._config.option_timeout,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
