@@ -98,6 +98,7 @@ def plot_comparison_learning_curves(
     # sns.set_palette(clrs)
     id_to_csv = gather_csv_files_from_base_dir(base_dir=base_dir, selected_acme_ids=selected_acme_ids, log_type=log_file_type)
 
+
     assert isinstance(group_keys, (tuple, list)), f"{type(group_keys)} should be tuple or list"
     if save_path is not None:
         plt.figure(figsize=(24,12))
@@ -118,6 +119,7 @@ def plot_comparison_learning_curves(
             continue
         curves = log_dir_path_map[config]
         print(config)
+        curves = [(remove_strings_from_scores(frames, returns)) for (frames, returns) in curves]
         for curve in curves:
             print(f"\t[+] Num points in curve: {len(curve[0])}")
             print(f'\t[+] Max x-axis val: {np.max(curve[0])}')
@@ -183,10 +185,14 @@ if __name__ == "__main__":
     parser.add_argument('--smoothen', type=int, default=100)
     parser.add_argument('--hyperparams', nargs='+', default='nsigmasthresholdforgoalcreation')
     parser.add_argument('--all_seeds', action='store_true', default=False)
+    parser.add_argument('--process_name', type=str, default='actor', help='actor or evaluator')
+    parser.add_argument('--selected_acme_ids', nargs='+', default=None)
     args = parser.parse_args()
 
     base_dir = os.path.join(args.base_dir, args.domain, args.experiment)
-    save_path = os.path.join(base_dir, args.save_filename if 'png' in args.save_filename else f"{args.save_filename}.png")
+    save_path = os.path.join(
+        base_dir,
+        args.save_filename if 'png' in args.save_filename else f"{args.process_name}_{args.save_filename}.png")
     
     def lr_group_func(acme_id):
         if "spi_3" not in acme_id:
@@ -216,5 +222,7 @@ if __name__ == "__main__":
         # truncate_min_frames=50_000_000,
         # min_seeds=5,
         all_seeds=args.all_seeds,
+        log_file_type=args.process_name,
+        selected_acme_ids=args.selected_acme_ids,
         title=f"DSG {args.experiment} {args.domain}",
         )

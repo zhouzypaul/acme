@@ -55,10 +55,26 @@ def interpolate_xys(scores):
 
     return np.array(flattened_unique), np.array(all_returns)
 
+def remove_strings_from_scores(frames, returns):
+    filtered_frames = []
+    filtered_results = []
+    for frame, result in zip(frames, returns):
+        try:
+            filtered_frames.append(int(frame))
+            filtered_results.append(float(result))
+        except:
+            continue
+    return filtered_frames, filtered_results
+
+def sort_by_frames(frames, returns):
+    sorted_frames, sorted_returns = zip(*sorted(zip(frames, returns), key=lambda x: x[0]))
+    return np.array(sorted_frames), np.array(sorted_returns)
+
 def truncate_and_interpolate(scores, max_frames=-1, min_frames=-1):
     filtered_scores = [(frames, returns) for (frames, returns) in scores if max(frames) > min_frames]
     if not filtered_scores:
         return filtered_scores
+    filtered_scores = [(sort_by_frames(frames, returns)) for (frames, returns) in filtered_scores]
     assert all(all(frames[i] <= frames[i+1] for i in range(len(frames) - 1)) for (frames, returns) in filtered_scores), "needs to be sorted for what follows"
     min_max_frames = min([max(frames) for (frames, returns) in filtered_scores])
     min_max_frames = min(min_max_frames, max_frames)
