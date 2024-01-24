@@ -17,6 +17,7 @@ class AMDP:
     max_vi_iterations: int = 10,
     vi_tol: float = 1e-3,
     verbose: bool = False,
+    should_switch_goal: bool = False,
   ):
     self._transition_matrix =  transition_tensor
     self._hash2idx =  hash2idx
@@ -34,7 +35,7 @@ class AMDP:
     self._n_states, self._n_actions = transition_tensor.shape
     assert self._n_states == self._n_actions, 'Not special-casing the death node here.'
 
-    if target_node not in self._hash2idx:
+    if target_node not in self._hash2idx and should_switch_goal:
       goal_node = self.sample_rewarding_node()
       if goal_node is not None:
         print(f'[AMDP] *** Switched target node from {target_node} -> {goal_node} ***')
@@ -114,11 +115,19 @@ class AMDP:
         low=0, high=self._n_actions, size=values.shape
       )
     else:
-      policy = np.argmax(Q, axis=1)
+      policy = self.q2policy(Q)
 
     assert values.shape == policy.shape == (self._n_states,), (values.shape, policy.shape)
-    
+
     return values, policy, max_bellman_errors
+
+  def q2policy(self, q_table: np.ndarray) -> np.ndarray:
+    """Argmax over Q that accounts for initiation sets and random tie breaking."""
+    def randargmax(x):
+      """A random tie-breaking argmax."""
+      return np.argmax(x + np.random.random(x.shape) * 1e-6, axis=1)
+    q_modified = np.where(self._transition_matrix > 0, q_table, -10_000.)
+    return randargmax(q_modified)
 
   def get_goal_sequence(
     self, start_node: Tuple, goal_node: Tuple, max_len: int = 20

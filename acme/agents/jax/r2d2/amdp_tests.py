@@ -59,7 +59,7 @@ def test_linear_graph():
     planner = make_amdp_planner(transition_matrix, hash2idx, target_node)
     computed_policy = planner.get_policy()
     assert policy_equals(computed_policy, expected_policy, (target_node,)), \
-        f'Expected {expected_policy} but got {computed_policy}.'
+        f'Expected {expected_policy} but got {computed_policy}. Value: {planner.get_values()}'
     print('[+] linear_graph test passed.')
 
 
@@ -71,12 +71,14 @@ def test_branching_graph():
         [0, 0, 0, 0]
     ])
     hash2idx = {0: 0, 1: 1, 2: 2, 3: 3}
-    expected_policy = {0: 1, 1: 3, 2: 3, 3: 3}
+    expected_policy1 = {0: 1, 1: 3, 2: 3, 3: 3}
+    expected_policy2 = {0: 2, 1: 3, 2: 3, 3: 3}
     target_node = 3
     planner = make_amdp_planner(transition_matrix, hash2idx, target_node)
     computed_policy = planner.get_policy()
-    assert policy_equals(computed_policy, expected_policy, (target_node,)), \
-        f'Expected {expected_policy} but got {computed_policy}.'
+    assert policy_equals(computed_policy, expected_policy1, (target_node,)) or \
+        policy_equals(computed_policy, expected_policy2, (target_node,)), \
+        f'Expected {expected_policy1} or {expected_policy2} but got {computed_policy}.'
     print('[+] branching_graph test passed.')
 
 
@@ -190,7 +192,7 @@ def get_plans_at_different_horizons(max_horizon, max_vi_iterations=10):
         # Initialize the Planner
         planner = make_amdp_planner(
             transition_matrix, hash2idx, horizon - 1,
-            verbose=True, max_vi_iterations=max_vi_iterations)
+            verbose=False, max_vi_iterations=max_vi_iterations)
 
         # Measure the time taken to compute the plan
         start_time = time.time()
