@@ -450,13 +450,14 @@ class GoalSpaceManager(Saveable):
     rewards = []
     augmented_observations = []
     for src, dest in edges:
-      src_obs = self._hash2obs[src]
-      dest_obs = self._hash2obs[dest]
-      oarg = self.obs_augment_fn(src_obs, dest_obs, 'concat')[0]
-      augmented_observations.append(oarg.observation)
-      actions.append(oarg.action)
-      rewards.append(oarg.reward)
-      goals.append(oarg.goals)
+      if src in self._hash2obs and dest in self._hash2obs:
+        src_obs = self._hash2obs[src]
+        dest_obs = self._hash2obs[dest]
+        oarg = self.obs_augment_fn(src_obs, dest_obs, 'concat')[0]
+        augmented_observations.append(oarg.observation)
+        actions.append(oarg.action)
+        rewards.append(oarg.reward)
+        goals.append(oarg.goals)
       
     if augmented_observations:
       augmented_observations = jnp.asarray(
