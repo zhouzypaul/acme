@@ -98,7 +98,8 @@ class EnvironmentLoop(core.Worker):
       n_sigmas_threshold_for_goal_creation: int = 0,
       novelty_threshold_for_goal_creation: float = -1.,
       is_evaluator: bool = False,
-      planner_backup_strategy: str = 'graph_search'
+      planner_backup_strategy: str = 'graph_search',
+      max_option_duration: int = 400
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -122,6 +123,7 @@ class EnvironmentLoop(core.Worker):
     self._n_sigmas_threshold_for_goal_creation = n_sigmas_threshold_for_goal_creation
     self._novelty_threshold_for_goal_creation = novelty_threshold_for_goal_creation
     self._planner_backup_strategy = planner_backup_strategy
+    self._max_option_duration = max_option_duration
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -424,6 +426,8 @@ class EnvironmentLoop(core.Worker):
     
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_logs['episode_steps'])
+
+    counts = self.get_logging_counts_dict(counts)
     
     # Stream the episodic trajectory to the goal space manager.
     if self._goal_space_manager is not None and not self._is_evaluator:
@@ -494,7 +498,8 @@ class EnvironmentLoop(core.Worker):
       'env_reset_duration_sec': env_reset_duration,
       'select_action_duration_sec': np.mean(episode_logs['select_action_durations']),
       'env_step_duration_sec': np.mean(episode_logs['env_step_durations']),
-      'start_state': start_state.goals
+      'start_state': start_state.goals,
+      'expansion_node': expansion_node
     }
     result.update(counts)
     for observer in self._observers:
@@ -525,7 +530,7 @@ class EnvironmentLoop(core.Worker):
         goal, episode_logs, use_random_actions=False
       )
       
-      assert timestep.last(), timestep
+      # assert timestep.last(), timestep
 
       # Log the attempted edge and whether it was successful.
       attempted_edges.append((obs0, goal, timestep.reward > 0.))
@@ -838,7 +843,16 @@ class EnvironmentLoop(core.Worker):
     """
     reached = False
     needs_reset = False
+    duration = 0
+    should_interrupt_option = False
     trajectory: List[GoalBasedTransition] = []
+
+    def should_interrupt(current_ts: dm_env.TimeStep, duration: int, goal: OARG) -> bool:
+      """Interrupt the option if you are in a node and duration warrants timeout."""
+      return duration >= self._max_option_duration and \
+        tuple(goal.goals) != tuple(self.task_goal.goals) and \
+        tuple(goal.goals) != tuple(self.exploration_goal.goals) and \
+        tuple(current_ts.observation.goals) in self.goal_dict
     
     timestep = self.augment_ts_with_goal(
       timestep,
@@ -854,9 +868,10 @@ class EnvironmentLoop(core.Worker):
         # and the initial timestep.
         observer.observe_first(self._environment, timestep)
     
-    while not needs_reset and not reached:
+    while not needs_reset and not reached and not should_interrupt_option:
       # Book-keeping.
       episode_logs['episode_steps'] += 1
+      duration += 1
 
       # Generate an action from the agent's policy.
       select_action_start = time.time()
@@ -886,6 +901,11 @@ class EnvironmentLoop(core.Worker):
           next_ts=next_timestep,
           pursued_goal=goal
       ))
+
+      should_interrupt_option = should_interrupt(next_timestep, duration, goal)
+
+      if should_interrupt_option and next_timestep.reward < 1:
+        next_timestep = truncation(next_timestep)
 
       # Have the agent and observers observe the timestep.
       if not use_random_actions:
@@ -923,7 +943,7 @@ class EnvironmentLoop(core.Worker):
       
     episode_logs['episode_trajectory'].extend(trajectory)
     
-    print(f'Goal={goal.goals} Achieved={timestep.observation.goals} R={timestep.reward}')
+    print(f'Goal={goal.goals} Achieved={timestep.observation.goals} R={timestep.reward} T={duration}')
 
     return timestep, needs_reset, episode_logs
 
@@ -1164,6 +1184,17 @@ class EnvironmentLoop(core.Worker):
         print(f'[HER] Took {time.time() - t0}s to replay for exploration rewards.')
 
       print(f'HER took {time.time() - start_time}s')
+
+  def get_logging_counts_dict(self, counts: Dict) -> Dict:
+    """Return which counts to log, we are omitting CFN counts to prevent race conditions."""
+    keys = [
+      'actor_steps',
+      'actor_episodes',
+      'learner_steps',
+      'evaluator_episodes',
+      'evaluator_steps',
+    ]
+    return {key: counts.get(key, 0) for key in keys}
 
   def visualize_exploration_trajectory(self, trajectory: List[GoalBasedTransition], episode: int):
 
