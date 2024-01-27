@@ -219,14 +219,19 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
       policy: R2D2Policy
   ) -> List[reverb.Table]:
     """Creates reverb tables for the algorithm."""
-    samples_per_insert_tolerance = (
-        self._config.samples_per_insert_tolerance_rate *
-        self._config.samples_per_insert)
-    error_buffer = self._config.min_replay_size * samples_per_insert_tolerance
-    limiter = rate_limiters.SampleToInsertRatio(
-        min_size_to_sample=self._config.min_replay_size,
-        samples_per_insert=self._config.samples_per_insert,
-        error_buffer=error_buffer)
+    if self._config.samples_per_insert:
+      samples_per_insert_tolerance = (
+          self._config.samples_per_insert_tolerance_rate *
+          self._config.samples_per_insert)
+      error_buffer = self._config.min_replay_size * samples_per_insert_tolerance
+      limiter = rate_limiters.SampleToInsertRatio(
+          min_size_to_sample=self._config.min_replay_size,
+          samples_per_insert=self._config.samples_per_insert,
+          error_buffer=error_buffer)
+    else:
+      print(f'[CFNBuilder] Using MinSize Rate Limiter')
+      limiter = rate_limiters.MinSize(
+          min_size_to_sample=self._config.min_replay_size)
     dummy_actor_state = policy.init(jax.random.PRNGKey(0))
     extras_spec = policy.get_extras(dummy_actor_state)
     print(f'[CFNBuilder] Extras Spec = {extras_spec}')
