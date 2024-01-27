@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
@@ -9,10 +10,10 @@ from plotting_utils import get_summary_data, extract_exploration_amounts, load_c
 
 
 def get_config(acme_id, group_key):
-    try:
-        return re.search(f".*?([+-]+{group_key}|{group_key}_[^_]*)_.*", acme_id).group(1)
-    except: # if its at the end of the id name
-        return re.search(f".*?([+-]+{group_key}|{group_key}_[^_]*)$", acme_id).group(1)
+    # try:
+    #     return re.search(f".*?([+-]+{group_key}|{group_key}_[^_]*)_.*", acme_id).group(1)
+    # except: # if its at the end of the id name
+    return re.search(f".*?([+-]+{group_key}|{group_key}_[^_]*)$", acme_id).group(1)
 
 def default_make_key(log_dir_name, group_keys):
     keys = [get_config(log_dir_name, group_key) for group_key in group_keys]
@@ -57,7 +58,8 @@ def extract_log_dirs_group_func(id_to_csv, group_func=lambda x: x, xkey='actor_s
             # frames, returns = get_summary_data(csv_path, xkey='actor_steps', ykey='episode_return')
             frames, returns = get_summary_data(csv_path, xkey=xkey, ykey=ykey)
             log_dir_map[key].append((frames, returns))
-        except:
+        except Exception as e:
+            print(f'Exception: {e}')
             print(f"Could not extract from {acme_id}")
 
     return log_dir_map
@@ -115,7 +117,8 @@ def plot_comparison_learning_curves(
         if filter_func and not filter_func(config):
             continue
         curves = log_dir_path_map[config]
-        print(config)
+        print('config: ', config)
+        curves = [(remove_strings_from_scores(frames, returns)) for (frames, returns) in curves]
         for curve in curves:
             print(f"\t[+] Num points in curve: {len(curve[0])}")
             print(f'\t[+] Max x-axis val: {np.max(curve[0])}')
@@ -173,9 +176,22 @@ def get_rmse_for_each_iteration(count_dict):
 
 
 if __name__ == "__main__":
-    domain = 'doorkey'
-    base_dir = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size_rs"
-    save_path = f"results/minigrid/{domain}/cfn/forgetting_and_max_cfn_replay_size_rs.png"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--domain', type=str, default='doorkey')
+    parser.add_argument('--experiment', type=str, default='n_sigmas')
+    parser.add_argument('--base_dir', type=str, default='local_testing/sweeps')
+    parser.add_argument('--save_filename', type=str, default='learning_curves')
+    parser.add_argument('--smoothen', type=int, default=100)
+    parser.add_argument('--hyperparams', nargs='+', default='nsigmasthresholdforgoalcreation')
+    parser.add_argument('--all_seeds', action='store_true', default=False)
+    parser.add_argument('--process_name', type=str, default='actor', help='actor or evaluator')
+    parser.add_argument('--selected_acme_ids', nargs='+', default=None)
+    args = parser.parse_args()
+
+    base_dir = os.path.join(args.base_dir, args.domain, args.experiment)
+    save_path = os.path.join(
+        base_dir,
+        args.save_filename if 'png' in args.save_filename else f"{args.process_name}_{args.save_filename}.png")
     
     def lr_group_func(acme_id):
         if "spi_3" not in acme_id:
@@ -186,9 +202,9 @@ if __name__ == "__main__":
             return None
         return get_config(acme_id, "rewardcoefficient")
     def new_group_func(acme_id):
-        if "rs001" not in acme_id or "size3_5" in acme_id:
-            return None
-        return default_make_key(acme_id, ("cfnmaxreplaysize", "cfn_use_forgetting"))
+        # if "size3" not in acme_id or "size3_5" in acme_id:
+        #     return None
+        return default_make_key(acme_id, args.hyperparams)
 
     plot_comparison_learning_curves(
         base_dir=base_dir,
@@ -200,10 +216,12 @@ if __name__ == "__main__":
         # group_keys=("learningrate", ),
         group_func=new_group_func,
         # filter_func=lambda acme_id: "size3" in acme_id and "size3_5" not in acme_id,
-        smoothen=10,
+        smoothen=args.smoothen,
         # smoothen=False,
         # truncate_min_frames=50_000_000,
         # min_seeds=5,
-        all_seeds=False,
-        title=f"CFN Forgetting and Max CFN Replay Size {domain}",
+        all_seeds=args.all_seeds,
+        log_file_type=args.process_name,
+        selected_acme_ids=args.selected_acme_ids,
+        title=f"CFN {args.experiment} {args.domain}",
         )
