@@ -48,6 +48,7 @@ class GoalSpaceManager(Saveable):
       max_vi_iterations: int = 20,
       goal_space_size: int = 100,
       should_switch_goal: bool = False,
+      use_exploration_vf_for_expansion: bool = False
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -59,6 +60,7 @@ class GoalSpaceManager(Saveable):
     self._max_vi_iterations = max_vi_iterations
     self._goal_space_size = goal_space_size
     self._should_switch_goal = should_switch_goal
+    self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -531,6 +533,34 @@ class GoalSpaceManager(Saveable):
       self._update_transition_tensor(edges, values)
     print(f'[GSM-Profiling] Took {time.time() - t0}s to update off-policy edges.')
 
+  def _compute_and_update_novelty_values(self, n_nodes: int = 50):
+    """Compute the CFN value function for the nodes in the GSM."""
+    def get_recurrent_state(batch_size=None):
+      return self._exploration_networks.direct_rl_networks.init_recurrent_state(
+        self._rng_key, batch_size)
+    
+    t0 = time.time()
+    n_nodes = min(n_nodes, len(self._hash2obs))
+    keys = random.sample(self._hash2obs.keys(), k=n_nodes)
+    nodes = {key: self._hash2obs[key] for key in keys}
+    node_hashes, oarg = self._nodes2oarg(nodes)
+    cfn_oar = oarg._replace(
+        observation=oarg.observation[..., :3])
+    cfn_oar = cfn_oar._replace(
+      observation=cfn_oar.observation[None, ...])
+    q_values, _ = self._exploration_networks.direct_rl_networks.unroll(
+      self._exploration_params,
+      self._rng_key,
+      cfn_oar,
+      get_recurrent_state(len(node_hashes))
+    )
+    values = q_values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
+    # clip the values to be between 0 and 1
+    # values = values.clip(0., 1.)
+    values = values.ravel().tolist()
+    self._update_bonuses(node_hashes, values)
+    print(f'[GSM-Profiling] Took {time.time() - t0}s to compute & update CFN values.')
+
   def _compute_and_update_novelty_bonuses(self, n_nodes: int = 50):
     """Compute the novelty bonuses for the nodes in the GSM."""
     t0 = time.time()
@@ -598,7 +628,10 @@ class GoalSpaceManager(Saveable):
     if len(self._hash2obs) > 2:
       self._update_on_policy_edge_probabilities()
       self._update_off_policy_edge_probabilities()
-      self._compute_and_update_novelty_bonuses()
+      if self._use_exploration_vf_for_expansion:
+        self._compute_and_update_novelty_values()
+      else:
+        self._compute_and_update_novelty_bonuses()
       self.dump_plotting_vars()
       self.update_params(wait=False)
 
@@ -626,11 +659,13 @@ class GoalSpaceManager(Saveable):
     to_return = self.get_variables()
     hash2bell = self._thread_safe_deepcopy(self._hash2bellman)
     hash2bell = {k: list(v) for k, v in hash2bell.items()}
+    reward_mean = self._exploration_params.reward_mean if not self._use_exploration_vf_for_expansion else 0.
+    reward_var = self._exploration_params.reward_var if not self._use_exploration_vf_for_expansion else 0.
     to_return = (*to_return,
                  self._edges,
                  self._off_policy_edges,
-                 self._exploration_params.reward_mean,
-                 self._exploration_params.reward_var,
+                 reward_mean,
+                 reward_var,
                  hash2bell,
                  self._thread_safe_deepcopy(self._hash2vstar),
                  self._gsm_iteration_times,

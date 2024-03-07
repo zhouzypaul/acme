@@ -490,6 +490,7 @@ def make_distributed_experiment(
     off_policy_threshold = experiment.builder._config.off_policy_edge_threshold
     vi_iterations = experiment.builder._config.max_vi_iterations
     goal_space_size = experiment.builder._config.goal_space_size
+    use_exploration_vf_for_expansion = experiment.builder._config.use_exploration_vf_for_expansion
     gsm = GoalSpaceManager(env, rng_num, networks,
                            variable_client,
                            exploration_networks,
@@ -500,7 +501,8 @@ def make_distributed_experiment(
                            off_policy_edge_threshold=off_policy_threshold,
                            max_vi_iterations=vi_iterations,
                            goal_space_size=goal_space_size,
-                           should_switch_goal=experiment.builder._config.should_switch_goal)
+                           should_switch_goal=experiment.builder._config.should_switch_goal,
+                           use_exploration_vf_for_expansion=use_exploration_vf_for_expansion)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(
@@ -632,12 +634,17 @@ def make_distributed_experiment(
         specs.make_environment_spec(experiment.environment_factory(1))
     )
     gsm_key, _ = jax.random.split(key)
+    use_exploration_vf_for_expansion = experiment.builder._config.use_exploration_vf_for_expansion
+    if use_exploration_vf_for_expansion or not exploration_experiment.is_cfn:
+      explore_var_src = exploration_learner
+    else:
+      explore_var_src = cfn
     gsm_node = lp.CourierNode(
       _gsm_node,
       gsm_key,
       experiment.network_factory(spec),
       variable_sources[0],
-      cfn if exploration_experiment.is_cfn else exploration_learner,
+      explore_var_src,
       # TODO(ab): How to set the number of threads for the GSM?
       courier_kwargs={'thread_pool_size': 64}
       )

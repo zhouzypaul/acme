@@ -52,6 +52,9 @@ def continuation(ts: dm_env.TimeStep) -> dm_env.TimeStep:
 
 
 def scores2probabilities(scores: np.ndarray) -> np.ndarray:
+  min_score = np.min(scores)
+  if min_score < 0:
+    scores -= min_score  # Make the minimum score zero
   score_sum = scores.sum()
   if score_sum == 0:
     return np.ones_like(scores) / len(scores)

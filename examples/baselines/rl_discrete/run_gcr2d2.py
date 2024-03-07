@@ -79,6 +79,7 @@ flags.DEFINE_float('cfn_learning_rate', 1e-4, 'Learning rate for CFN optimizer')
 flags.DEFINE_integer('cfn_spi', 0, 'Samples per insert for CFN optimization')
 flags.DEFINE_integer('cfn_policy_spi', 8, 'Samples per insert for the exploration policy')
 flags.DEFINE_integer('cfn_max_replay_size', 2_000_000, 'Max replay size for CFN optimization')
+flags.DEFINE_integer('cfn_target_update_period', 1200, 'Target update period for CFN optimization')
 
 # GSM flags.
 flags.DEFINE_float('amdp_rmax_factor', 200., 'Rmax factor for AMDP')
@@ -96,6 +97,7 @@ flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the ex
 flags.DEFINE_string("planner_backup_strategy", "graph_search", "Backup strategy for the planner. One of ['graph_search', 'task'].")
 flags.DEFINE_bool("use_planning_in_evaluator", False, "Whether to use planning in the evaluator or not.")
 flags.DEFINE_integer('option_timeout', 400, 'Max number of steps for which to pursue a goal.')
+flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exploration value function for expansion or the reward function')
 
 FLAGS = flags.FLAGS
 
@@ -148,7 +150,8 @@ def build_experiment_config():
       use_planning_in_evaluator=FLAGS.use_planning_in_evaluator,
       should_switch_goal=FLAGS.switch_task_expansion_node,
       subgoal_sampler_default_behavior=FLAGS.planner_backup_strategy,
-      option_timeout=FLAGS.option_timeout
+      option_timeout=FLAGS.option_timeout,
+      use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
@@ -207,6 +210,7 @@ def build_exploration_policy_experiment_config():
   # experiments via Launchpad.
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
+  target_update_period = FLAGS.cfn_target_update_period
   
   def environment_factory(seed: int) -> dm_env.Environment:
     return helpers.make_minigrid_environment(
@@ -239,7 +243,7 @@ def build_exploration_policy_experiment_config():
       samples_per_insert=FLAGS.cfn_policy_spi,
       evaluation_epsilon=1e-3,
       learning_rate=3e-4,
-      target_update_period=1200,
+      target_update_period=target_update_period,
       variable_update_period=100,
       tx_pair=rlax.IDENTITY_PAIR,
       discount=0.99,
