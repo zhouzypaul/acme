@@ -93,6 +93,7 @@ class CFN(acme.Learner):
         'batch_rint': intrinsic_reward.mean(),
         'max_abs_pred': jnp.abs(pred).max(),
         'max_abs_rp': jnp.abs(normalized_rp_output).max(),
+        'max_priority': priorities.max(),
       }
 
       return optax.l2_loss(pred, target).mean(), (rp_output, priorities, intrinsic_reward, log_dict)

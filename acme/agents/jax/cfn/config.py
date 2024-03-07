@@ -55,5 +55,5 @@ class CFNConfig:
 
   predictor_learning_rate: float = 1e-3
 
-  bonus_plotting_freq: int = 1000
-  value_plotting_freq: int = 1000
+  bonus_plotting_freq: int = -1
+  value_plotting_freq: int = -1
