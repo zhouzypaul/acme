@@ -16,7 +16,7 @@ from acme.wrappers.minigrid_wrapper import MiniGridWrapper
 from minigrid.core.world_object import Lava
 
 
-INCLUDE_KEY_POS = False
+INCLUDE_KEY_POS = True
 
 
 # NOTE: we are assuming a max number of keys and doors
