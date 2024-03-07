@@ -3,7 +3,9 @@ import time
 import json
 import pickle
 import random
+import psutil
 import itertools
+import subprocess
 import collections
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,7 +17,7 @@ import acme.agents.jax.cfn.plotting as cfn_plotting
 
 
 class GSMPlotter:
-  def __init__(self, time_between_plots=5 * 60, key_bit=2, door_bit=3):
+  def __init__(self, time_between_plots=1 * 60, key_bit=2, door_bit=3):
     self._time_between_plots = time_between_plots
     self._reward_means = []
     self._reward_variances = []
@@ -131,6 +133,8 @@ class GSMPlotter:
       
       self._plot_avg_value_for_interesting_hash_bits(
         vars['hash2idx'], vars['transition_matrix'], episode)
+      
+      self._log_memory_usage(episode)
 
   def run(self):
     for iteration in itertools.count():
@@ -139,6 +143,22 @@ class GSMPlotter:
       t1 = time.time()
       print(f'Plotted iteration {iteration} in {t1 - t0:.3f} seconds.')
       time.sleep(max(0, self._time_between_plots - (t1 - t0)))
+
+  def _log_memory_usage(self, episode):
+    """Log the memory usage at the end of each episode."""
+    print(f'Logging memory usage at episode {episode}')
+    try:
+      # Execute the command, capture the output and error (if any)
+      vm = psutil.virtual_memory()
+      print(f"Total: {vm.total / (1024**3):.2f} GB, Available: {vm.available / (1024**3):.2f} GB, ",
+            f"Used: {vm.used / (1024**3):.2f} GB, Usage: {vm.percent}%")
+      
+      output = subprocess.check_output(
+        'nvidia-smi', stderr=subprocess.STDOUT, shell=True, text=True)
+      print(output)
+      
+    except Exception as e:
+      print(f'Error: {e}')
 
   def visualize_value_function(
     self,
