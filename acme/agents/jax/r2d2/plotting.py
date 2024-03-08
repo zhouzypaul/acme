@@ -23,6 +23,7 @@ class GSMPlotter:
     self._reward_variances = []
     self._key_bit = key_bit
     self._door_bit = door_bit
+    self._goal_space_sizes = []
 
     base_dir = get_save_directory()
     self._already_plotted_goals = set()
@@ -114,6 +115,7 @@ class GSMPlotter:
         episode)
       self._reward_means.append(vars['reward_mean'])
       self._reward_variances.append(vars['reward_var'])
+      self._goal_space_sizes.append(len(vars['hash2obs']))
       self._plot_hash2bonus(vars['hash2bonus'], episode)
       self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], episode)
       self._plot_bellman_errors(vars['hash2bellman'], episode)
@@ -135,6 +137,7 @@ class GSMPlotter:
         vars['hash2idx'], vars['transition_matrix'], episode)
       
       self._log_memory_usage(episode)
+      self._plot_goal_space_size()
 
   def run(self):
     for iteration in itertools.count():
@@ -263,6 +266,13 @@ class GSMPlotter:
         plt.close()
         
         self._already_plotted_goals.add(goal_hash)
+
+  def _plot_goal_space_size(self):
+    """Plot the size of the goal space as a function of episode."""
+    plt.plot(self._goal_space_sizes)
+    plt.title('Goal Space Size')
+    plt.savefig(os.path.join(self._gsm_iteration_times_dir, 'goal_space_size.png'))
+    plt.close()
 
   def _plot_hash2bonus(self, hash2bonus, episode):
     hashes = list(hash2bonus.keys())
