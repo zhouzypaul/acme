@@ -196,6 +196,7 @@ class CFNBuilder(Generic[cfn_networks.DirectRLNetworks, Policy],
       counter=counter,
       logger=logger_fn('cfn_object'),
       bonus_plotting_freq=self._config.bonus_plotting_freq,
+      clip_random_prior_output=self._config.clip_random_prior_output,
     )
   
   def make_cfn_replay_tables(

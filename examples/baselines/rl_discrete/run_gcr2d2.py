@@ -80,6 +80,7 @@ flags.DEFINE_integer('cfn_spi', 0, 'Samples per insert for CFN optimization')
 flags.DEFINE_integer('cfn_policy_spi', 8, 'Samples per insert for the exploration policy')
 flags.DEFINE_integer('cfn_max_replay_size', 2_000_000, 'Max replay size for CFN optimization')
 flags.DEFINE_integer('cfn_target_update_period', 1200, 'Target update period for CFN optimization')
+flags.DEFINE_float('cfn_clip_random_prior_output', -1., 'Clipping factor for random prior output')
 
 # GSM flags.
 flags.DEFINE_float('amdp_rmax_factor', 200., 'Rmax factor for AMDP')
@@ -192,6 +193,7 @@ def make_cfn_builder(r2d2_builder):
     use_stale_rewards=FLAGS.use_stale_rewards,
     samples_per_insert=FLAGS.cfn_spi,
     max_replay_size=FLAGS.cfn_max_replay_size,
+    clip_random_prior_output=FLAGS.cfn_clip_random_prior_output
   )
   save_config(cfn_config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'cfn_config.json'))
   logger_fn = functools.partial(make_experiment_logger, save_dir=FLAGS.acme_dir)

@@ -54,6 +54,7 @@ class CFNConfig:
   max_priority_weight: float = 0.9
 
   predictor_learning_rate: float = 1e-3
+  clip_random_prior_output: float = -1.0
 
   bonus_plotting_freq: int = -1
   value_plotting_freq: int = -1

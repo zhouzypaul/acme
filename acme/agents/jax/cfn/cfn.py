@@ -50,7 +50,8 @@ class CFN(acme.Learner):
                replay_client: Optional[reverb.Client] = None,
                counter: Optional[counting.Counter] = None,
                logger: Optional[loggers.Logger] = None,
-               bonus_plotting_freq = 500  # set to -1 to disable plotting.
+               bonus_plotting_freq = 500,  # set to -1 to disable plotting.
+               clip_random_prior_output: float = -1,
   ):
 
     def loss(
@@ -69,6 +70,11 @@ class CFN(acme.Learner):
       rp_output = networks.target.apply(rp_params, observation, sample.data.action)
       normalized_rp_output = (rp_output - random_prior_mean) / random_prior_std
       predictor_output = networks.predictor.apply(params, observation, sample.data.action)
+
+      if clip_random_prior_output > 0:
+        normalized_rp_output = jnp.clip(
+          normalized_rp_output,
+          -clip_random_prior_output, clip_random_prior_output)
 
       pred = predictor_output + jax.lax.stop_gradient(normalized_rp_output)
       
@@ -94,6 +100,8 @@ class CFN(acme.Learner):
         'max_abs_pred': jnp.abs(pred).max(),
         'max_abs_rp': jnp.abs(normalized_rp_output).max(),
         'max_priority': priorities.max(),
+        'mean_std': random_prior_std.mean(),
+        'inverse_mean_std': (1. / random_prior_std).mean(),
       }
 
       return optax.l2_loss(pred, target).mean(), (rp_output, priorities, intrinsic_reward, log_dict)
@@ -256,6 +264,7 @@ class CFN(acme.Learner):
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
     os.makedirs(self._scalar_plotting_dir, exist_ok=True)
+    print(f'Created CFN Object with clipping factor: {clip_random_prior_output}')
 
   def step(self):
     prefetching_split = next(self._iterator)
