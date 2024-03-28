@@ -20,6 +20,7 @@ from acme.utils.paths import get_save_directory
 from acme.wrappers.observation_action_reward import OAR
 from acme.agents.jax.cfn.learning import CFNTrainingState
 from acme.agents.jax.cfn.networks import compute_cfn_reward
+from acme.agents.jax.cfn import norm_lib
 
 import jax
 import numpy as np
@@ -90,18 +91,26 @@ class CFN(acme.Learner):
       
       times_sampled = jnp.maximum(sample.info.times_sampled, 1)
       seen_priority = 1. / times_sampled
-      novelty_priority = intrinsic_reward ** 2
+      novelty_priority = jnp.clip(intrinsic_reward ** 2, 0., 1.)
       
       priorities = (0.5 * seen_priority) + (0.5 * novelty_priority)
       assert seen_priority.shape == novelty_priority.shape, (seen_priority.shape, novelty_priority.shape)
 
       log_dict = {
-        'batch_rint': intrinsic_reward.mean(),
+        'batch_rint_mean': intrinsic_reward.mean(),
+        'batch_rint_min': intrinsic_reward.min(),
+        'batch_rint_max': intrinsic_reward.max(),
         'max_abs_pred': jnp.abs(pred).max(),
         'max_abs_rp': jnp.abs(normalized_rp_output).max(),
         'max_priority': priorities.max(),
+        'min_priority': priorities.min(),
         'mean_std': random_prior_std.mean(),
-        'inverse_mean_std': (1. / random_prior_std).mean(),
+        'mean_inverse_std': (1. / random_prior_std).mean(),
+        'max_inverse_std': (1. / random_prior_std).max(),
+        'max_seen_priority': seen_priority.max(),
+        'max_novelty_priority': novelty_priority.max(),
+        'max_times_sampled': times_sampled.max(),
+        'min_times_sampled': jnp.min(sample.info.times_sampled),
       }
 
       return optax.l2_loss(pred, target).mean(), (rp_output, priorities, intrinsic_reward, log_dict)
@@ -138,11 +147,11 @@ class CFN(acme.Learner):
         steps=steps,
         reward_mean=state.reward_mean,
         reward_var=state.reward_var,
-        reward_squared_mean=state.reward_squared_mean,
+        reward_second_moment=state.reward_second_moment,
         random_prior_mean=state.random_prior_mean,
         random_prior_var=state.random_prior_var,
-        random_prior_squared_mean=state.random_prior_squared_mean,
-        states_updated_on=state.states_updated_on,
+        random_prior_second_moment=state.random_prior_second_moment,
+        batches_updated_on=state.batches_updated_on,
       )
 
       new_cfn_state = update_mean_variance_stats(new_cfn_state, random_prior_output, r_int)
@@ -151,7 +160,7 @@ class CFN(acme.Learner):
         **log_dict,
         'random_prior_mean': new_cfn_state.random_prior_mean.mean(),
         'random_prior_var': new_cfn_state.random_prior_var.mean(),
-        'states_updated_on': new_cfn_state.states_updated_on,
+        'batches_updated_on': new_cfn_state.batches_updated_on,
         'reward_mean': new_cfn_state.reward_mean,
         'reward_variance': new_cfn_state.reward_var,
       }
@@ -172,25 +181,19 @@ class CFN(acme.Learner):
         random_prior_output: networks_lib.NetworkOutput,
         unscaled_intrinsic_reward: networks_lib.NetworkOutput
       ) -> CFNTrainingState:
-      # num_transitions = jnp.prod(jnp.array(unscaled_intrinsic_reward.shape))
-      # import ipdb; ipdb.set_trace()
-      num_transitions = unscaled_intrinsic_reward.shape[0]
-      new_states_updated_on = state.states_updated_on + num_transitions
-      delta_reward = (unscaled_intrinsic_reward - state.reward_mean)
-      delta_reward = delta_reward.mean()
-      new_reward_mean = state.reward_mean + (num_transitions * delta_reward / new_states_updated_on)
-      delta_reward_squared = (unscaled_intrinsic_reward**2 - state.reward_squared_mean)
-      new_reward_squared_mean = state.reward_squared_mean + (num_transitions*delta_reward_squared.mean() / new_states_updated_on)
-      new_reward_var = new_reward_squared_mean - new_reward_mean**2
       
-      assert len(state.random_prior_mean.shape) == 1
-      assert random_prior_output.shape == (num_transitions, state.random_prior_mean.shape[0])
-
-      delta_rp = (random_prior_output - state.random_prior_mean)
-      new_rp_mean = state.random_prior_mean + (num_transitions * delta_rp.mean(axis=0) / new_states_updated_on)
-      delta_rp_squared = (random_prior_output**2 - state.random_prior_squared_mean)
-      new_rp_squared_mean = state.random_prior_squared_mean + (num_transitions * delta_rp_squared.mean(axis=0) / new_states_updated_on)
-      new_rp_var = new_rp_squared_mean - (new_rp_mean ** 2)
+      new_reward_mean, new_reward_second_moment, _ = norm_lib.welford(
+        state.reward_mean,
+        state.reward_second_moment,
+        state.batches_updated_on,
+        unscaled_intrinsic_reward)
+      new_rp_mean, new_rp_second_moment, new_n_batches = norm_lib.welford(
+        state.random_prior_mean,
+        state.random_prior_second_moment,
+        state.batches_updated_on,
+        random_prior_output)
+      new_reward_var = new_reward_second_moment / new_n_batches
+      new_rp_var = new_rp_second_moment / new_n_batches
 
       new_state = CFNTrainingState(
         optimizer_state=state.optimizer_state,
@@ -199,11 +202,11 @@ class CFN(acme.Learner):
         steps=state.steps,
         reward_mean=new_reward_mean,
         reward_var=new_reward_var,
-        reward_squared_mean=new_reward_squared_mean,
+        reward_second_moment=new_reward_second_moment,
         random_prior_mean=new_rp_mean,
         random_prior_var=new_rp_var,
-        random_prior_squared_mean=new_rp_squared_mean,
-        states_updated_on=new_states_updated_on,
+        random_prior_second_moment=new_rp_second_moment,
+        batches_updated_on=new_n_batches,
       )
 
       return new_state
@@ -241,11 +244,11 @@ class CFN(acme.Learner):
         steps=0,
         reward_mean=0.,
         reward_var=1.,
-        reward_squared_mean=0.,
+        reward_second_moment=0.,
         random_prior_mean=jnp.zeros((20,), dtype=jnp.float32),  # TODO(ab/sl): pass in output_dims
         random_prior_var=jnp.ones((20,), dtype=jnp.float32),
-        random_prior_squared_mean=jnp.zeros((20,), dtype=jnp.float32),
-        states_updated_on=0))
+        random_prior_second_moment=jnp.zeros((20,), dtype=jnp.float32),
+        batches_updated_on=0))
     
     # Keep track of ground-truth counts for debugging/visualizations.
     self._hash2obs = {}  # map goal hash to obs
@@ -285,12 +288,12 @@ class CFN(acme.Learner):
     # Update our counts and record it.
     counts = self._counter.increment(steps=1, time_elapsed=time.time() - start)
 
+    # Attempt to write logs.
+    self._logger.write({**metrics, **counts, 'cfn_iteration_time': time.time() - start})
+
     # Update priorities in replay.
     if self._replay_client:
       self._async_priority_updater.put((keys, priorities))
-
-    # Attempt to write logs.
-    self._logger.write({**metrics, **counts})
 
     if self._bonus_plotting_freq > 0 and self._state.steps > 0 and \
         self._state.steps % self._bonus_plotting_freq == 0 and \

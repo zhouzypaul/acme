@@ -20,3 +20,25 @@ def update_statistics_welford(mean, variance, n, batch):
 
   variance = M2 / (n - 1)
   return mean, variance, n
+
+
+@jax.jit
+def welford(mean, second, n_batches, batch):
+  """Update mean and second moment using Welford's algorithm.
+
+  Args:
+    mean: The current mean. Shape: (batch_size, n_features)
+    second: The current second moment. Shape: (batch_size, n_features)
+    n_batches: The number of batches seen so far. Int.
+    batch: The new batch of data. Shape: (batch_size, n_features)
+
+  Returns:
+    The updated mean, second moment and count.
+
+  """
+  new_n_batches = n_batches + 1
+  delta = (batch - mean)  # (batch_size, n_features)
+  new_mean = mean + (delta.mean(axis=0) / new_n_batches)
+  delta2 = (batch - new_mean)  # (batch_size, n_features)
+  new_second = second + (delta * delta2).mean(axis=0)
+  return new_mean, new_second, new_n_batches
