@@ -24,6 +24,7 @@ from absl import logging
 from acme import core
 from acme import types
 from acme.jax import types as jax_types
+from jax.tree_util import tree_flatten
 import haiku as hk
 import jax
 import jax.numpy as jnp
@@ -593,3 +594,13 @@ class PrefetchIterator(core.PrefetchingIterator):
       raise StopIteration
     self.count += 1
     return value
+
+
+def calculate_param_norm(params):
+  # Use tree_flatten to get a flat list of all parameter arrays
+  flat_params, _ = tree_flatten(params)
+  # Calculate the L2 norm for each parameter array
+  norms = [jnp.linalg.norm(param) for param in flat_params]
+  # Calculate the mean of all norms
+  mean_norm = jnp.mean(jnp.asarray(norms))
+  return mean_norm
