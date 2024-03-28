@@ -34,11 +34,11 @@ class CFNTrainingState(NamedTuple):
   steps: int
   reward_mean: float
   reward_var: float
-  reward_squared_mean: float
+  reward_second_moment: float
   random_prior_mean: jnp.ndarray
   random_prior_var: jnp.ndarray
-  random_prior_squared_mean: jnp.ndarray
-  states_updated_on: int
+  random_prior_second_moment: jnp.ndarray
+  batches_updated_on: int
   # random_key: networks_lib.PRNGKey
 
 # TODO(ab/sl): mostly need to implement _process_sample() here
