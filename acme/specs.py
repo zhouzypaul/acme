@@ -37,12 +37,15 @@ class EnvironmentSpec(NamedTuple):
   actions: Any
   rewards: Any
   discounts: Any
+  goals: Any
 
 
 def make_environment_spec(environment: dm_env.Environment) -> EnvironmentSpec:
   """Returns an `EnvironmentSpec` describing values used by an environment."""
+  goals = environment.goal_spec() if hasattr(environment, 'goal_spec') else None
   return EnvironmentSpec(
       observations=environment.observation_spec(),
       actions=environment.action_spec(),
       rewards=environment.reward_spec(),
-      discounts=environment.discount_spec())
+      discounts=environment.discount_spec(),
+      goals=goals)

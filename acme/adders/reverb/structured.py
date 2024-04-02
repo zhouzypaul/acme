@@ -190,7 +190,10 @@ def create_step_spec(
     environment_spec: specs.EnvironmentSpec, extras_spec: types.NestedSpec = ()
 ) -> Step:
   return Step(
-      *environment_spec,
+      observation=environment_spec.observations,
+      action=environment_spec.actions,
+      reward=environment_spec.rewards,
+      discount=environment_spec.discounts,
       start_of_episode=tf.TensorSpec([], tf.bool, 'start_of_episode'),
       extras=extras_spec)
 

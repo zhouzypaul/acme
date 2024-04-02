@@ -181,7 +181,7 @@ class BaseMiniGridWrapper(abc.ABC, base.EnvironmentWrapper):
       pixels_spec_shape = (self._height, self._width)
       pixels_spec_name = "grayscale"
     else:
-      n_channels = 2 * NUM_COLOR_CHANNELS if self._goal_conditioned else NUM_COLOR_CHANNELS
+      n_channels = NUM_COLOR_CHANNELS + int(self._goal_conditioned)
       pixels_spec_shape = (self._height, self._width, n_channels)
       pixels_spec_name = "RGB"
 

@@ -50,6 +50,8 @@ import collections
 import ipdb
 import jax.numpy as jnp
 
+NodeHash = Tuple
+
 
 class EnvironmentLoop(core.Worker):
   """A simple RL environment loop.
@@ -198,42 +200,25 @@ class EnvironmentLoop(core.Worker):
     assert isinstance(current_hash, np.ndarray), type(current_hash)
     assert isinstance(goal_hash, np.ndarray), type(goal_hash)
 
-    # Exploration mode
-    if (goal_hash == -1).all():
-      return False
-
-    dims = np.where(goal_hash >= 0)
+    dims = np.where(goal_hash == 1)
 
     if np.any(current_hash == -1):
       ipdb.set_trace()  # Shouldn't happen
 
-    return (current_hash[dims] == goal_hash[dims]).all()
+    return (current_hash[dims]).all()
     
   def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
     """Is the goal achieved in the current state."""
-
-    # Exploration mode
-    if (goal.goals == -1).all():
-      return False, self._get_intrinsic_reward(current)
-
+    
     reached = self._reached(current.goals, goal.goals)
     return reached, float(reached)
-  
-  def _get_intrinsic_reward(self, state: OARG) -> float:
-    """Novelty-based intrinsic reward associated with `state`."""
-
-    r_int = 1.
-    key = tuple(state.goals)
-
-    if key in self.count_dict:
-      count = self.count_dict[key]
-      r_int = 1. / math.sqrt(count) if count > 0 else 1.
-
-    return r_int
 
   def augment_ts_with_goal(
-    self, timestep: dm_env.TimeStep, goal: OARG, method: str
-    ) -> dm_env.TimeStep:
+    self,
+    timestep: dm_env.TimeStep,
+    goal: np.ndarray,  # 1-hot vector
+    method: str
+  ) -> dm_env.TimeStep:
     """Concatenate the goal to the current observation."""
     new_oarg, reached, reward = self.augment_obs_with_goal(
       timestep.observation, goal, method)
@@ -248,12 +233,26 @@ class EnvironmentLoop(core.Worker):
     # NOTE(ab): overwrites extrinsic reward (maintains done though)
     return timestep._replace(observation=new_oarg,
                              reward=np.array(reward, dtype=np.float32))
-    
+  
+  # TODO(ab): proto-goals - we need to target 1-hot vectors.
   def augment_obs_with_goal(
-    self, obs: OARG, goal: OARG, method: str
+    self,
+    obs: OARG,
+    goal: np.ndarray,  # 1-hot vector
+    method: str
   ) -> Tuple[OARG, bool, float]:
+    def binary2img(proto_goal: np.ndarray) -> np.ndarray:
+      assert proto_goal.dtype == bool, proto_goal.dtype
+      goal_img_shape = (*obs.observation.shape[:2], 1)
+      flat_obs_shape = np.prod(goal_img_shape)  # 84 * 84
+      goal_image = np.zeros(flat_obs_shape, dtype=obs.observation.dtype)
+      goal_image[np.where(proto_goal)] = 1.
+      return goal_image.reshape(goal_img_shape)
+    
     new_obs = self.augment(
-      obs.observation, goal.observation, method=method)
+      obs.observation,
+      binary2img(goal),
+      method=method)
     reached, reward = self.goal_reward_func(obs, goal)
     return OARG(
       observation=new_obs,  # pursued goal
@@ -270,13 +269,12 @@ class EnvironmentLoop(core.Worker):
     if method == 'concat':
       return np.concatenate((obs, goal), axis=-1)
     if method == 'relabel':
-      n_goal_dims = n_obs_dims = obs.shape[-1] // 2
-      return np.concatenate(
-        (obs[:, :, :n_obs_dims],
-         goal[:, :, :n_goal_dims]), axis=-1)
+      import ipdb; ipdb.set_trace()
+      return np.concatenate((obs[:, :, :3], goal), axis=-1)
     raise NotImplementedError(method)
 
   # TODO(ab): this should be based on which options are available at s_t?
+  # TODO(ab): proto-goals - this will now correspond to a *list* of abstract nodes.
   def _get_current_node(self, timestep: dm_env.TimeStep) -> Tuple:
     return tuple([int(g) for g in timestep.observation.goals])
 
@@ -302,6 +300,7 @@ class EnvironmentLoop(core.Worker):
     
     def reached_expansion_node(ts: dm_env.TimeStep, node: Tuple) -> bool:
       if node is not None:
+        # TODO(ab): proto-goals - ensure node is 1-hot
         obs = ts.observation
         return self._reached(obs.goals, np.asarray(node, dtype=obs.goals.dtype))
       return False
@@ -419,10 +418,6 @@ class EnvironmentLoop(core.Worker):
 
     if (episode_logs[explore_traj_key] or is_warmup_episode) and not self._is_evaluator:
       new_hash2goals = self.extract_new_goals(episode_logs[explore_traj_key])
-      
-    # HER.
-    if not is_warmup_episode and not self._is_evaluator:
-      self.hingsight_experience_replay(start_state, episode_logs['episode_trajectory'])
     
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_logs['episode_steps'])
@@ -480,10 +475,22 @@ class EnvironmentLoop(core.Worker):
 
         print(f'Edges to be added to the GSM: {expansion_node_new_node_pairs}')
       
-      self.stream_achieved_goals_to_gsm(
-        filtered_trajectory,
-        attempted_edges,
-        expansion_node_new_node_pairs
+      extracted_results = self.extract_achieved_goals(
+        filtered_trajectory, attempted_edges, expansion_node_new_node_pairs)
+      
+      # HER.
+      if not is_warmup_episode and not self._is_evaluator:
+        self.goal_space_hindsight_replay(
+          start_state, episode_logs['episode_trajectory'], extracted_results['hash2proto_goal'])
+      
+      self._goal_space_manager.update(
+        hash2obs=extracted_results['proto2obs'],
+        hash2count=extracted_results['proto2count'],
+        edge2count=extracted_results['hash_pair_to_attempted_counts'],
+        hash2discount=extracted_results['proto2discount'],
+        hash2reward=extracted_results['proto2reward'],
+        expansion_node_new_node_hash_pairs=extracted_results['expansion_node_new_node_hash_pairs'],
+        edge2success=extracted_results['hash_pair_to_success']
       )
 
       print(f'Took {t1 - t0}s to filter achieved goals')
@@ -570,8 +577,6 @@ class EnvironmentLoop(core.Worker):
         timestep=ts,
         episode_logs=episode_logs,
         trajectory_key=trajectory_key)
-      if self._actor_id == 1:
-        self.visualize_exploration_trajectory(episode_logs[trajectory_key], next(self._episode_iter))
     else:
       print(f'Could have been rolling out the RND policy... {self._exploration_actor}')
       timestep, needs_reset, episode_logs = self.gc_rollout(
@@ -619,18 +624,36 @@ class EnvironmentLoop(core.Worker):
       hash_trajectory = add(hash_trajectory, visited_hash)
 
     return hash_trajectory
+
+  def new_extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
+    """Get all the proto-goal bits that are on in the most-novel obs."""
+    oargs: List[OARG] = [trans.next_ts.observation for trans in trajectory]
+    novelties: List[float] = [trans.intrinsic_reward for trans in trajectory]
+    if novelties != [] and self.should_create_new_goals(novelties):
+      most_salient_idx = np.argmax(novelties)
+      most_salient_obs: OARG = oargs[most_salient_idx]
+      most_salient_obs_bits = np.where(most_salient_obs.goals)
+      return {b: most_salient_obs for b in most_salient_obs_bits if b not in self.goal_dict}
   
   def extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
+
+    def new_extract(binary2oarg, new_one_hot_indices, novelties, method) -> Dict:
+      """Return {node_hash (1-hot vector) -> OARG}."""
+      if method == 'all':
+        return {g: binary2oarg[g] for g in new_one_hot_indices}
     
     def extract(
-        visited_states: Dict,
-        unseen_goal_hashes: List[Tuple],
-        novelties: List[float],
+        visited_states: Dict,  # {binary vector: OARG}
+        unseen_goal_hashes: List[Tuple],  # binary vectors
+        novelties: List[float],  # intrinsic rewards
         method: str = 'novelty_sampling'
     ) -> Dict:
       """Extract new goals from the interesting trajectory."""
       if method == 'all':
         return {g: visited_states[g] for g in unseen_goal_hashes}
+      
+      assert len(unseen_goal_hashes) == len(novelties), (len(unseen_goal_hashes), len(novelties))
+
       if method == 'max_novelty':
         most_novel_goal_hash: Tuple = unseen_goal_hashes[np.argmax(novelties)]
         most_novel_state: OARG = visited_states[most_novel_goal_hash]
@@ -690,6 +713,7 @@ class EnvironmentLoop(core.Worker):
 
     goal_space = self.goal_dict
 
+    # binary vector to oarg
     visited_states = {
       tuple(trans.next_ts.observation.goals): trans.next_ts.observation 
       for trans in trajectory
@@ -701,9 +725,15 @@ class EnvironmentLoop(core.Worker):
       for trans in trajectory
     }
     
-    # NOTE: Using hash for equality here.
-    visited_hashes: List[Tuple] = list(visited_states.keys())
-    new_goal_hashes: List[Tuple] = [g for g in visited_hashes if g not in goal_space]
+    # NOTE(ab): Assuming 1-hot goal-space here.
+    visited_node_ids = []
+    visited_binary_hashes = set(visited_states.keys())
+    for binary_hash in visited_binary_hashes:
+      hot_idx = np.where(binary_hash == 1)
+      for hot_id in hot_idx:
+        visited_node_ids.append(hot_id)
+
+    new_goal_hashes = [(i,) for i in visited_node_ids if (i,) not in goal_space]
 
     print(f'Extracting new goals from {len(new_goal_hashes)} unseen goal hashes.')
 
@@ -1039,14 +1069,14 @@ class EnvironmentLoop(core.Worker):
   def replay_trajectory_with_new_goal(
     self,
     trajectory: List[GoalBasedTransition],
-    hindsight_goal: OARG,
+    hindsight_goal: np.ndarray,
     update_hidden_state: bool = False
   ):
     """Replay the same trajectory with a goal achieved in hindsight.
 
     Args:
         trajectory (List): trajectory from pursuing one goal.
-        hindsight_goal (OARG): hindsight goal for learning.
+        hindsight_goal (np.ndarray): hindsight goal (1-hot) for learning.
         update_hidden_state (bool): whether to forward pass through pi(s,g).
           Need to update h_t if NOT using a GoalBasedQNetowork architecture.
     """
@@ -1185,6 +1215,111 @@ class EnvironmentLoop(core.Worker):
 
       print(f'HER took {time.time() - start_time}s')
 
+  def extract_achieved_goals(
+      self,
+      trajectory: List[GoalBasedTransition],
+      attempted_edges: List[Tuple[NodeHash, NodeHash, bool]],
+      expansion_node_new_node_pairs: List[Tuple[NodeHash, NodeHash]]
+  ):
+    """Extract goals that were achieved in the input trajectory."""
+    def convert2onehots(achieved_protos):
+      """Given an observation's proto/goals, return the list of 1-hot vectors."""
+      hot_idx = jnp.where(achieved_protos == 1)
+      if hot_idx:
+        one_hots = jnp.zeros(
+          shape=(len(hot_idx), achieved_protos.shape),
+          dtype=achieved_protos.dtype)
+        one_hots[range(len(hot_idx)), hot_idx] = 1
+        hashes = [(int(i),) for i in hot_idx]
+        return hashes, one_hots
+      return [], []
+    
+    def attempted2counts():
+      attempted_hashes = [(x, y) for x, y, _ in attempted_edges]
+      return dict(collections.Counter(attempted_hashes))
+    
+    def edge2success():
+      return {(x, y): success for x, y, success in attempted_edges}
+    
+    proto2obs = {}
+    hash2proto = {}
+    proto2count = collections.defaultdict(int)
+    proto2reward = collections.defaultdict(float)
+    proto2discount = collections.defaultdict(float)
+
+    for transition in trajectory:
+      observation = transition.next_ts.observation
+      prev_observation = transition.ts.observation
+      proto_hashes, proto_one_hots = convert2onehots(observation.goals)
+      prev_proto_hashes, _ = convert2onehots(prev_observation.goals)
+      prev_proto_hashes = set(prev_proto_hashes)
+      assert len(proto_hashes) == len(proto_one_hots)
+      for key, one_hot in zip(proto_hashes, proto_one_hots):
+        proto2obs[key] = (
+          jnp.asarray(observation.observation[..., :3]),
+          int(observation.action),
+          float(observation.reward.item())
+        )
+        hash2proto[key] = one_hot
+        
+        # Increment count when transition causes the proto-goal to be achieved
+        achieved = int(key not in prev_proto_hashes)
+        proto2count[key] += achieved
+
+        # Maintain max extrinsic reward corresponding to the proto-goal
+        extrinsic_reward = transition.next_ts.reward or 0.
+        proto2reward[key] = max(proto2reward[key], extrinsic_reward if achieved else 0.)
+        proto2discount[key] = min(proto2discount[key], transition.next_ts.discount)
+
+    hash_pair_to_success = edge2success()
+    hash_pair_to_attempted_counts = attempted2counts()
+    expansion_node_new_node_pairs = [(x, y) for x, y in expansion_node_new_node_pairs if x != y]
+
+    return dict(
+      proto2obs=proto2obs,
+      hash2proto=hash2proto,
+      proto2count=proto2count,
+      proto2reward=proto2reward,
+      proto2discount=proto2discount,
+      hash_pair_to_success=hash_pair_to_success,
+      hash_pair_to_attempted_counts=hash_pair_to_attempted_counts,
+    )
+  
+  def goal_space_hindsight_replay(self, start_state: OARG, trajectory: List[GoalBasedTransition], hash2proto: Dict):
+    
+    def goal_space_novelty_selection(num_goals_to_replay: int = 5) -> List[OARG]:
+      counts = [self.count_dict[g] for g in goal_hashes]
+      scores = np.asarray([1. / (1 + count) for count in counts])
+        
+      probs = scores2probabilities(scores)
+      selected_indices = np.random.choice(
+        range(len(goal_hashes)),
+        p=probs,
+        size=min(num_goals_to_replay, len(goal_hashes)),
+        replace=False
+      )
+      return [triggered_goals[goal_hashes[i]] for i in selected_indices]
+    
+    start_time = time.time()
+    
+    # Map from tuple hash to 1-hot vector that we can condition the UVFA on.
+    triggered_goals = {g: hash2proto[g] for g in hash2proto if g in self.goal_dict}
+    goal_hashes = list(triggered_goals.keys())
+
+    if triggered_goals:
+      hindsight_goals = goal_space_novelty_selection()
+      for hindsight_goal in hindsight_goals:
+        print(f'[HER] replaying wrt to {hindsight_goal}')
+        if not self._proto_rf(start_state.goals, hindsight_goal):
+          self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
+
+      if self._always_learn_about_task_goal and \
+          self._has_seen_task_goal and self._task_goal_probability > 0:
+        print(f'[HER] replaying wrt to task goal {self.task_goal.goals}')
+        self.replay_trajectory_with_new_goal(trajectory, self.task_goal)
+
+    print(f'HER took {time.time() - start_time}s')
+
   def get_logging_counts_dict(self, counts: Dict) -> Dict:
     """Return which counts to log, we are omitting CFN counts to prevent race conditions."""
     keys = [
@@ -1195,46 +1330,6 @@ class EnvironmentLoop(core.Worker):
       'evaluator_steps',
     ]
     return {key: counts.get(key, 0) for key in keys}
-
-  def visualize_exploration_trajectory(self, trajectory: List[GoalBasedTransition], episode: int):
-
-    pos2bonuses = collections.defaultdict(list)
-    executed_actions: List[int] = []
-
-    for transition in trajectory:
-      oarg = transition.ts.observation
-      intrinsic_reward = transition.intrinsic_reward
-      goal_hash = tuple(oarg.goals)
-      x_position = goal_hash[0]
-      y_position = goal_hash[1]
-      pos2bonuses[(x_position, y_position)].append(intrinsic_reward)
-      executed_actions.append(transition.action.item())
-
-    x_positions = []
-    y_positions = []
-    exploration_bonuses = []
-    for pos, bonuses in pos2bonuses.items():
-      x_positions.append(pos[0])
-      y_positions.append(pos[1])
-      exploration_bonuses.append(np.mean(bonuses))
-
-    executed_action_distribution = collections.Counter(executed_actions)
-    plt.title(f'As: {executed_action_distribution}')
-    plt.scatter(x_positions, y_positions, c=exploration_bonuses)
-    plt.colorbar()
-    plt.savefig(os.path.join(self._exploration_traj_dir,
-                             f'exploration_traj_episode_{episode}.png'))
-    plt.close()
-
-  def visualize_n_planner_failures(self, episode):
-    """Visualize the number of times the n-planner failed to find a plan."""
-    # Use a circle-dash marker
-    plt.plot(np.cumsum(self._planner_failure_history), marker='o', linestyle='-')
-    plt.xlabel('Episode')
-    plt.title(f'N-Planner Failures @ Episode {episode}')
-    plt.savefig(os.path.join(self._n_planner_failures_dir,
-                             f'n_planner_failures.png'))
-    plt.close()
 
   # TODO(ab): fix this function and move to the GSM.
   def visualize_goal_space(
@@ -1368,7 +1463,6 @@ class EnvironmentLoop(core.Worker):
 
         if self._actor_id == 1 and episode_count % 10 == 0:
           self.visualize_goal_space(self._start_ts, self._node2successes, episode_count)
-          self.visualize_n_planner_failures(episode_count)
 
     return step_count
 

@@ -74,9 +74,9 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
   def goal_spec(self):
     return specs.BoundedArray(
       shape=(self._n_goal_dims,),
-      dtype=np.int16,
-      minimum=-32_768,  # TODO(ab): not sure this will work
-      maximum=+32_767, 
+      dtype=bool,
+      minimum=np.zeros((self._n_goal_dims), dtype=bool),  # TODO(ab): not sure this will work
+      maximum=np.ones((self._n_goal_dims), dtype=bool), 
     )
 
   def observation_spec(self):

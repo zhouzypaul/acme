@@ -30,6 +30,7 @@ from acme.jax.networks import embedding
 from acme.jax.networks import policy_value
 from acme.jax.networks import resnet
 from acme.wrappers import observation_action_reward
+from acme.wrappers.oar_goal import OARG
 import haiku as hk
 import jax
 import jax.numpy as jnp
@@ -193,29 +194,35 @@ class R2D2AtariNetwork(hk.RNNCore):
     super().__init__(name='r2d2_atari_network')
     self._embed = embedding.OAREmbedding(
         DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True), num_actions)
-    self._goal_embed = embedding.GoalEmbedding(
-      DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True))
+    # self._goal_embed = embedding.GoalEmbedding(
+    #   DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True))
+    self._goal_embed = hk.Linear(256)
     self._core = hk.LSTM(512)
     self._duelling_head = duelling.DuellingMLP(num_actions, hidden_sizes=[512, 512])
     self._num_actions = num_actions
 
   def __call__(
       self,
-      inputs: observation_action_reward.OAR,  # [B, ...]
+      inputs: OARG,  # [B, ...]
       state: hk.LSTMState  # [B, ...]
   ) -> Tuple[base.QValues, hk.LSTMState]:
 
     # Split the input into obs and goal, only _embed obs.
-    assert inputs.observation.shape[-1] == 6, inputs.observation.shape
+    assert inputs.observation.shape[-1] == 4, inputs.observation.shape
     obs_img = inputs.observation[..., :3]
-    goal_img = inputs.observation[..., 3:]
+    
+    n_goal_dims = inputs.goals.shape[0]
+    goal_vec = inputs.observation[..., -1]  # (84, 84)
+    goal_vec = goal_vec.reshape(-1)
+    goal_vec = goal_vec[:n_goal_dims]
+
     inputs = inputs._replace(observation=obs_img)
   
     embeddings = self._embed(inputs)  # [B, D+A+1]
     core_outputs, new_state = self._core(embeddings, state)
     
     # Pass the goal through the DeepAtariTorso.
-    goal_embeddings = self._goal_embed(goal_img)
+    goal_embeddings = self._goal_embed(goal_vec)
 
     # Concat the goal embeddings to the core_outputs.
     augmented_core_outputs = jnp.concatenate(

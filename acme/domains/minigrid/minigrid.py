@@ -35,6 +35,24 @@ class MinigridInfoWrapper(Wrapper):
     super().__init__(env)
     self._timestep = 0
 
+    self.env.reset()
+
+    # NOTE: These attributes can be queried after reset()
+    self._grid_width = env.grid.width
+    self._grid_height = env.grid.height
+
+    self._num_doors = get_num_doors(env)
+    self._env_has_key = does_env_have_key(env)
+    self._env_has_ball = does_env_have_ball(env)
+
+    # Calculate vector size
+    self._player_pos_size = self._grid_width * self._grid_height
+    self._key_pos_size = self._player_pos_size
+    door_state_size = self._num_doors * 3  # Assuming 3 states: open, closed, locked
+    
+    # +1s for has_key and has_ball
+    self.vector_size = self._player_pos_size + 1 + self._key_pos_size + door_state_size + 1
+
     # Store the test-time start state when the environment is constructed
     self.official_start_obs, self.official_start_info = self.reset()
 
@@ -81,6 +99,16 @@ class MinigridInfoWrapper(Wrapper):
     door_states = get_all_door_states(self)
     for i, door_state in enumerate(door_states):
       info[f'door{i}'] = door_state
+
+    # Static information about the environment
+    info['env_width'] = self._grid_width
+    info['env_height'] = self._grid_height
+    info['env_num_doors'] = self._num_doors
+    info['env_has_key'] = self._env_has_key
+    info['env_has_ball'] = self._env_has_ball
+    info['env_player_pos_size'] = self._player_pos_size
+    info['env_key_pos_size'] = self._key_pos_size
+    info['env_pg_vector_size'] = self.vector_size
     
     return info
 
@@ -258,6 +286,30 @@ def determine_task_goal_features(env):
   return task_goal_features
 
 
+def determine_binary_goal_features(env):
+  def navigational_task_goal():
+    """Task goal: (goal_x, goal_y, ...don't cares...)."""
+    goal_pos = determine_goal_pos(env)
+    proto_vec = np.zeros((env.vector_size,), dtype=bool)
+    if goal_pos:
+      pos_idx = goal_pos[1] * env.grid.width + goal_pos[0]
+      proto_vec[pos_idx] = 1
+      return proto_vec
+  
+  def pickup_ball_task_goal():
+    """Task goal: (...don't cares..., has_ball=1)."""
+    proto_vec = np.zeros((env.vector_size,), dtype=bool)
+    proto_vec[-1] = 1
+    return proto_vec
+
+  nav_goal = navigational_task_goal()
+  task_goal_features = nav_goal if nav_goal is not None \
+    else pickup_ball_task_goal()
+
+  print(f'[MiniGrid-Environment] GoalPGFeatures: {task_goal_features}')
+  return task_goal_features
+
+
 # TODO(ab): Consider using MiniGridEnv::hash()
 def info2goals(info):
   door_info = extract_door_info(info)
@@ -273,6 +325,131 @@ def info2goals(info):
     info['is_lava'],
     info['has_ball']
     ], dtype=np.int16)
+
+  
+def determine_num_locations(env):
+  """Get number of cells where there is no wall."""
+  from minigrid.core.world_object import Wall
+  num_locations = 0
+  for i in range(env.grid.width):
+    for j in range(env.grid.height):
+      tile = env.grid.get(i, j)
+      if not isinstance(tile, Wall):
+        num_locations += 1
+  return num_locations
+
+
+def get_num_doors(env):
+  from minigrid.core.world_object import Door
+  num_doors = 0
+  for i in range(env.grid.width):
+    for j in range(env.grid.height):
+      tile = env.grid.get(i, j)
+      if isinstance(tile, Door):
+        num_doors += 1
+  return num_doors
+
+
+def does_env_have_key(env):
+  from minigrid.core.world_object import Key
+  for i in range(env.grid.width):
+    for j in range(env.grid.height):
+      tile = env.grid.get(i, j)
+      if isinstance(tile, Key):
+        return True
+  return False
+
+
+def does_env_have_ball(env):
+  from minigrid.core.world_object import Ball
+  for i in range(env.grid.width):
+    for j in range(env.grid.height):
+      tile = env.grid.get(i, j)
+      if isinstance(tile, Ball):
+        return True
+  return False
+
+
+def info2binary(info):
+  """Convert the info dict to a proto-goal binary vector."""
+  width = info['env_width']
+  num_doors = info['env_num_doors']
+  vector_size = info['env_pg_vector_size']
+  
+  binary_vector = np.zeros((vector_size,), dtype=bool)
+  
+  # Encode player position
+  player_index = info['player_y'] * width + info['player_x']
+  binary_vector[player_index] = 1
+  
+  # Encode has_key
+  if info['has_key']:
+    assert info['env_has_key'], info
+    binary_vector[info['env_player_pos_size']] = 1
+  
+  # Encode key position
+  if INCLUDE_KEY_POS and info['env_has_key'] and not info['has_key']:
+    key_index = info['env_player_pos_size'] + 1 + (info['key_pos'][1] * width) + info['key_pos'][0]
+    binary_vector[key_index] = 1
+  
+  # Encode door states
+  door_start_index = info['env_player_pos_size'] + 1 + info['env_key_pos_size']
+  for i in range(num_doors):
+    door_state = info[f'door{i}']
+    binary_vector[door_start_index + (i * 3) + door_state] = 1
+  
+  # Encode has_ball
+  binary_vector[-1] = 1 if info['has_ball'] else 0
+  
+  return binary_vector
+
+
+def binary2info(binary_vector, env):
+  info = {}
+  width = env.grid.width
+  height = env.grid.height
+  num_doors = get_num_doors(env)
+
+  player_pos_size = width * height
+  key_pos_size = player_pos_size
+  
+  # Decode player position
+  player_vector = binary_vector[:player_pos_size]
+  if np.sum(player_vector) > 0:
+    player_index = np.where(player_vector == 1)[0][0]
+    info['player_y'], info['player_x'] = divmod(player_index, width)
+  else:
+    info['player_y'], info['player_x'] = -1, -1
+  
+  # Decode has_key
+  has_key_index = player_pos_size
+  info['has_key'] = binary_vector[has_key_index]
+
+  def decode_key_pos():
+    key_vector = binary_vector[has_key_index + 1:has_key_index + 1 + key_pos_size]
+    if np.sum(key_vector) > 0:
+      key_index = np.where(key_vector == 1)[0][0]
+      key_y, key_x = divmod(key_index, width)
+      return (key_x, key_y)
+    return (-1, -1)  # unknown
+  
+  # Decode key position
+  if INCLUDE_KEY_POS:
+    info['key_pos'] = decode_key_pos()
+      
+  # Decode door states
+  door_start_index = player_pos_size + 1 + key_pos_size
+  door_states = {0: 'open', 1: 'closed', 2: 'locked'}
+  for i in range(num_doors):
+    door_vector = binary_vector[door_start_index + i*3 : door_start_index + (i+1)*3]
+    if door_vector.sum() > 0:
+      door_state = np.where(door_vector == 1)[0][0]
+      info[f'door{i}'] = door_states[door_state]
+  
+  # Decode has_ball
+  info['has_ball'] = binary_vector[-1]
+  
+  return info
 
 
 def get_all_door_states(env):
@@ -337,14 +514,16 @@ def environment_builder(
     pooled_frames=1,
     to_float=True,
     goal_conditioned=goal_conditioned,
-    task_goal_features=determine_task_goal_features(env)
+    task_goal_features=determine_binary_goal_features(env)
   )
   
   # Use the OARG Wrapper
   env = ObservationActionRewardGoalWrapper(
     env,
-    info2goals,
-    n_goal_dims=N_GOAL_DIMS
+    # info2goals,
+    info2binary,
+    # n_goal_dims=N_GOAL_DIMS
+    n_goal_dims=env.vector_size
   )
 
   ts0 = env.reset()
