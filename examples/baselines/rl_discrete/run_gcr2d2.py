@@ -103,6 +103,26 @@ flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exp
 FLAGS = flags.FLAGS
 
 
+def make_environment_factory(env_name, max_episode_steps, to_float):
+  
+  minigrid_factory = functools.partial(
+    helpers.make_minigrid_environment,
+    level_name=env_name, max_episode_len=max_episode_steps, to_float=to_float)
+  
+  montezuma_factory = functools.partial(
+    helpers.make_montezuma_environment,
+      sticky_actions=False,
+      oar_wrapper=False,
+      oarg_wrapper=True,
+      num_stacked_frames=1,
+      flatten_frame_stack=True,
+      grayscaling=False,
+      to_float=to_float,
+      scale_dims=(84, 84),
+      max_episode_steps=max_episode_steps)
+  
+  return minigrid_factory if 'MiniGrid' in env_name else montezuma_factory
+
 def build_experiment_config():
   """Builds R2D2 experiment config which can be executed in different ways."""
   batch_size = 32
@@ -114,10 +134,7 @@ def build_experiment_config():
   max_episode_steps = FLAGS.max_episode_steps
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return helpers.make_minigrid_environment(
-      level_name=env_name,
-      max_episode_len=max_episode_steps
-    )
+    return make_environment_factory(env_name, max_episode_steps, to_float=False)(seed=seed, goal_conditioned=True)
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)\
   
@@ -215,11 +232,7 @@ def build_exploration_policy_experiment_config():
   target_update_period = FLAGS.cfn_target_update_period
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return helpers.make_minigrid_environment(
-      level_name=env_name,
-      max_episode_len=max_episode_steps,
-      goal_conditioned=False,  # This is the reason we have a different env_factory
-      seed=seed)
+    return make_environment_factory(env_name, max_episode_steps, to_float=False)(seed=seed, goal_conditioned=False)
   
   def rnd_network_factory(env_spec):
     from acme.agents.jax import rnd

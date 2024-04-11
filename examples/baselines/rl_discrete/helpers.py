@@ -33,6 +33,7 @@ import haiku as hk
 import jax.numpy as jnp
 
 from acme.domains.minigrid.minigrid import environment_builder
+from acme.domains.montezuma.montezuma import environment_builder as montezuma_environment_builder
 
 
 FLAGS = flags.FLAGS
@@ -132,11 +133,44 @@ def make_atari_environment(
 
   return wrappers.wrap_all(env, wrapper_list)
 
+
+def make_montezuma_environment(
+    sticky_actions: bool = False,
+    oar_wrapper: bool = False,
+    oarg_wrapper: bool = True,
+    num_stacked_frames: int = 1,
+    flatten_frame_stack: bool = True,
+    grayscaling: bool = False,
+    to_float: bool = True,
+    scale_dims: Tuple[int, int] = (84, 84),
+    max_episode_steps: int = 4500,
+    goal_conditioned: bool = True,
+    seed=0,
+) -> dm_env.Environment:
+  assert oar_wrapper ^ oarg_wrapper, "Only one of oar_wrapper and oarg_wrapper can be True"
+  env = montezuma_environment_builder(
+    max_episode_steps=max_episode_steps,
+    sticky_actions=sticky_actions,
+    goal_conditioned=goal_conditioned,
+    num_stacked_frames=num_stacked_frames,
+    flatten_frame_stack=flatten_frame_stack,
+    grayscaling=grayscaling,
+    scale_dims=scale_dims,
+    to_float=to_float,
+    oarg_wrapper=oarg_wrapper)
+  
+  if oar_wrapper:
+    env = wrappers.ObservationActionRewardWrapper(env)
+
+  return env
+
+
 def make_minigrid_environment(
     level_name: str = 'MiniGrid-Empty-16x16',
     max_episode_len: int = 1000,
     seed: int = 42,
-    goal_conditioned: bool = True
+    goal_conditioned: bool = True,
+    to_float: bool = True,
 ) -> dm_env.Environment:
   """Loads the Atari environment."""
   del seed
@@ -145,7 +179,8 @@ def make_minigrid_environment(
   env = environment_builder(
     level_name,
     max_steps=max_episode_len,
-    goal_conditioned=goal_conditioned
+    goal_conditioned=goal_conditioned,
+    to_float=to_float,
   )
   env = wrappers.SinglePrecisionWrapper(env)
   return env
