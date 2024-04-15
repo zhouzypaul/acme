@@ -22,6 +22,7 @@ from acme import types
 import dm_env
 import gymnasium as gym
 from gymnasium import spaces
+from gym import spaces as gym_spaces
 import numpy as np
 import tree
 import ipdb
@@ -34,7 +35,6 @@ class GymnasiumWrapper(dm_env.Environment):
   # assumes that the wrapped environment is a dm_env.Environment.
 
   def __init__(self, environment: gym.Env):
-
     self._environment = environment
     self._reset_next_step = True
     self._last_info = None
@@ -125,10 +125,10 @@ def _convert_to_spec(space: gym.Space,
     A dm_env spec or nested structure of specs, corresponding to the input
     space.
   """
-  if isinstance(space, spaces.Discrete):
+  if isinstance(space, (spaces.Discrete, gym_spaces.Discrete)):
     return specs.DiscreteArray(num_values=space.n, dtype=space.dtype, name=name)
 
-  elif isinstance(space, spaces.Box):
+  elif isinstance(space, (spaces.Box, gym_spaces.Box)):
     return specs.BoundedArray(
         shape=space.shape,
         dtype=space.dtype,
@@ -136,7 +136,7 @@ def _convert_to_spec(space: gym.Space,
         maximum=space.high,
         name=name)
 
-  elif isinstance(space, spaces.MultiBinary):
+  elif isinstance(space, (spaces.MultiBinary, gym_spaces.MultiBinary)):
     return specs.BoundedArray(
         shape=space.shape,
         dtype=space.dtype,
@@ -144,7 +144,7 @@ def _convert_to_spec(space: gym.Space,
         maximum=1.0,
         name=name)
 
-  elif isinstance(space, spaces.MultiDiscrete):
+  elif isinstance(space, (spaces.MultiDiscrete, gym_spaces.MultiDiscrete)):
     return specs.BoundedArray(
         shape=space.shape,
         dtype=space.dtype,
@@ -152,10 +152,10 @@ def _convert_to_spec(space: gym.Space,
         maximum=space.nvec - 1,
         name=name)
 
-  elif isinstance(space, spaces.Tuple):
+  elif isinstance(space, (spaces.Tuple, gym_spaces.Tuple)):
     return tuple(_convert_to_spec(s, name) for s in space.spaces)
 
-  elif isinstance(space, spaces.Dict):
+  elif isinstance(space, (spaces.Dict, gym_spaces.Dict)):
     return {
         key: _convert_to_spec(value, key)
         for key, value in space.spaces.items()
