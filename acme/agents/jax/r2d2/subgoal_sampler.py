@@ -126,7 +126,8 @@ class SubgoalSampler:
     t0 = time.time()
     policy = {}
     if self._skill_graph is None:
-      self._skill_graph = nx.DiGraph(list(self._edges))
+      edges = [edge for edge in self._edges if edge[0] in self._hash2goal and edge[1] in self._hash2goal]
+      self._skill_graph = nx.DiGraph(edges)
       print(f'[SubgoalSampler] Graph creation time: {time.time() - t0}')
     if start in self._skill_graph and goal in self._skill_graph:
       node2path = nx.single_target_shortest_path(self._skill_graph, target=goal)
