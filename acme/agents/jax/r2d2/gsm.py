@@ -11,8 +11,10 @@ import collections
 import numpy as np
 import jax.numpy as jnp
 
+from scipy.sparse import csr_matrix
 from typing import Dict, Optional, Tuple, Union, List
 
+import acme
 from acme.wrappers.oar_goal import OARG
 from acme.wrappers.observation_action_reward import OAR
 from acme.agents.jax.r2d2 import networks as r2d2_networks
@@ -27,7 +29,7 @@ from acme.agents.jax.r2d2.goal_sampler import GoalSampler
 from acme.utils.paths import get_save_directory
 
 
-class GoalSpaceManager(Saveable):
+class GoalSpaceManager(Saveable, acme.core.VariableSource):
   """Worker that maintains the skill-graph."""
 
   def __init__(
@@ -48,7 +50,9 @@ class GoalSpaceManager(Saveable):
       max_vi_iterations: int = 20,
       goal_space_size: int = 100,
       should_switch_goal: bool = False,
-      use_exploration_vf_for_expansion: bool = False
+      use_exploration_vf_for_expansion: bool = False,
+      use_decentralized_planning: bool = False,
+      maintain_sparse_transition_matrix: bool = True,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -61,6 +65,8 @@ class GoalSpaceManager(Saveable):
     self._goal_space_size = goal_space_size
     self._should_switch_goal = should_switch_goal
     self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
+    self._use_decentralized_planning = use_decentralized_planning
+    self._maintain_sparse_transition_matrix = maintain_sparse_transition_matrix
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -85,6 +91,9 @@ class GoalSpaceManager(Saveable):
     
     self._transition_matrix = np.zeros(
       (self._n_states, self._n_actions), dtype=np.float32)
+
+    if maintain_sparse_transition_matrix:
+      self._transition_matrix = csr_matrix(self._transition_matrix)
     
     self._hash2idx = {}
     self._idx2hash = {}
@@ -130,8 +139,9 @@ class GoalSpaceManager(Saveable):
 
   def begin_episode(self, current_node: Tuple, task_goal_probability: float = 0.1) -> Tuple[Tuple, Dict]:
     """Create and solve the AMDP. Then return the abstract policy."""
+    print(f'[GSM] Time since last GSM iteration: {time.time() - self._gsm_loop_last_timestamp}s')
     goal_sampler = GoalSampler(
-      *self.get_variables(),
+      *self.local_get_variables(),
       task_goal_probability=task_goal_probability,
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
@@ -152,7 +162,7 @@ class GoalSpaceManager(Saveable):
   
   def get_descendants(self, current_node: Tuple): 
     return GoalSampler(
-      *self.get_variables(),
+      *self.local_get_variables(),
       task_goal_probability=0.1,
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
@@ -161,8 +171,7 @@ class GoalSpaceManager(Saveable):
       goal_space_size=self._goal_space_size,
     ).get_descendants(current_node)
 
-  def get_variables(self, names=()):
-    del names
+  def local_get_variables(self, names=()):
     hash2idx = self._thread_safe_deepcopy(self._hash2idx)
     n_actions = self._transition_matrix.shape[1]
     n_nodes = min(n_actions, len(hash2idx))
@@ -175,7 +184,50 @@ class GoalSpaceManager(Saveable):
           *self.get_extrinsic_reward_dicts(),\
           hash2idx,\
           transition_tensor,\
-          self._thread_safe_deepcopy(self._idx2hash)
+          self._thread_safe_deepcopy(self._idx2hash),\
+          self._edges
+    
+  def get_variables(self, names=()):
+    del names
+
+    if self._use_decentralized_planning:
+      return self.local_get_variables()
+    
+    # if not local and len(self._hash2obs) > 2000:
+    #   sampled_idx = np.random.randint(0, len(self._idx2hash) - 1, size=2000)
+    #   start_hash = self._hash2idx[self._start_hash]
+    #   sampled_idx = np.append(sampled_idx, start_hash)
+    #   return self._subsample_graph_get_variables(sampled_idx)
+    return self.get_goal_dict(),\
+           self.get_count_dict(),\
+           self.get_on_policy_edges(),\
+           *self.get_extrinsic_reward_dicts(),\
+           self.get_has_seen_task_goal()
+  
+  def _subsample_graph_get_variables(self, sampled_idx: np.ndarray):
+    """When the graph has more than n_samples nodes, subsample n_samples nodes."""
+    subsampled_hashes = [self._idx2hash[idx] for idx in sampled_idx]
+    transition_tensor = self._transition_matrix[np.ix_(sampled_idx, sampled_idx)].copy()
+    # Compute the new idx2hash and hash2idx mappings.
+    hash2idx = {k: i for i, k in enumerate(subsampled_hashes)}
+    idx2hash = {i: k for i, k in enumerate(subsampled_hashes)}
+    goal_dict = {k: self._hash2obs[k] for k in subsampled_hashes}
+    count_dict = {k: self._hash2counts[k] for k in subsampled_hashes}
+    reward_dict = {k: self._hash2reward[k] for k in subsampled_hashes}
+    discount_dict = {k: self._hash2discount[k] for k in subsampled_hashes}
+
+    print(f'[GSM] Subsampled transition tensor of shape: {transition_tensor.shape} from {self._transition_matrix.shape} sampled_idx_shape {sampled_idx.shape}')
+    
+    return goal_dict,\
+          count_dict,\
+          self.get_bonus_dict(),\
+          self.get_on_policy_count_dict(),\
+          reward_dict,\
+          discount_dict,\
+          hash2idx,\
+          transition_tensor,\
+          idx2hash,\
+          self._edges
     
   # TODO(ab): lock transition matrix during the copy operation
   def get_transition_tensor(self, n_actions: int):
@@ -363,8 +415,6 @@ class GoalSpaceManager(Saveable):
           for connected_node in self._get_one_step_connected_nodes(expansion_node):
             self._edges.add((connected_node, new_node_hash))
 
-      print(f'[GSM] Number of edges: {len(self._edges)}')
-
   def _get_one_step_connected_nodes(self, node: Tuple) -> List[Tuple]:
     connected_nodes = []
     for edge in self._edges:
@@ -382,7 +432,7 @@ class GoalSpaceManager(Saveable):
         goal_features (tuple): goal hash in tuple format
     """
     return OARG(
-      observation=np.asarray(obs, dtype=np.float32),
+      observation=np.asarray(obs, dtype=obs.dtype),
       action=action,
       reward=reward,
       goals=np.asarray(goal_features, dtype=np.int16)
@@ -424,19 +474,29 @@ class GoalSpaceManager(Saveable):
         else:
           self._transition_matrix[src_idx, dest_idx] = 0.      
 
+    # If we zero-ed out some entries, we can reduce the memory consumption of the transition tensor.
+    if self._maintain_sparse_transition_matrix:
+      self._transition_matrix.eliminate_zeros()
+
   def _resize_transition_tensor(self):
     """Dynamically resize the transition tensor."""
     t0 = time.time()
     n_actions = self._n_actions * 2
     n_states = n_actions
     old_transition_matrix = self._transition_matrix.copy()
-    self._transition_matrix = np.zeros(
+    if self._maintain_sparse_transition_matrix and not isinstance(old_transition_matrix, csr_matrix):
+      old_transition_matrix = csr_matrix(old_transition_matrix)
+    new_transition_matrix = np.zeros(
       (n_states, n_actions),
       dtype=self._transition_matrix.dtype)
-    self._transition_matrix[
+    new_transition_matrix[
       :old_transition_matrix.shape[0],
       :old_transition_matrix.shape[1]
     ] = old_transition_matrix
+    if self._maintain_sparse_transition_matrix:
+      self._transition_matrix = csr_matrix(new_transition_matrix)
+    else:
+      self._transition_matrix = new_transition_matrix
     self._n_states, self._n_actions = self._transition_matrix.shape
     print(f'[GSM] Resized transition tensor to {self._transition_matrix.shape} in {time.time() - t0}s')
 
@@ -624,6 +684,7 @@ class GoalSpaceManager(Saveable):
 
   def step(self):
     iteration: int = next(self._iteration_iterator)
+    print(f'[GSM-RunLoop] Time since last iter: {time.time() - self._gsm_loop_last_timestamp}s')
 
     if len(self._hash2obs) > 2:
       self._update_on_policy_edge_probabilities()
@@ -656,13 +717,12 @@ class GoalSpaceManager(Saveable):
   def save(self) -> Tuple[Dict]:
     t0 = time.time()
     print('[GSM] Checkpointing..')
-    to_return = self.get_variables()
+    to_return = self.local_get_variables()
     hash2bell = self._thread_safe_deepcopy(self._hash2bellman)
     hash2bell = {k: list(v) for k, v in hash2bell.items()}
     reward_mean = self._exploration_params.reward_mean if not self._use_exploration_vf_for_expansion else 0.
     reward_var = self._exploration_params.reward_var if not self._use_exploration_vf_for_expansion else 0.
     to_return = (*to_return,
-                 self._edges,
                  self._off_policy_edges,
                  reward_mean,
                  reward_var,
@@ -707,6 +767,9 @@ class GoalSpaceManager(Saveable):
     # print(f'Edges from (8, 11, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0): {_edges}')
 
   def restore_transition_tensor(self, transition_matrix):
+    # If the transition matrix is sparse, convert it to a dense matrix.
+    if isinstance(transition_matrix, csr_matrix):
+      transition_matrix = transition_matrix.toarray()
     k = self._tensor_increments
     self._n_actions = ((len(self._hash2idx) // k) + 1) * k
     self._n_states = self._n_actions
@@ -714,7 +777,7 @@ class GoalSpaceManager(Saveable):
       (self._n_states, self._n_actions), dtype=np.float32)
     n_real_nodes = len(transition_matrix)
     transition_tensor[:n_real_nodes, :n_real_nodes] = transition_matrix
-    return transition_tensor
+    return csr_matrix(transition_tensor) if self._maintain_sparse_transition_matrix else transition_tensor
   
   def get_all_edges_with(self, src=None, dest=None):
     """Get all edges that have src or dest as a node."""
