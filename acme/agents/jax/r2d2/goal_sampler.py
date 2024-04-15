@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import networkx as nx
 import collections
 
+from scipy.sparse import csr_matrix
 from typing import List, Tuple, Dict
 
 from acme.wrappers.oar_goal import OARG
@@ -27,6 +28,7 @@ class GoalSampler:
       hash2idx,
       transition_tensor: np.ndarray,
       idx2hash,
+      online_edges: set,
       task_goal_probability: float,
       task_goal: OARG,
       exploration_goal: OARG,
@@ -229,8 +231,14 @@ class GoalSampler:
   
   def get_descendants(self, src_node: Tuple, threshold=0.) -> List[Tuple]:
     row = self.hash2idx[src_node]
-    adjacency = (self.transition_tensor > threshold).astype(bool)
-    reachable_idx = bfs(adjacency, row)
+    if isinstance(self.transition_tensor, csr_matrix):
+      adjacency = self.transition_tensor.copy()
+      adjacency.data = (adjacency.data > threshold).astype(bool)
+      adjacency.eliminate_zeros()  # Ensure zero entries are not consuming memory.
+      reachable_idx = sparse_bfs(adjacency, row)
+    else:
+      adjacency = (self.transition_tensor > threshold).astype(bool)
+      reachable_idx = bfs(adjacency, row)
     reachable_nodes = [self.idx2hash[idx] for idx in reachable_idx]
     if self._ignore_non_rewarding_terminal_nodes:
       reachable_nodes = [node for node in reachable_nodes if not self.is_death_node(node)]
@@ -288,6 +296,29 @@ def bfs(adj_matrix: np.ndarray[bool], start_idx: int):
 
       for neighbor in range(num_nodes):
           if adj_matrix[node][neighbor] and not visited[neighbor]:
+              queue.append(neighbor)
+              visited[neighbor] = True
+
+  return reachable_nodes
+
+
+def sparse_bfs(adj_matrix: csr_matrix, start_idx: int):
+  """BFS to get reachable nodes from start_idx in a sparse adjacency matrix."""
+
+  num_nodes = adj_matrix.shape[0]
+  visited = [False] * num_nodes
+  reachable_nodes = []
+
+  queue = collections.deque()
+  queue.append(start_idx)
+  visited[start_idx] = True
+
+  while queue:
+      node = queue.popleft()
+      reachable_nodes.append(node)
+
+      for neighbor in adj_matrix[node].indices:
+          if not visited[neighbor]:
               queue.append(neighbor)
               visited[neighbor] = True
 
