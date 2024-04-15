@@ -684,9 +684,9 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
 
   def step(self):
     iteration: int = next(self._iteration_iterator)
-    print(f'[GSM-RunLoop] Time since last iter: {time.time() - self._gsm_loop_last_timestamp}s')
 
     if len(self._hash2obs) > 2:
+      print(f'[GSM-RunLoop] Time since last iter: {time.time() - self._gsm_loop_last_timestamp}s')
       self._update_on_policy_edge_probabilities()
       self._update_off_policy_edge_probabilities()
       if self._use_exploration_vf_for_expansion:
