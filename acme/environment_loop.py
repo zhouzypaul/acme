@@ -39,6 +39,8 @@ from acme.agents.jax.cfn.cfn import CFN
 from acme.agents.jax.cfn.networks import compute_cfn_reward, CFNNetworks
 from acme import dsc
 from acme.agents.jax.r2d2.networks import R2D2Networks
+from acme.jax.variable_utils import VariableClient
+from acme.goal_sampler import GoalSampler
 
 import dm_env
 from dm_env import specs
@@ -99,7 +101,10 @@ class EnvironmentLoop(core.Worker):
       novelty_threshold_for_goal_creation: float = -1.,
       is_evaluator: bool = False,
       planner_backup_strategy: str = 'graph_search',
-      max_option_duration: int = 400
+      max_option_duration: int = 400,
+      recompute_expansion_node_on_interruption: bool = False,
+      decentralized_planner_kwargs: Dict = {},
+      use_gsm_var_client: bool = False
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -112,6 +117,12 @@ class EnvironmentLoop(core.Worker):
     self._should_update = should_update
     self._observers = observers
     self._goal_space_manager = goal_space_manager
+    self._gsm_variable_client = VariableClient(
+      goal_space_manager,
+      key='gsm_variables',
+      update_period=1000
+    ) if goal_space_manager and (use_gsm_var_client or decentralized_planner_kwargs) else None
+    self._use_gsm_var_client = use_gsm_var_client
     self._task_goal_probability = task_goal_probability
     self._always_learn_about_task_goal = always_learn_about_task_goal
     self._always_learn_about_exploration_goal = always_learn_about_exploration_goal
@@ -124,6 +135,7 @@ class EnvironmentLoop(core.Worker):
     self._novelty_threshold_for_goal_creation = novelty_threshold_for_goal_creation
     self._planner_backup_strategy = planner_backup_strategy
     self._max_option_duration = max_option_duration
+    self._recompute_expansion_node_on_interruption = recompute_expansion_node_on_interruption
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -133,6 +145,11 @@ class EnvironmentLoop(core.Worker):
     self._edges = set()
     self._reward_dict = {}
     self._discount_dict = {}
+    self._bonus_dict = {}
+    self._on_policy_edge_count = {}
+    self._hash2idx = {}
+    self._transition_matrix = np.zeros((1, 1))
+    self._idx2hash = {}
 
     self._goal_achievement_rates = collections.defaultdict(float)
     self._goal_pursual_counts = collections.defaultdict(int)
@@ -141,6 +158,9 @@ class EnvironmentLoop(core.Worker):
     self._planner_failure_history = []
 
     self._env_spec = env_specs.make_environment_spec(self._environment)
+
+    # GoalSampler params
+    self._decentralized_planner_kwargs = decentralized_planner_kwargs
 
     # For debugging and visualizations
     self._start_ts = None
@@ -281,17 +301,54 @@ class EnvironmentLoop(core.Worker):
     return tuple([int(g) for g in timestep.observation.goals])
 
   def _update_dicts_from_gsm(self):
-    try:
-      self.count_dict = copy.deepcopy(self._goal_space_manager.get_count_dict())
+    def _var_client_version():
+      gsm_vars = self._gsm_variable_client.params
+      self.goal_dict = gsm_vars[0]
+      self.count_dict = gsm_vars[1]
+      self._edges = gsm_vars[2]
+      self._reward_dict = gsm_vars[3]
+      self._discount_dict = gsm_vars[4]
+      self._has_seen_task_goal = gsm_vars[5]
+      if self._has_seen_task_goal:
+        print(f'[EnvironmentLoop] Has seen task goal.')
+
+    def _decentralized_planning_version():
+      gsm_vars = self._gsm_variable_client.params
+      self.goal_dict = gsm_vars[0]
+      self.count_dict = gsm_vars[1]
+      self._bonus_dict = gsm_vars[2]
+      self._on_policy_edge_count = gsm_vars[3]
+      self._reward_dict = gsm_vars[4]
+      self._discount_dict = gsm_vars[5]
+      self._hash2idx = gsm_vars[6]
+      self._transition_matrix = gsm_vars[7]
+      self._idx2hash = gsm_vars[8]
+      self._edges = gsm_vars[9]
+      self._has_seen_task_goal = self._goal_space_manager.get_has_seen_task_goal()
+      if self._has_seen_task_goal:
+        print(f'[EnvironmentLoop] Has seen task goal.')
+    
+    def _courier_version():
+      self.count_dict = self._goal_space_manager.get_count_dict()
       self.goal_dict = self._goal_space_manager.get_goal_dict()
       self._has_seen_task_goal = self._goal_space_manager.get_has_seen_task_goal()
       self._edges = self._goal_space_manager.get_on_policy_edges()
       self._reward_dict, self._discount_dict = self._goal_space_manager.get_extrinsic_reward_dicts()
       if self._has_seen_task_goal:
         print(f'[EnvironmentLoop] Has seen task goal.')
+
+    t0 = time.time()
+    try:
+      if self._decentralized_planner_kwargs:
+        _decentralized_planning_version()
+      elif self._use_gsm_var_client:
+        _var_client_version()
+      else:
+        _courier_version()
     except Exception as e:  # If error, keep the old stale copy of the dicts
       self._n_courier_errors += 1
       print(f'[GoalSampler] Warning: Courier error # {self._n_courier_errors}. Exception: {e}')
+    print(f'[EnvironmentLoop] Updating dicts from GSM took {time.time() - t0}s.')
   
   def episodic_rollout(
     self,
@@ -318,11 +375,29 @@ class EnvironmentLoop(core.Worker):
       abstract_policy = {}
       expansion_node = tuple(self.task_goal.goals)
       current_node = self._get_current_node(timestep)
-      if self._goal_space_manager:
-        planning_results = self._goal_space_manager.begin_episode(
-          current_node, task_goal_probability=1.0 if self._is_evaluator else 0.1)
-        if planning_results is not None:
-          print(f'[EnvironmentLoop] Planning result (expansion node): {planning_results[0]}')
+      if self._goal_space_manager and self._decentralized_planner_kwargs:
+        goal_sampler = GoalSampler(
+          self.goal_dict,
+          self.count_dict,
+          self._bonus_dict,
+          self._on_policy_edge_count,
+          self._reward_dict,
+          self._discount_dict,
+          self._hash2idx,
+          self._transition_matrix,
+          self._idx2hash,
+          self._edges,
+          task_goal_probability=0.1,
+          task_goal=self.task_goal,
+          exploration_goal=self.exploration_goal,
+          exploration_goal_probability=0.,
+          **self._decentralized_planner_kwargs)
+        expansion_node = goal_sampler.begin_episode(current_node)
+        if goal_sampler._amdp:
+          abstract_policy = goal_sampler._amdp.get_policy()
+      elif self._goal_space_manager:
+        planning_results = self._goal_space_manager.begin_episode(current_node)
+        if planning_results:
           expansion_node, abstract_policy = planning_results
       print(f'[EnvironmentLoop] Expansion Node: {expansion_node}')
       print(f'[EnvironmentLoop] begin_episode() took {time.time() - t0}s.')
@@ -525,7 +600,7 @@ class EnvironmentLoop(core.Worker):
 
       obs0 = copy.deepcopy(timestep.observation)
 
-      timestep, needs_reset, episode_logs = self.gc_rollout(
+      timestep, needs_reset, episode_logs, interrupted = self.gc_rollout(
         timestep._replace(step_type=dm_env.StepType.FIRST),
         goal, episode_logs, use_random_actions=False
       )
@@ -540,6 +615,9 @@ class EnvironmentLoop(core.Worker):
       self._goal_pursual_counts[key] += 1
       self._goal_achievement_rates[key] += (delta / self._goal_pursual_counts[key])
       print(f'Success rate for {key} is {self._goal_achievement_rates[key]} ({self._goal_pursual_counts[key]})')
+
+      if interrupted and self._recompute_expansion_node_on_interruption:
+        break
 
     return timestep, needs_reset, attempted_edges, episode_logs
   
@@ -574,7 +652,7 @@ class EnvironmentLoop(core.Worker):
         self.visualize_exploration_trajectory(episode_logs[trajectory_key], next(self._episode_iter))
     else:
       print(f'Could have been rolling out the RND policy... {self._exploration_actor}')
-      timestep, needs_reset, episode_logs = self.gc_rollout(
+      timestep, needs_reset, episode_logs, _ = self.gc_rollout(
         timestep=ts._replace(step_type=dm_env.StepType.FIRST),
         goal=self.exploration_goal,
         episode_logs=episode_logs,
@@ -687,6 +765,16 @@ class EnvironmentLoop(core.Worker):
       should_create = max_novelty > thresh
       print(f'Novelty threshold: {thresh}. Should create? {max_novelty, should_create}')
       return should_create
+    
+    def filter_uncontrollable_goals(new_goals: List[Tuple]) -> List[Tuple]:
+      """Filter out goals that are jumping/falling/dead/uncontrollable."""
+      idx_to_filter = [3, 4, 5, 6]  # jumping, dead, falling, uncontrollable
+      filtered_goals = []
+      for g in new_goals:
+        goal = np.asarray(g)
+        if not np.any(goal[idx_to_filter]):
+          filtered_goals.append(g)
+      return filtered_goals
 
     goal_space = self.goal_dict
 
@@ -704,6 +792,8 @@ class EnvironmentLoop(core.Worker):
     # NOTE: Using hash for equality here.
     visited_hashes: List[Tuple] = list(visited_states.keys())
     new_goal_hashes: List[Tuple] = [g for g in visited_hashes if g not in goal_space]
+
+    # new_goal_hashes = filter_uncontrollable_goals(new_goal_hashes)
 
     print(f'Extracting new goals from {len(new_goal_hashes)} unseen goal hashes.')
 
@@ -827,7 +917,7 @@ class EnvironmentLoop(core.Worker):
   def gc_rollout(
     self, timestep: dm_env.TimeStep, goal: OARG, episode_logs: dict,
     use_random_actions: bool = False
-    ) -> Tuple[dm_env.TimeStep, bool, dict]:
+    ) -> Tuple[dm_env.TimeStep, bool, dict, bool]:
     """Rollout goal-conditioned policy.
 
     Args:
@@ -840,6 +930,7 @@ class EnvironmentLoop(core.Worker):
         timestep (dm_env.TimeStep): final ts
         done (bool): env needs reset
         logs (dict): updated episode logs
+        interrupted (bool): whether the option was interrupted (timeout)
     """
     reached = False
     needs_reset = False
@@ -919,6 +1010,9 @@ class EnvironmentLoop(core.Worker):
       if self._should_update:
         self._actor.update()
 
+        if self._gsm_variable_client:
+          self._gsm_variable_client.update()
+
       # Equivalent to: episode_return += timestep.reward
       # We capture the return value because if timestep.reward is a JAX
       # DeviceArray, episode_return will not be mutated in-place. (In all other
@@ -945,7 +1039,7 @@ class EnvironmentLoop(core.Worker):
     
     print(f'Goal={goal.goals} Achieved={timestep.observation.goals} R={timestep.reward} T={duration}')
 
-    return timestep, needs_reset, episode_logs
+    return timestep, needs_reset, episode_logs, should_interrupt_option
 
   def filter_achieved_goals(
     self,
@@ -1106,7 +1200,7 @@ class EnvironmentLoop(core.Worker):
     ) -> List[OARG]:
       achieved_goals = {
         tuple(trans.next_ts.observation.goals): trans.next_ts.observation
-        for trans in traj
+        for trans in traj if tuple(trans.next_ts.observation.goals) in self.goal_dict
       }
       goal_hashes = list(achieved_goals.keys())
 
@@ -1115,6 +1209,8 @@ class EnvironmentLoop(core.Worker):
       # Another way to implement this would be to interpret the exploration bonus as a 
       # replay probability, i.e, with prob = bonus, replay achieved goal.
       # We would still need to cap the number of goals to replay and should sort by bonus.
+      if len(goal_hashes) <= num_goals_to_replay:
+        return [achieved_goals[g] for g in goal_hashes]
 
       if (not use_tabular_counts) and (self._exploration_actor is not None):
         achieved_oarg = OARG(
@@ -1173,8 +1269,8 @@ class EnvironmentLoop(core.Worker):
       task_goal = self.task_goal
 
       if self._always_learn_about_task_goal and \
-        not self.goal_reward_func(hindsight_goal, task_goal)[0] and \
-          self._has_seen_task_goal and self._task_goal_probability > 0:
+        self._has_seen_task_goal and self._task_goal_probability > 0:
+        # not self.goal_reward_func(hindsight_goal, task_goal)[0] and \
         print(f'[HER] replaying wrt to task goal {task_goal.goals}')
         self.replay_trajectory_with_new_goal(trajectory, task_goal)
 
@@ -1250,7 +1346,7 @@ class EnvironmentLoop(core.Worker):
     num_attempts = []
     success_rates = []
     for node in node2rate:
-      if node != self.exploration_hash and node != self.task_goal_hash:
+      if node and node != self.exploration_hash and node != self.task_goal_hash:
         x_locations.append(node[0])
         y_locations.append(node[1])
         success_rates.append(node2rate[node])
@@ -1260,7 +1356,16 @@ class EnvironmentLoop(core.Worker):
     start_node = tuple([int(g) for g in ts0.observation.goals])
     hash2oarg = self.goal_dict
     
-    descendants = self._goal_space_manager.get_descendants(start_node)
+    if self._decentralized_planner_kwargs:
+      descendants = GoalSampler(
+            *self._gsm_variable_client.params,
+            task_goal_probability=self._task_goal_probability,
+            task_goal=self.task_goal,
+            exploration_goal=self.exploration_goal,
+            exploration_goal_probability=0.,
+            **self._decentralized_planner_kwargs).get_descendants(start_node)
+    else:
+      descendants = self._goal_space_manager.get_descendants(start_node)
     
     graph_x = [goal_hash[0] for goal_hash in hash2oarg]
     graph_y = [goal_hash[1] for goal_hash in hash2oarg]
