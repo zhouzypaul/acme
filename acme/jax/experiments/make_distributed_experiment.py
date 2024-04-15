@@ -467,6 +467,13 @@ def make_distributed_experiment(
         task_goal_probability=task_goal_prob,
         planner_backup_strategy=default_behavior,
         max_option_duration=experiment.builder._config.option_timeout,
+        decentralized_planner_kwargs=dict(
+          rmax_factor=experiment.builder._config.amdp_rmax_factor,
+          max_vi_iterations=experiment.builder._config.max_vi_iterations,
+          goal_space_size=experiment.builder._config.goal_space_size,
+          should_switch_goal=experiment.builder._config.should_switch_goal,
+        ) if experiment.builder._config.use_decentralized_planner else None,
+        use_gsm_var_client=experiment.builder._config.use_gsm_var_client,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -502,7 +509,8 @@ def make_distributed_experiment(
                            max_vi_iterations=vi_iterations,
                            goal_space_size=goal_space_size,
                            should_switch_goal=experiment.builder._config.should_switch_goal,
-                           use_exploration_vf_for_expansion=use_exploration_vf_for_expansion)
+                           use_exploration_vf_for_expansion=use_exploration_vf_for_expansion,
+                           use_decentralized_planning=experiment.builder._config.use_decentralized_planner)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(
