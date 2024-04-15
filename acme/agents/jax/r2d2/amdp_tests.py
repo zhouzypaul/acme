@@ -13,7 +13,8 @@ def make_amdp_planner(transition_matrix,
                       reward_dict=None,
                       verbose=False,
                       max_vi_iterations=10,
-                      amdp_reward_factor=200.0):
+                      amdp_reward_factor=200.0,
+                      use_sparse_matrix=False):
     def make_fake_reward_dict(hash2idx):
         return {k: 0. for k in hash2idx}
 
@@ -33,7 +34,8 @@ def make_amdp_planner(transition_matrix,
         target_node=target_node,
         verbose=verbose,
         max_vi_iterations=max_vi_iterations,
-        rmax_factor=amdp_reward_factor)
+        rmax_factor=amdp_reward_factor,
+        use_sparse_matrix=use_sparse_matrix)
 
 
 def policy_equals(policy1, policy2, exclude_keys=()):
@@ -269,6 +271,53 @@ def test_low_probability_graph(size=4, transition_probability=1e-10):
     print('[Underflow test] computed_policy: ', computed_policy)
 
 
+def test_large_sparse_graph(n_nodes=4000):
+    transition_matrix = np.zeros((n_nodes, n_nodes))
+    # Sparse transitions
+    for i in range(n_nodes - 1):
+        transition_matrix[i, i + 1] = 1
+
+    hash2idx = {i: i for i in range(n_nodes)}
+    target_node = n_nodes - 1
+    planner = make_amdp_planner(
+        transition_matrix, hash2idx, target_node,
+        max_vi_iterations=n_nodes, use_sparse_matrix=True)
+    start_time = time.time()
+    computed_policy = planner.get_policy()
+    elapsed_time = time.time() - start_time
+
+    expected_policy = {i: i + 1 for i in range(n_nodes - 1)}
+    assert policy_equals(computed_policy, expected_policy, (target_node,)), \
+        f'Expected {expected_policy} but got {computed_policy}.'
+
+    print(f'[+] Large Sparse Graph Test: Elapsed time = {elapsed_time} seconds')
+
+
+def performance_comparison(size):
+
+    transition_matrix = np.zeros((size, size))
+    for i in range(size - 1):
+        transition_matrix[i, i + 1] = 1
+    
+    hash2idx = {i: i for i in range(size)}
+    target_node = size - 1
+    
+    # Dense
+    start_time_dense = time.time()
+    make_amdp_planner(transition_matrix, hash2idx, target_node,
+        max_vi_iterations=size, use_sparse_matrix=False).get_policy()
+    elapsed_time_dense = time.time() - start_time_dense
+    
+    # Sparse
+    start_time_sparse = time.time()
+    make_amdp_planner(transition_matrix, hash2idx, target_node,
+        max_vi_iterations=size, use_sparse_matrix=True).get_policy()
+    elapsed_time_sparse = time.time() - start_time_sparse
+    
+    print(f'Dense matrix elapsed time: {elapsed_time_dense} seconds')
+    print(f'Sparse matrix elapsed time: {elapsed_time_sparse} seconds')
+
+
 if __name__ == '__main__':
     test_linear_graph()
     test_branching_graph()
@@ -279,3 +328,5 @@ if __name__ == '__main__':
     test_planning_at_different_horizons()
     negative_value_probability()
     test_low_probability_graph(size=40, transition_probability=0.1)
+    test_large_sparse_graph(n_nodes=4000)
+    performance_comparison(size=4000)

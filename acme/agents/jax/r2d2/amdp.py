@@ -1,6 +1,8 @@
 import random
 import numpy as np
+
 from typing import Dict, Tuple, List
+from scipy.sparse import csr_matrix, diags
 
 
 class AMDP:
@@ -18,8 +20,10 @@ class AMDP:
     vi_tol: float = 1e-3,
     verbose: bool = False,
     should_switch_goal: bool = False,
+    use_sparse_matrix: bool = True,
   ):
-    self._transition_matrix =  transition_tensor
+    self._transition_matrix =  csr_matrix(transition_tensor) if \
+      use_sparse_matrix and not isinstance(transition_tensor, csr_matrix) else transition_tensor
     self._hash2idx =  hash2idx
     self._reward_dict =  reward_dict
     self._discount_dict =  discount_dict
@@ -28,6 +32,7 @@ class AMDP:
     self._gamma =  gamma
     self._verbose = verbose
     self._rmax_factor = rmax_factor
+    self._use_sparse_matrix = use_sparse_matrix
 
     # TODO(ab): pass this from GoalSampler rather than recomputing it.
     self._idx2hash = {v: k for k, v in hash2idx.items()}
@@ -95,10 +100,17 @@ class AMDP:
       # New VI update rule that takes advantage of the sparsity of the 
       # transition tensor. This allows us to only store (N, N) transition matrices
       # rather than (N+1, N, N+1) tranasition tensors.
-      Q = self._transition_matrix @ np.diag(target)
+      if self._use_sparse_matrix:
+        Q = self._transition_matrix @ diags(target)
+      else:
+        Q = self._transition_matrix @ np.diag(target)
       
       assert Q.shape == (self._n_states, self._n_actions), Q.shape
-      values = np.max(Q, axis=1)
+      values = Q.max(axis=1)
+      
+      if self._use_sparse_matrix:
+        values = values.toarray().flatten()
+
       assert values.shape == (self._n_states,), values.shape
         
       error = np.max(np.abs(values - prev_values))
@@ -115,7 +127,7 @@ class AMDP:
         low=0, high=self._n_actions, size=values.shape
       )
     else:
-      policy = self.q2policy(Q)
+      policy = self.sparse_q2policy(Q) if self._use_sparse_matrix else self.q2policy(Q)
 
     assert values.shape == policy.shape == (self._n_states,), (values.shape, policy.shape)
 
@@ -127,6 +139,17 @@ class AMDP:
       """A random tie-breaking argmax."""
       return np.argmax(x + np.random.random(x.shape) * 1e-6, axis=1)
     q_modified = np.where(self._transition_matrix > 0, q_table, -10_000.)
+    return randargmax(q_modified)
+
+  def sparse_q2policy(self, q_table: csr_matrix) -> np.ndarray:
+    """Argmax over Q that accounts for initiation sets and random tie breaking."""
+    def randargmax(x):
+      """A random tie-breaking argmax."""
+      return np.argmax(x + np.random.random(x.shape) * 1e-6, axis=1)
+    nonzero_rows, nonzero_cols = self._transition_matrix.nonzero()
+    q_modified = np.ones((self._n_states, self._n_actions), dtype=np.float32) * -10_000.
+    q_modified[nonzero_rows, nonzero_cols] = q_table[nonzero_rows, nonzero_cols]
+    print(f'[AMDP] Number of nonzero entries: {len(nonzero_rows)} out of {self._n_states * self._n_actions}')
     return randargmax(q_modified)
 
   def get_goal_sequence(
