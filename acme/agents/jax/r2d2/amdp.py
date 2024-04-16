@@ -151,6 +151,14 @@ class AMDP:
     q_modified[nonzero_rows, nonzero_cols] = q_table[nonzero_rows, nonzero_cols]
     print(f'[AMDP] Number of nonzero entries: {len(nonzero_rows)} out of {self._n_states * self._n_actions}')
     return randargmax(q_modified)
+  
+  def get_vinit(self, hash2vstar):
+    """Get the initial value function for the AMDP."""
+    v0 = np.zeros((self._n_states,), dtype=np.float32)
+    if self._target_node in self._hash2idx:
+      for node, idx in self._hash2idx.items():
+        v0[idx] = hash2vstar[self._target_node].get(node, 0.)
+    return v0
 
   def get_goal_sequence(
     self, start_node: Tuple, goal_node: Tuple, max_len: int = 20
