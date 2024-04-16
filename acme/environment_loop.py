@@ -793,7 +793,7 @@ class EnvironmentLoop(core.Worker):
     visited_hashes: List[Tuple] = list(visited_states.keys())
     new_goal_hashes: List[Tuple] = [g for g in visited_hashes if g not in goal_space]
 
-    # new_goal_hashes = filter_uncontrollable_goals(new_goal_hashes)
+    new_goal_hashes = filter_uncontrollable_goals(new_goal_hashes)
 
     print(f'Extracting new goals from {len(new_goal_hashes)} unseen goal hashes.')
 
@@ -1426,7 +1426,7 @@ class EnvironmentLoop(core.Worker):
       self,
       num_episodes: Optional[int] = None,
       num_steps: Optional[int] = None,
-      n_warmup_episodes: int = 2
+      n_warmup_episodes: int = 20
   ) -> int:
     """Perform the run loop.
 
