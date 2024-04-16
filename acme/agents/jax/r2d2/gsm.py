@@ -1,4 +1,5 @@
 import os
+import jax
 import time
 import ipdb
 import pickle
@@ -67,6 +68,15 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
     self._use_decentralized_planning = use_decentralized_planning
     self._maintain_sparse_transition_matrix = maintain_sparse_transition_matrix
+
+    def compute_uvfa_values(params, rng_key, batch_oarg, initial_lstm_state):
+      # Perform the unroll operation of the network.
+      values, _ = networks.unroll(params, rng_key, batch_oarg, initial_lstm_state)  # (1, B, |A|)
+
+      # Reduce across the last axis and remove the singleton dimension.
+      return values.max(axis=-1)[0]  # (1, B, |A|) -> (1, B) -> (B,)
+
+    self._compute_offline_values = jax.jit(compute_uvfa_values)
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -484,19 +494,23 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     n_actions = self._n_actions * 2
     n_states = n_actions
     old_transition_matrix = self._transition_matrix.copy()
+    
+    # This is possible if we load from a checkpoint where we were not using a sparse matrix.
     if self._maintain_sparse_transition_matrix and not isinstance(old_transition_matrix, csr_matrix):
       old_transition_matrix = csr_matrix(old_transition_matrix)
-    new_transition_matrix = np.zeros(
-      (n_states, n_actions),
-      dtype=self._transition_matrix.dtype)
-    new_transition_matrix[
-      :old_transition_matrix.shape[0],
-      :old_transition_matrix.shape[1]
-    ] = old_transition_matrix
+
     if self._maintain_sparse_transition_matrix:
-      self._transition_matrix = csr_matrix(new_transition_matrix)
+      new_transition_matrix = csr_matrix((n_states, n_actions), dtype=old_transition_matrix.dtype)
     else:
-      self._transition_matrix = new_transition_matrix
+      new_transition_matrix = np.zeros((n_states, n_actions), dtype=self._transition_matrix.dtype)
+
+    # This should work for both sparse and non-sparse matrices.
+    new_transition_matrix[:old_transition_matrix.shape[0], :old_transition_matrix.shape[1]] = old_transition_matrix
+    
+    if self._maintain_sparse_transition_matrix:
+      new_transition_matrix.eliminate_zeros()
+
+    self._transition_matrix = new_transition_matrix
     self._n_states, self._n_actions = self._transition_matrix.shape
     print(f'[GSM] Resized transition tensor to {self._transition_matrix.shape} in {time.time() - t0}s')
 
@@ -582,15 +596,21 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
   def _update_off_policy_edge_probabilities(self, n_nodes: int = 50):
     """Update the transition tensor with the values from the UVFA network."""
     t0 = time.time()
-    n_nodes = min(n_nodes, len(self._hash2obs))
-    keys = random.sample(self._hash2obs.keys(), k=n_nodes)
-    nodes = {key: self._hash2obs[key] for key in keys}
-    edges = [(g1, g2) for g1 in nodes for g2 in nodes if g1 != g2]
-    batch_oarg = self._edges2oarg(edges)
-    if batch_oarg:
-      print(f'[GSM] Updating {len(edges)} off-policy edges.')
-      values = self._oarg2probabilities(batch_oarg)
-      self._update_transition_tensor(edges, values)
+    # n_nodes = min(n_nodes, len(self._hash2obs))
+    if len(self._hash2obs) >= n_nodes:
+      keys = random.sample(self._hash2obs.keys(), k=n_nodes)
+      nodes = {key: self._hash2obs[key] for key in keys}
+      edges = [(g1, g2) for g1 in nodes for g2 in nodes if g1 != g2]
+      batch_oarg = self._edges2oarg(edges)
+      if batch_oarg:
+        print(f'[GSM] Updating {len(edges)} off-policy edges.')
+        values = self._compute_offline_values(
+          self._params,
+          self._rng_key,
+          batch_oarg,
+          self.get_recurrent_state(batch_oarg.observation.shape[1]),
+        ); print(f'[GSM-Profling] Took {time.time() - t0}s to fwd-pass offline values.')
+        self._update_transition_tensor(edges, values)
     print(f'[GSM-Profiling] Took {time.time() - t0}s to update off-policy edges.')
 
   def _compute_and_update_novelty_values(self, n_nodes: int = 50):
@@ -685,7 +705,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
   def step(self):
     iteration: int = next(self._iteration_iterator)
 
-    if len(self._hash2obs) > 2:
+    if len(self._hash2obs) > 2 and self._edges:
       print(f'[GSM-RunLoop] Time since last iter: {time.time() - self._gsm_loop_last_timestamp}s')
       self._update_on_policy_edge_probabilities()
       self._update_off_policy_edge_probabilities()
