@@ -486,17 +486,21 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     old_transition_matrix = self._transition_matrix.copy()
     if self._maintain_sparse_transition_matrix and not isinstance(old_transition_matrix, csr_matrix):
       old_transition_matrix = csr_matrix(old_transition_matrix)
-    new_transition_matrix = np.zeros(
-      (n_states, n_actions),
-      dtype=self._transition_matrix.dtype)
+    
+    if self._maintain_sparse_transition_matrix:
+      new_transition_matrix = csr_matrix((n_states, n_actions), dtype=old_transition_matrix.dtype)
+    else:
+      new_transition_matrix = np.zeros((n_states, n_actions), dtype=old_transition_matrix.dtype)
+
     new_transition_matrix[
       :old_transition_matrix.shape[0],
       :old_transition_matrix.shape[1]
     ] = old_transition_matrix
+
     if self._maintain_sparse_transition_matrix:
-      self._transition_matrix = csr_matrix(new_transition_matrix)
-    else:
-      self._transition_matrix = new_transition_matrix
+      new_transition_matrix.eliminate_zeros()
+
+    self._transition_matrix = new_transition_matrix
     self._n_states, self._n_actions = self._transition_matrix.shape
     print(f'[GSM] Resized transition tensor to {self._transition_matrix.shape} in {time.time() - t0}s')
 
