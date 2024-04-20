@@ -1,4 +1,5 @@
 import os
+import math
 import time
 import json
 import pickle
@@ -121,20 +122,20 @@ class GSMPlotter:
       self._plot_bellman_errors(vars['hash2bellman'], episode)
       self._plot_spatial_vstar(vars['hash2vstar'], episode)
       self._plot_gsm_iteration_times(vars['gsm_iteration_times'])
-      self._plot_per_goal_success_curves(
-        extract_hash_to_success(vars['edge2success']), episode)
+      # self._plot_per_goal_success_curves(
+      #   extract_hash_to_success(vars['edge2success']), episode)
       self._plot_reward_mean_and_variance(episode=-1)
-      self._plot_key_bit_success_curves(vars['edge2success'], episode)
-      self._plot_door_bit_success_curves(vars['edge2success'], episode)
+      # self._plot_key_bit_success_curves(vars['edge2success'], episode)
+      # self._plot_door_bit_success_curves(vars['edge2success'], episode)
       self._plot_on_policy_counts(vars['on_policy_counts'], episode)
-      self._plot_task_goal_success_curve(vars['edge2success'])
+      # self._plot_task_goal_success_curve(vars['edge2success'])
 
-      cfn_plotting.plot_average_bonus_for_each_hash_bit(
-        vars['hash2bonus'],
-        save_path=os.path.join(self._hash_bit_plotting_dir, f'mean_bonus_{episode}.png'))
+      # cfn_plotting.plot_average_bonus_for_each_hash_bit(
+      #   vars['hash2bonus'],
+      #   save_path=os.path.join(self._hash_bit_plotting_dir, f'mean_bonus_{episode}.png'))
       
-      self._plot_avg_value_for_interesting_hash_bits(
-        vars['hash2idx'], vars['transition_matrix'], episode)
+      # self._plot_avg_value_for_interesting_hash_bits(
+      #   vars['hash2idx'], vars['transition_matrix'], episode)
       
       self._log_memory_usage(episode)
       self._plot_goal_space_size()
@@ -168,16 +169,7 @@ class GSMPlotter:
     episode: int,
     hash2idx: Dict[Tuple, int],
     transition_matrix: np.ndarray,
-    task_value_vector: Optional[np.ndarray] = None,
-    exploration_value_vector: Optional[np.ndarray] = None,
-    n_goal_subplots: int = 4
   ):
-    assert n_goal_subplots % 2 == 0, 'Ask for even number of subplots.'
-    assert task_value_vector is None or len(task_value_vector.shape) == 1
-    assert exploration_value_vector is None or len(exploration_value_vector.shape) == 1
-
-    plot_task_value_fn = task_value_vector is not None
-    plot_explore_value_fn = exploration_value_vector is not None
 
     def _get_value(src: Tuple, dest: Tuple):
       row = hash2idx[src]
@@ -186,61 +178,18 @@ class GSMPlotter:
 
     starts = list(hash2idx.keys())
     
-    if len(starts) < n_goal_subplots:
+    if len(starts) == 0:
       return
     
-    selected_starts = random.sample(starts, k=n_goal_subplots)
-
-    plt.figure(figsize=(14, 14))
-    n_subplots = n_goal_subplots + \
-      int(plot_task_value_fn) + int(plot_explore_value_fn)
-
-    for i, start in enumerate(selected_starts):
-      xs = []; ys = []; values = []
-      for goal_hash in starts:
-        xs.append(goal_hash[0])
-        ys.append(goal_hash[1])
-        value = _get_value(start, goal_hash)
-        values.append(value)
-      plt.subplot(n_subplots // 2, n_subplots // 2, i + 1)
-      plt.scatter(xs, ys, c=values)
-      plt.colorbar()
-      plt.title(f'Start State: {start}')
-
-    if plot_task_value_fn:
-      xs = []; ys = []; values = []
-      for start in starts:
-        xs.append(start[0])
-        ys.append(start[1])
-        values.append(task_value_vector[hash2idx[start]])
-      plt.subplot(n_subplots // 2, n_subplots // 2, n_goal_subplots + 1)
-      plt.scatter(xs, ys, c=values)
-      plt.colorbar()
-      plt.title('Task Reward Function')
-
-    if plot_explore_value_fn:
-      xs = []; ys = []; values = []
-      for start in starts:
-        xs.append(start[0])
-        ys.append(start[1])
-        values.append(exploration_value_vector[hash2idx[start]])
-      plt.subplot(n_subplots // 2, n_subplots // 2, n_goal_subplots + 2)
-      plt.scatter(xs, ys, c=values)
-      plt.colorbar()
-      plt.title('Exploration Context')
-
+    selected_start = random.choice(starts)
+    
+    hash2val = {h: _get_value(selected_start, h) for h in starts}  
+    self._make_spatial_plot(hash2val, f'UVFA starting at {selected_start}')
     plt.savefig(os.path.join(self._gcvf_plotting_dir, f'uvfa_{episode}.png'))
     plt.close()
 
   def _make_spatial_bonus_plot(self, hash2bonus: Dict, episode: int):
-    hashes = list(hash2bonus.keys())
-    xs, ys, bonuses = [], [], []
-    for hash in hashes:
-      xs.append(hash[0])
-      ys.append(hash[1])
-      bonuses.append(hash2bonus[hash])
-    plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
-    plt.colorbar()
+    self._make_spatial_plot(hash2bonus, "")
     plt.savefig(os.path.join(self._spatial_plotting_dir, f'spatial_bonus_{episode}.png'))
     plt.close()
 
@@ -274,39 +223,64 @@ class GSMPlotter:
     plt.savefig(os.path.join(self._gsm_iteration_times_dir, 'goal_space_size.png'))
     plt.close()
 
-  def _plot_hash2bonus(self, hash2bonus, episode):
-    hashes = list(hash2bonus.keys())
-    xs, ys, bonuses = [], [], []
+  @staticmethod
+  def subplot_grid(N):
+    def is_prime(num):
+      if num <= 1:
+        return False
+      for i in range(2, int(math.sqrt(num)) + 1):
+        if num % i == 0:
+          return False
+      return True
+    
+    # adjust for prime N
+    if is_prime(N):
+      N += 1
+
+    # Start with a square root approximation to find one dimension
+    factor = int(math.sqrt(N))
+    while N % factor != 0:
+      factor -= 1  # Decrease the factor until it divides N
+    # Return dimensions that are factors of N
+    return factor, N // factor
+  
+  @staticmethod
+  def _make_spatial_plot(hash2val, title):
+    hashes = list(hash2val.keys())
+    room2spatial = collections.defaultdict(lambda: collections.defaultdict(list))
     for hash in hashes:
-      xs.append(hash[0])
-      ys.append(hash[1])
-      bonuses.append(hash2bonus[hash])
-    plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
-    plt.colorbar()
+      room = hash[2]
+      room2spatial[room]['x'].append(hash[0])
+      room2spatial[room]['y'].append(hash[1])
+      room2spatial[room]['val'].append(hash2val[hash])
+    width, height = plt.rcParams['figure.figsize']
+    if len(room2spatial) == 0:
+      return
+    n_rows, n_cols = GSMPlotter.subplot_grid(len(room2spatial))
+    plt.figure(figsize=(width * n_cols, height * n_rows))
+    for i, room in enumerate(room2spatial):
+      plt.subplot(n_rows, n_cols, i + 1)
+      plt.scatter(room2spatial[room]['x'], room2spatial[room]['y'], c=room2spatial[room]['val'])
+      plt.title(f'Room {room}')
+      plt.colorbar()
+    plt.suptitle(title)
+
+  def _plot_hash2bonus(self, hash2bonus, episode):
+    self._make_spatial_plot(hash2bonus, f'Bonus at GSM Iteration {episode}')
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
     plt.close()
 
   def _plot_skill_graph(self, edges, off_policy_edges, episode, include_off_policy_edges=True):
     """Spatially plot the nodes and edges of the skill-graph."""
 
-    def split_edges(edges, hash_bit):
-      """Split edges based on whether the hash bit is on/off for src and dest."""
-      no_no = []
-      no_yes = []
-      yes_no = []
-      yes_yes = []
+    def split_edges(edges):
+      # Split the edges based on room number
+      rooms2edges = collections.defaultdict(list)
       for edge in edges:
-        src_hash = edge[0]
-        dest_hash = edge[1]
-        if src_hash[hash_bit] == 0 and dest_hash[hash_bit] == 0:
-          no_no.append(edge)
-        elif src_hash[hash_bit] == 0 and dest_hash[hash_bit] == 1:
-          no_yes.append(edge)
-        elif src_hash[hash_bit] == 1 and dest_hash[hash_bit] == 0:
-          yes_no.append(edge)
-        elif src_hash[hash_bit] == 1 and dest_hash[hash_bit] == 1:
-          yes_yes.append(edge)
-      return no_no, no_yes, yes_no, yes_yes
+        src, dest = edge
+        key = src[2], dest[2]
+        rooms2edges[key].append(edge)
+      return rooms2edges
 
     def plot_edges(e, color):
       for edge in e:
@@ -317,31 +291,27 @@ class GSMPlotter:
         plt.scatter([x1, x2], [y1, y2], color=color)
         plt.plot([x1, x2], [y1, y2], color=color, alpha=0.3)
 
-    def split_then_plot(edges, hash_bit, color):
-      no_no, no_yes, yes_no, yes_yes = split_edges(edges, hash_bit=2)
+    def split_then_plot(edges, color):
+      rooms2edges = split_edges(edges)
+      if not rooms2edges:
+        return
+
+      width, height = plt.rcParams['figure.figsize']
+      n_rows, n_cols = GSMPlotter.subplot_grid(len(rooms2edges))
+      plt.figure(figsize=(width * n_cols, height * n_rows))
       
-      plt.subplot(2, 2, 1)
-      plot_edges(no_no, color=color)
-      plt.title('No Key -> No Key')
-      plt.subplot(2, 2, 2)
-      plot_edges(no_yes, color=color)
-      plt.title('No Key -> Yes Key')
-      plt.subplot(2, 2, 3)
-      plot_edges(yes_no, color=color)
-      plt.title('Yes Key -> No Key')
-      plt.subplot(2, 2, 4)
-      plot_edges(yes_yes, color=color)
-      plt.title('Yes Key -> Yes Key')
+      for i, rooms in enumerate(rooms2edges):
+        plt.subplot(n_rows, n_cols, i + 1)
+        plot_edges(rooms2edges[rooms], color=color)
+        plt.title(f'Room {rooms[0]} -> {rooms[1]}')
     
     edges = list(edges)
-    plt.figure(figsize=(14, 14))
-    split_then_plot(edges, hash_bit=2, color='black')
+    split_then_plot(edges, color='black')
     plt.savefig(os.path.join(self._skill_graph_plotting_dir, f'online_skill_graph_{episode}.png'))
     plt.close()
     
     off_policy_edges = list(off_policy_edges)
-    plt.figure(figsize=(14, 14))
-    split_then_plot(off_policy_edges, hash_bit=2, color='red')
+    split_then_plot(off_policy_edges, color='red')
     plt.savefig(os.path.join(self._off_policy_graph_plotting_dir, f'offline_skill_graph_{episode}.png'))
     plt.close()
 
@@ -450,18 +420,6 @@ class GSMPlotter:
             total_count += edge_counts[src_node][dest]
       return total_count
     
-    def spatial_plot(hash2counts, title):
-      hashes = list(hash2counts.keys())
-      xs, ys, counts = [], [], []
-      for hash in hashes:
-        if hash2counts[hash] > 0:
-          xs.append(hash[0])
-          ys.append(hash[1])
-          counts.append(np.log(hash2counts[hash]))
-      plt.scatter(xs, ys, c=counts, s=60, marker='s')
-      plt.colorbar()
-      plt.title(title)
-    
     src_counts = {src: get_total_count(src=src) for src in edge_counts}
     dst_counts = {dst: get_total_count(dest=dst) for dst in edge_counts}
     
@@ -469,13 +427,12 @@ class GSMPlotter:
     # so that the colorbar is not dominated by a single node.
     del src_counts[max(src_counts, key=src_counts.get)]
 
-    plt.figure(figsize=(14, 14))
-    plt.subplot(121)
-    spatial_plot(src_counts, title='log(src counts)')
-    plt.subplot(122)
-    spatial_plot(dst_counts, title='log(dest counts)')
-    plt.suptitle('On-Policy Counts')
-    plt.savefig(os.path.join(self._on_policy_count_plotting_dir, f'edge_counts_{episode}.png'))
+    self._make_spatial_plot(src_counts, title='log(src counts)')
+    plt.savefig(os.path.join(self._on_policy_count_plotting_dir, f'src_edge_counts_{episode}.png'))
+    plt.close()
+
+    self._make_spatial_plot(dst_counts, title='log(dest counts)')
+    plt.savefig(os.path.join(self._on_policy_count_plotting_dir, f'dest_edge_counts_{episode}.png'))
     plt.close()
 
   def _plot_reward_mean_and_variance(self, episode):
@@ -497,28 +454,13 @@ class GSMPlotter:
     plt.close()
 
   def _plot_spatial_vstar(self, hash2vstar, episode):
-    """Spatially plot the AMDP V* for 4 randomly sampled goal nodes."""
-    def plot_vf(hash2val: Dict, name: str):
-      xs = []; ys = []; values = []
-      for key, val in hash2val.items():
-        xs.append(key[0])
-        ys.append(key[1])
-        values.append(val)
-
-      if values:
-        plt.scatter(xs, ys, c=values, s=100, marker='s')
-        plt.colorbar()
-        plt.title(name)
+    """Spatially plot the AMDP V* for a randomly sampled goal node."""
 
     nodes = list(hash2vstar.keys())
     
     if nodes:
-      selected_nodes = random.sample(nodes, k=min(len(nodes), 4))
-      plt.figure(figsize=(14, 14))
-      for i, node in enumerate(selected_nodes):
-        plt.subplot(2, 2, i + 1)
-        plot_vf(hash2vstar[node], name=f'Goal: {node}')
-      plt.suptitle(f'AMDP V-Star at GSM Iteration {episode}')
+      node = random.choice(nodes)
+      self._make_spatial_plot(hash2vstar[node], f'Goal: {node}')
       plt.savefig(os.path.join(self._amdp_vstar_plotting_dir, f'vstar_{episode}.png'))
       plt.close()
   
