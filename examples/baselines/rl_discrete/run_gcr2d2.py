@@ -92,6 +92,7 @@ flags.DEFINE_float("off_policy_edge_threshold", 0.75, "Threshold for off-policy 
 flags.DEFINE_integer("max_vi_iterations", 50, "Max number of VI iterations for AMDP")
 flags.DEFINE_float("novelty_threshold_for_goal_creation", -1., "Threshold for novelty for new goal/node creation")
 flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for target node sampling. -1 means sum_sampling.")
+flags.DEFINE_bool("warmstart_value_iteration", False, "Whether to warmstart value iteration with previous solution.")
 
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
@@ -123,7 +124,16 @@ def make_environment_factory(env_name, max_episode_steps, to_float):
       scale_dims=(84, 84),
       max_episode_steps=max_episode_steps)
   
-  return minigrid_factory if 'MiniGrid' in env_name else montezuma_factory
+  sokoban_factory = functools.partial(
+    helpers.make_sokoban_environment, level_name=env_name, to_float=to_float)
+  
+  if 'MiniGrid' in env_name:
+    return minigrid_factory
+  elif 'Montezuma' in env_name:
+    return montezuma_factory
+  elif 'Sokoban' in env_name:
+    return sokoban_factory
+  raise ValueError(f"Unknown environment name: {env_name}")
 
 def build_experiment_config():
   """Builds R2D2 experiment config which can be executed in different ways."""
@@ -173,7 +183,8 @@ def build_experiment_config():
       option_timeout=FLAGS.option_timeout,
       use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion,
       use_decentralized_planner=FLAGS.use_decentralized_planner,
-      use_gsm_var_client=FLAGS.use_gsm_var_client
+      use_gsm_var_client=FLAGS.use_gsm_var_client,
+      warmstart_value_iteration=FLAGS.warmstart_value_iteration
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

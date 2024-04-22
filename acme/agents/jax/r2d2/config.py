@@ -78,3 +78,4 @@ class R2D2Config:
   use_exploration_vf_for_expansion: bool = True
   use_decentralized_planner: bool = False
   use_gsm_var_client: bool = False
+  warmstart_value_iteration: bool = False

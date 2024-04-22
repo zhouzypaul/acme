@@ -21,6 +21,7 @@ class AMDP:
     verbose: bool = False,
     should_switch_goal: bool = False,
     use_sparse_matrix: bool = True,
+    hash2vstar: Dict = None
   ):
     self._transition_matrix =  csr_matrix(transition_tensor) if \
       use_sparse_matrix and not isinstance(transition_tensor, csr_matrix) else transition_tensor
@@ -47,6 +48,7 @@ class AMDP:
         target_node = goal_node
         self._target_node = target_node
 
+    self._hash2vstar = hash2vstar
     self._reward_vector, self._discount_vector = self._abstract_reward_function(target_node)
     self._vf, self._policy, self.max_bellman_errors = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
     print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states.')
@@ -88,7 +90,7 @@ class AMDP:
   
   def _solve_abstract_mdp(self, n_iterations, tol):
     max_bellman_errors = []
-    values = np.zeros((self._n_states,), dtype=np.float32)
+    values = self.get_vinit(self._hash2vstar)
 
     for i in range(n_iterations):
       prev_values = np.copy(values)
@@ -151,6 +153,15 @@ class AMDP:
     q_modified[nonzero_rows, nonzero_cols] = q_table[nonzero_rows, nonzero_cols]
     print(f'[AMDP] Number of nonzero entries: {len(nonzero_rows)} out of {self._n_states * self._n_actions}')
     return randargmax(q_modified)
+  
+  def get_vinit(self, hash2vstar):
+    """Get the initial value function for the AMDP."""
+    v0 = np.zeros((self._n_states,), dtype=np.float32)
+    if hash2vstar and self._target_node in self._hash2idx:
+      print(f'[AMDP] Using hash2vstar to initialize AVF for {self._target_node}')
+      for node, idx in self._hash2idx.items():
+        v0[idx] = hash2vstar[self._target_node].get(node, 0.)
+    return v0
 
   def get_goal_sequence(
     self, start_node: Tuple, goal_node: Tuple, max_len: int = 20

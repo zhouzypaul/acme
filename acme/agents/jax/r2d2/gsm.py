@@ -53,6 +53,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       use_exploration_vf_for_expansion: bool = False,
       use_decentralized_planning: bool = False,
       maintain_sparse_transition_matrix: bool = True,
+      warmstart_value_iteration: bool = False,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -67,6 +68,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
     self._use_decentralized_planning = use_decentralized_planning
     self._maintain_sparse_transition_matrix = maintain_sparse_transition_matrix
+    self._warmstart_value_iteration = warmstart_value_iteration
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -149,7 +151,8 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       rmax_factor=self._rmax_factor,
       goal_space_size=self._goal_space_size,
       should_switch_goal=self._should_switch_goal,
-      max_vi_iterations=self._max_vi_iterations
+      max_vi_iterations=self._max_vi_iterations,
+      hash2vstar=self._hash2vstar if self._warmstart_value_iteration else None,
     )
     expansion_node = goal_sampler.begin_episode(current_node)
 

@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import json
 import pickle
 import random
@@ -8,6 +9,7 @@ import itertools
 import subprocess
 import collections
 import numpy as np
+import networkx as nx
 import matplotlib.pyplot as plt
 
 from typing import Tuple, Optional, Dict
@@ -66,6 +68,27 @@ class GSMPlotter:
     os.makedirs(self._door_competence_plotting_dir, exist_ok=True)
     os.makedirs(self._on_policy_count_plotting_dir, exist_ok=True)
 
+  @staticmethod
+  def subplot_grid(N):
+    def is_prime(num):
+      if num <= 1:
+        return False
+      for i in range(2, int(math.sqrt(num)) + 1):
+        if num % i == 0:
+          return False
+      return True
+    
+    # adjust for prime N
+    if is_prime(N):
+      N += 1
+
+    # Start with a square root approximation to find one dimension
+    factor = int(math.sqrt(N))
+    while N % factor != 0:
+      factor -= 1  # Decrease the factor until it divides N
+    # Return dimensions that are factors of N
+    return factor, N // factor
+
   def get_gsm_variables(self):
     try:
       with open(self._checkpoint_path, 'rb') as f:
@@ -106,7 +129,6 @@ class GSMPlotter:
         episode,
         vars['hash2idx'],
         vars['transition_matrix'])
-      self._make_spatial_bonus_plot(vars['hash2bonus'], episode)
       self._plot_discovered_goals(
         vars['hash2obs'],
         vars['hash2bonus'],
@@ -124,8 +146,6 @@ class GSMPlotter:
       self._plot_per_goal_success_curves(
         extract_hash_to_success(vars['edge2success']), episode)
       self._plot_reward_mean_and_variance(episode=-1)
-      self._plot_key_bit_success_curves(vars['edge2success'], episode)
-      self._plot_door_bit_success_curves(vars['edge2success'], episode)
       self._plot_on_policy_counts(vars['on_policy_counts'], episode)
       self._plot_task_goal_success_curve(vars['edge2success'])
 
@@ -142,10 +162,10 @@ class GSMPlotter:
   def run(self):
     for iteration in itertools.count():
       t0 = time.time()
-      try:
-        self(episode=iteration)
-      except Exception as e:
-        print(f'Plotting Subprocess Error: {e}')
+      # try:
+      self(episode=iteration)
+      # except Exception as e:
+      #   print(f'Plotting Subprocess Error: {e}')
       t1 = time.time()
       print(f'Plotted iteration {iteration} in {t1 - t0:.3f} seconds.')
       time.sleep(max(0, self._time_between_plots - (t1 - t0)))
@@ -171,16 +191,7 @@ class GSMPlotter:
     episode: int,
     hash2idx: Dict[Tuple, int],
     transition_matrix: np.ndarray,
-    task_value_vector: Optional[np.ndarray] = None,
-    exploration_value_vector: Optional[np.ndarray] = None,
-    n_goal_subplots: int = 4
   ):
-    assert n_goal_subplots % 2 == 0, 'Ask for even number of subplots.'
-    assert task_value_vector is None or len(task_value_vector.shape) == 1
-    assert exploration_value_vector is None or len(exploration_value_vector.shape) == 1
-
-    plot_task_value_fn = task_value_vector is not None
-    plot_explore_value_fn = exploration_value_vector is not None
 
     def _get_value(src: Tuple, dest: Tuple):
       row = hash2idx[src]
@@ -189,62 +200,14 @@ class GSMPlotter:
 
     starts = list(hash2idx.keys())
     
-    if len(starts) < n_goal_subplots:
+    if len(starts) == 0:
       return
     
-    selected_starts = random.sample(starts, k=n_goal_subplots)
-
-    plt.figure(figsize=(14, 14))
-    n_subplots = n_goal_subplots + \
-      int(plot_task_value_fn) + int(plot_explore_value_fn)
-
-    for i, start in enumerate(selected_starts):
-      xs = []; ys = []; values = []
-      for goal_hash in starts:
-        xs.append(goal_hash[0])
-        ys.append(goal_hash[1])
-        value = _get_value(start, goal_hash)
-        values.append(value)
-      plt.subplot(n_subplots // 2, n_subplots // 2, i + 1)
-      plt.scatter(xs, ys, c=values)
-      plt.colorbar()
-      plt.title(f'Start State: {start}')
-
-    if plot_task_value_fn:
-      xs = []; ys = []; values = []
-      for start in starts:
-        xs.append(start[0])
-        ys.append(start[1])
-        values.append(task_value_vector[hash2idx[start]])
-      plt.subplot(n_subplots // 2, n_subplots // 2, n_goal_subplots + 1)
-      plt.scatter(xs, ys, c=values)
-      plt.colorbar()
-      plt.title('Task Reward Function')
-
-    if plot_explore_value_fn:
-      xs = []; ys = []; values = []
-      for start in starts:
-        xs.append(start[0])
-        ys.append(start[1])
-        values.append(exploration_value_vector[hash2idx[start]])
-      plt.subplot(n_subplots // 2, n_subplots // 2, n_goal_subplots + 2)
-      plt.scatter(xs, ys, c=values)
-      plt.colorbar()
-      plt.title('Exploration Context')
-
+    selected_start = random.choice(starts)
+    
+    hash2val = {h: _get_value(selected_start, h) for h in starts}  
+    self._make_spatial_plot(hash2val, f'UVFA starting at {selected_start}')
     plt.savefig(os.path.join(self._gcvf_plotting_dir, f'uvfa_{episode}.png'))
-    plt.close()
-
-  def _make_spatial_bonus_plot(self, hash2bonus: Dict, episode: int):
-    hashes = list(hash2bonus.keys())
-    xs, ys, bonuses = [], [], []
-    for hash in hashes:
-      xs.append(hash[0])
-      ys.append(hash[1])
-      bonuses.append(hash2bonus[hash])
-    plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
-    plt.colorbar()
-    plt.savefig(os.path.join(self._spatial_plotting_dir, f'spatial_bonus_{episode}.png'))
     plt.close()
 
   def _plot_discovered_goals(
@@ -277,74 +240,94 @@ class GSMPlotter:
     plt.savefig(os.path.join(self._gsm_iteration_times_dir, 'goal_space_size.png'))
     plt.close()
 
+  @staticmethod
+  def _make_spatial_plot(hash2val, title=""):
+    hashes = list(hash2val.keys())
+    n_boxes = (len(hashes[0]) - 3) // 2
+    n_subplots = n_boxes + 1
+    n_rows, n_cols = GSMPlotter.subplot_grid(n_subplots)
+    for i in range(n_subplots):
+      xy2vals = collections.defaultdict(list)
+      for hash in hashes:
+        x = hash[2 * i]
+        y = hash[2 * i + 1]
+        bonus = hash2val[hash]
+        xy2vals[(x, y)].append(bonus)
+      plt.subplot(n_rows, n_cols, i + 1)
+      xs, ys, values = [], [], []
+      for (x, y), values_list in xy2vals.items():
+        xs.append(x)
+        ys.append(y)
+        values.append(np.mean(values_list))
+      plt.scatter(xs, ys, c=values, s=60, marker='s')
+      plt.colorbar()
+      title = 'PlayerPos' if i == 0 else f'Box {i}'
+      plt.title(title)
+
   def _plot_hash2bonus(self, hash2bonus, episode):
-    hashes = list(hash2bonus.keys())
-    xs, ys, bonuses = [], [], []
-    for hash in hashes:
-      xs.append(hash[0])
-      ys.append(hash[1])
-      bonuses.append(hash2bonus[hash])
-    plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
-    plt.colorbar()
+    # the hashes are (player_x, player_y, box1_x, box1_y, ..., boxn_x, boxn_y, reached).
+    # I want a subplot for each box, and one for the player.
+    self._make_spatial_plot(hash2bonus)
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
     plt.close()
+
+  @staticmethod
+  def plot_graph_with_positions(graph, positions, title):
+    """
+    Plots a graph using specified spatial positions for each node.
+
+    Args:
+    graph (nx.Graph): The graph to plot.
+    positions (dict): A dictionary mapping nodes to (x, y) coordinates.
+    title (str): Title of the plot.
+    """
+    nx.draw(graph, pos=positions, with_labels=True, node_size=700, node_color='skyblue')
+    
+    # edge_labels = nx.get_edge_attributes(graph, 'weight')
+    nx.draw_networkx_edges(graph, pos=positions)  #, edge_labels=edge_labels)
+    
+    plt.title(title)
+    plt.grid('on')
 
   def _plot_skill_graph(self, edges, off_policy_edges, episode, include_off_policy_edges=True):
     """Spatially plot the nodes and edges of the skill-graph."""
 
-    def split_edges(edges, hash_bit):
-      """Split edges based on whether the hash bit is on/off for src and dest."""
-      no_no = []
-      no_yes = []
-      yes_no = []
-      yes_yes = []
-      for edge in edges:
-        src_hash = edge[0]
-        dest_hash = edge[1]
-        if src_hash[hash_bit] == 0 and dest_hash[hash_bit] == 0:
-          no_no.append(edge)
-        elif src_hash[hash_bit] == 0 and dest_hash[hash_bit] == 1:
-          no_yes.append(edge)
-        elif src_hash[hash_bit] == 1 and dest_hash[hash_bit] == 0:
-          yes_no.append(edge)
-        elif src_hash[hash_bit] == 1 and dest_hash[hash_bit] == 1:
-          yes_yes.append(edge)
-      return no_no, no_yes, yes_no, yes_yes
+    def create_graphs(transitions, n_boxes):
+      positions = {}
+      graphs = [nx.DiGraph() for _ in range(n_boxes + 1)]
 
-    def plot_edges(e, color):
-      for edge in e:
-        x1 = edge[0][0]
-        y1 = edge[0][1]
-        x2 = edge[1][0]
-        y2 = edge[1][1]
-        plt.scatter([x1, x2], [y1, y2], color=color)
-        plt.plot([x1, x2], [y1, y2], color=color, alpha=0.3)
-
-    def split_then_plot(edges, hash_bit, color):
-      no_no, no_yes, yes_no, yes_yes = split_edges(edges, hash_bit=2)
-      
-      plt.subplot(2, 2, 1)
-      plot_edges(no_no, color=color)
-      plt.title('No Key -> No Key')
-      plt.subplot(2, 2, 2)
-      plot_edges(no_yes, color=color)
-      plt.title('No Key -> Yes Key')
-      plt.subplot(2, 2, 3)
-      plot_edges(yes_no, color=color)
-      plt.title('Yes Key -> No Key')
-      plt.subplot(2, 2, 4)
-      plot_edges(yes_yes, color=color)
-      plt.title('Yes Key -> Yes Key')
+      for i in range(n_boxes + 1):
+        for transition in transitions:
+          start_xy = transition[0][2 * i:2 * i + 2]
+          end_xy = transition[1][2 * i:2 * i + 2]
+          # skip self loops
+          if start_xy == end_xy:
+            continue
+          graphs[i].add_edge(start_xy, end_xy)
+          positions[start_xy] = start_xy
+          positions[end_xy] = end_xy
+      return graphs, positions
     
-    edges = list(edges)
-    plt.figure(figsize=(14, 14))
-    split_then_plot(edges, hash_bit=2, color='black')
+    def plot_edges(edges):
+      edges = list(edges)
+      n_boxes = (len(edges[0][0]) - 3) // 2
+      graphs, positions = create_graphs(edges, n_boxes)
+      n_subplots = n_boxes + 1
+      n_rows, n_cols = GSMPlotter.subplot_grid(n_subplots)
+      default_figsize = plt.rcParams['figure.figsize']
+      
+      plt.figure(figsize=(2 * default_figsize[0] * n_cols, default_figsize[1] * n_rows))
+      
+      for i, graph in enumerate(graphs):
+        title = 'PlayerPos' if i == 0 else f'Box {i}'
+        plt.subplot(n_rows, n_cols, i + 1)
+        self.plot_graph_with_positions(graph, positions, title)
+
+    plot_edges(edges)
     plt.savefig(os.path.join(self._skill_graph_plotting_dir, f'online_skill_graph_{episode}.png'))
     plt.close()
-    
-    off_policy_edges = list(off_policy_edges)
-    plt.figure(figsize=(14, 14))
-    split_then_plot(off_policy_edges, hash_bit=2, color='red')
+
+    plot_edges(off_policy_edges)
     plt.savefig(os.path.join(self._off_policy_graph_plotting_dir, f'offline_skill_graph_{episode}.png'))
     plt.close()
 
@@ -472,13 +455,12 @@ class GSMPlotter:
     # so that the colorbar is not dominated by a single node.
     del src_counts[max(src_counts, key=src_counts.get)]
 
-    plt.figure(figsize=(14, 14))
-    plt.subplot(121)
-    spatial_plot(src_counts, title='log(src counts)')
-    plt.subplot(122)
-    spatial_plot(dst_counts, title='log(dest counts)')
-    plt.suptitle('On-Policy Counts')
-    plt.savefig(os.path.join(self._on_policy_count_plotting_dir, f'edge_counts_{episode}.png'))
+    self._make_spatial_plot(src_counts, title='log(src counts)')
+    plt.savefig(os.path.join(self._on_policy_count_plotting_dir, f'src_edge_counts_{episode}.png'))
+    plt.close()
+
+    self._make_spatial_plot(dst_counts, title='log(dest counts)')
+    plt.savefig(os.path.join(self._on_policy_count_plotting_dir, f'dest_edge_counts_{episode}.png'))
     plt.close()
 
   def _plot_reward_mean_and_variance(self, episode):
@@ -501,27 +483,12 @@ class GSMPlotter:
 
   def _plot_spatial_vstar(self, hash2vstar, episode):
     """Spatially plot the AMDP V* for 4 randomly sampled goal nodes."""
-    def plot_vf(hash2val: Dict, name: str):
-      xs = []; ys = []; values = []
-      for key, val in hash2val.items():
-        xs.append(key[0])
-        ys.append(key[1])
-        values.append(val)
-
-      if values:
-        plt.scatter(xs, ys, c=values, s=100, marker='s')
-        plt.colorbar()
-        plt.title(name)
 
     nodes = list(hash2vstar.keys())
     
     if nodes:
-      selected_nodes = random.sample(nodes, k=min(len(nodes), 4))
-      plt.figure(figsize=(14, 14))
-      for i, node in enumerate(selected_nodes):
-        plt.subplot(2, 2, i + 1)
-        plot_vf(hash2vstar[node], name=f'Goal: {node}')
-      plt.suptitle(f'AMDP V-Star at GSM Iteration {episode}')
+      node = random.choice(nodes)
+      self._make_spatial_plot(hash2vstar[node], f'Goal: {node}')
       plt.savefig(os.path.join(self._amdp_vstar_plotting_dir, f'vstar_{episode}.png'))
       plt.close()
   
