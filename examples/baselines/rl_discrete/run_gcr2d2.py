@@ -67,6 +67,7 @@ flags.DEFINE_integer('spi', 0, 'Samples per insert')
 flags.DEFINE_string('acme_dir', 'local_testing', 'Directory to do acme logging')
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
+flags.DEFINE_integer('num_warmup_episodes', 20, 'Number of episodes to warmup the replay buffer')
 
 # Novelty search flags.
 flags.DEFINE_float('intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
@@ -184,7 +185,8 @@ def build_experiment_config():
       use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion,
       use_decentralized_planner=FLAGS.use_decentralized_planner,
       use_gsm_var_client=FLAGS.use_gsm_var_client,
-      warmstart_value_iteration=FLAGS.warmstart_value_iteration
+      warmstart_value_iteration=FLAGS.warmstart_value_iteration,
+      n_warmup_episodes=FLAGS.num_warmup_episodes,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

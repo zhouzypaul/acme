@@ -74,6 +74,7 @@ class R2D2Config:
   should_switch_goal: bool = False
   subgoal_sampler_default_behavior: str = 'graph_search'
   option_timeout: int = 400
+  n_warmup_episodes: int = 20
 
   use_exploration_vf_for_expansion: bool = True
   use_decentralized_planner: bool = False

@@ -104,7 +104,8 @@ class EnvironmentLoop(core.Worker):
       max_option_duration: int = 400,
       recompute_expansion_node_on_interruption: bool = False,
       decentralized_planner_kwargs: Dict = {},
-      use_gsm_var_client: bool = False
+      use_gsm_var_client: bool = False,
+      n_warmup_episodes: int = 20,
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -136,6 +137,7 @@ class EnvironmentLoop(core.Worker):
     self._planner_backup_strategy = planner_backup_strategy
     self._max_option_duration = max_option_duration
     self._recompute_expansion_node_on_interruption = recompute_expansion_node_on_interruption
+    self._n_warmup_episodes = n_warmup_episodes
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -1426,7 +1428,6 @@ class EnvironmentLoop(core.Worker):
       self,
       num_episodes: Optional[int] = None,
       num_steps: Optional[int] = None,
-      n_warmup_episodes: int = 2
   ) -> int:
     """Perform the run loop.
 
@@ -1442,7 +1443,6 @@ class EnvironmentLoop(core.Worker):
     Args:
       num_episodes: number of episodes to run the loop for.
       num_steps: minimal number of steps to run the loop for.
-      n_warmup_episodes: number of pure exploration episodes in the start.
 
     Returns:
       Actual number of steps the loop executed.
@@ -1463,7 +1463,7 @@ class EnvironmentLoop(core.Worker):
     with signals.runtime_terminator():
       while not should_terminate(episode_count, step_count):
         episode_start = time.time()
-        is_warmup_episode =  episode_count < n_warmup_episodes and self._goal_space_manager is not None
+        is_warmup_episode =  episode_count < self._n_warmup_episodes and self._goal_space_manager is not None
         result = self.run_episode(is_warmup_episode)
         result = {**result, **{'episode_duration': time.time() - episode_start}}
         episode_count += 1
