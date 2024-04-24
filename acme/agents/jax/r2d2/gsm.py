@@ -586,6 +586,18 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       self._update_transition_tensor(edges, values)
     print(f'[GSM-Profiling] Took {time.time() - t0}s to update on-policy edges.')
 
+  def _update_existing_off_policy_edge_probabilities(self, n_edges: int = 1000):
+    """Update the transition tensor with the values from the UVFA network."""
+    t0 = time.time()
+    n_edges = min(n_edges, len(self._off_policy_edges))
+    edges = random.sample(self._off_policy_edges, k=n_edges)
+    batch_oarg = self._edges2oarg(edges)
+    if batch_oarg:
+      print(f'[GSM] Updating {len(edges)} existing off-policy edges.')
+      values = self._oarg2probabilities(batch_oarg)
+      self._update_transition_tensor(edges, values)
+    print(f'[GSM-Profiling] Took {time.time() - t0}s to update existing off-policy edges.')
+
   def _update_off_policy_edge_probabilities(self, n_nodes: int = 50):
     """Update the transition tensor with the values from the UVFA network."""
     t0 = time.time()
@@ -695,6 +707,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     if len(self._hash2obs) > 2:
       print(f'[GSM-RunLoop] Time since last iter: {time.time() - self._gsm_loop_last_timestamp}s')
       self._update_on_policy_edge_probabilities()
+      self._update_existing_off_policy_edge_probabilities()
       self._update_off_policy_edge_probabilities()
       if self._use_exploration_vf_for_expansion:
         self._compute_and_update_novelty_values()
