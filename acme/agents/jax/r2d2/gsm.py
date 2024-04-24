@@ -93,6 +93,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     
     self._transition_matrix = np.zeros(
       (self._n_states, self._n_actions), dtype=np.float32)
+    self._transition_matrix_lock = threading.Lock()
 
     if maintain_sparse_transition_matrix:
       self._transition_matrix = csr_matrix(self._transition_matrix)
@@ -235,7 +236,8 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
   # TODO(ab): lock transition matrix during the copy operation
   def get_transition_tensor(self, n_actions: int):
     n_states = n_actions
-    actual_transition_matrix = self._transition_matrix[:n_states, :n_actions].copy()
+    with self._transition_matrix_lock:
+      actual_transition_matrix = self._transition_matrix[:n_states, :n_actions].copy()
     return actual_transition_matrix
 
   @property
@@ -448,6 +450,8 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     if len(self._hash2idx) >= self._n_actions:
       self._resize_transition_tensor()
 
+    key_values = {}
+
     for (src, dest), value in zip(src_dest_pairs, values):
       if not self.is_special_context(dest) and \
         src in self._hash2idx and dest in self._hash2idx:
@@ -473,13 +477,18 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
           self._off_policy_edges.remove((src, dest))
 
         if (src, dest) in self._edges or (src, dest) in self._off_policy_edges:
-          self._transition_matrix[src_idx, dest_idx] = optimistic_prob
+          key_values[(src_idx, dest_idx)] = optimistic_prob
         else:
-          self._transition_matrix[src_idx, dest_idx] = 0.      
+          key_values[(src_idx, dest_idx)] = 0.
+
+    with self._transition_matrix_lock:
+      for (src_idx, dest_idx), value in key_values.items():
+        self._transition_matrix[src_idx, dest_idx] = value
 
     # If we zero-ed out some entries, we can reduce the memory consumption of the transition tensor.
     if self._maintain_sparse_transition_matrix:
-      self._transition_matrix.eliminate_zeros()
+      with self._transition_matrix_lock:
+        self._transition_matrix.eliminate_zeros()
 
   def _resize_transition_tensor(self):
     """Dynamically resize the transition tensor."""
