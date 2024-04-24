@@ -323,13 +323,15 @@ class GSMPlotter:
         plt.subplot(n_rows, n_cols, i + 1)
         self.plot_graph_with_positions(graph, positions, title)
 
-    plot_edges(edges)
-    plt.savefig(os.path.join(self._skill_graph_plotting_dir, f'online_skill_graph_{episode}.png'))
-    plt.close()
+    if edges:
+      plot_edges(edges)
+      plt.savefig(os.path.join(self._skill_graph_plotting_dir, f'online_skill_graph_{episode}.png'))
+      plt.close()
 
-    plot_edges(off_policy_edges)
-    plt.savefig(os.path.join(self._off_policy_graph_plotting_dir, f'offline_skill_graph_{episode}.png'))
-    plt.close()
+    if off_policy_edges:
+      plot_edges(off_policy_edges)
+      plt.savefig(os.path.join(self._off_policy_graph_plotting_dir, f'offline_skill_graph_{episode}.png'))
+      plt.close()
 
   def _plot_bellman_errors(self, hash2bellman: Dict, episode: int):
     """Randomly sample 4 nodes and plot their bellman errors as a function of iteration."""
