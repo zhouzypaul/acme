@@ -38,7 +38,7 @@ import launchpad as lp
 import reverb
 from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.cfn.cfn import CFN
-from acme.agents.jax.r2d2.plotting import GSMPlotter
+from acme.agents.jax.r2d2.sokoban_plotting import GSMPlotter
 
 ActorId = int
 InferenceServer = inference_server_lib.InferenceServer[
@@ -474,6 +474,7 @@ def make_distributed_experiment(
           should_switch_goal=experiment.builder._config.should_switch_goal,
         ) if experiment.builder._config.use_decentralized_planner else None,
         use_gsm_var_client=experiment.builder._config.use_gsm_var_client,
+        n_warmup_episodes=experiment.builder._config.n_warmup_episodes,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -510,7 +511,8 @@ def make_distributed_experiment(
                            goal_space_size=goal_space_size,
                            should_switch_goal=experiment.builder._config.should_switch_goal,
                            use_exploration_vf_for_expansion=use_exploration_vf_for_expansion,
-                           use_decentralized_planning=experiment.builder._config.use_decentralized_planner)
+                           use_decentralized_planning=experiment.builder._config.use_decentralized_planner,
+                           warmstart_value_iteration=experiment.builder._config.warmstart_value_iteration)
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(
