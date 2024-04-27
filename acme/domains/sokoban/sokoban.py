@@ -11,11 +11,12 @@ from acme.wrappers.oar_goal import ObservationActionRewardGoalWrapper
 
 
 class SokobanInfoWrapper(Wrapper):
-  def __init__(self, env, seed: int):
+  def __init__(self, env, seed: int, use_sparse_rewards: bool = False):
     super(SokobanInfoWrapper, self).__init__(env)
     self._timestep = 0   
     self._seed = seed
     self._set_seed(seed)
+    self._use_sparse_rewards = use_sparse_rewards
 
   def step(self, action):
     obs, reward, done, info = self.env.step(int(action))
@@ -24,7 +25,8 @@ class SokobanInfoWrapper(Wrapper):
     info['reward'] = reward
     info = self._modify_info_dict(info, terminated, truncated)
     self._timestep += 1
-    return obs, float(terminated), done, info
+    rew = float(terminated) if self._use_sparse_rewards else float(reward) / 10.
+    return obs, rew, done, info
 
   def reset(self):
     self._set_seed(self._seed)
@@ -101,9 +103,10 @@ def environment_builder(
   oarg_wrapper=True,
   goal_conditioned=True,
   to_float=False,
+  use_sparse_rewards=False
 ):
   env = gym.make(level_name)
-  env = SokobanInfoWrapper(env, seed=seed)
+  env = SokobanInfoWrapper(env, seed=seed, use_sparse_rewards=use_sparse_rewards)
   n_goal_dims = determine_n_goal_dims(env)
   
   env = GymnasiumWrapper(env)
