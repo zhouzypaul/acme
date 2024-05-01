@@ -1,4 +1,4 @@
-name: acmenv
+name: cenv-clone
 channels:
   - nvidia/label/cuda-11.8.0
   - conda-forge
@@ -237,4 +237,4 @@ dependencies:
       - werkzeug==2.3.6
       - wrapt==1.15.0
       - zipp==3.15.0
-prefix: /mnt/code/envs/acmenv
+prefix: /mnt/nfs/home/akhil/miniconda3/envs/cenv-clone

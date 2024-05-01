@@ -23,4 +23,6 @@ from acme.agents.jax.r2d2.learning import R2D2ReplaySample
 from acme.agents.jax.r2d2.networks import make_atari_networks
 from acme.agents.jax.r2d2.networks import make_vanilla_atari_networks
 from acme.agents.jax.r2d2.networks import R2D2Networks
-from acme.agents.jax.r2d2.gsm import GoalSpaceManager
+from acme.agents.jax.r2d2.model_free_goal_sampler import MFGoalSampler
+from acme.agents.jax.r2d2.gsm import GoalSpaceManager as MBGoalSpaceManager
+from acme.agents.jax.r2d2.model_free_gsm import GoalSpaceManager

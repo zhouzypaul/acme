@@ -83,20 +83,13 @@ flags.DEFINE_integer('cfn_target_update_period', 1200, 'Target update period for
 flags.DEFINE_float('cfn_clip_random_prior_output', -1., 'Clipping factor for random prior output')
 
 # GSM flags.
-flags.DEFINE_float('amdp_rmax_factor', 200., 'Rmax factor for AMDP')
 flags.DEFINE_list("actor_gpu_ids", ["-1"], "Which GPUs to use for actors. Actors select GPU in round-robin fashion")
 flags.DEFINE_integer("n_sigmas_threshold_for_goal_creation", 1, "Number of sigmas above reward mean for new goal/node creation")
 flags.DEFINE_float("prob_augmenting_bonus_constant", 0.1, "Probability of augmenting bonus constant")
-flags.DEFINE_bool("use_pessimistic_graph_for_planning", False, "Whether to use pessimistic graph for planning or not")
-flags.DEFINE_float("off_policy_edge_threshold", 0.75, "Threshold for off-policy edges")
-flags.DEFINE_integer("max_vi_iterations", 50, "Max number of VI iterations for AMDP")
 flags.DEFINE_float("novelty_threshold_for_goal_creation", -1., "Threshold for novelty for new goal/node creation")
 flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for target node sampling. -1 means sum_sampling.")
-
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
-flags.DEFINE_string("planner_backup_strategy", "graph_search", "Backup strategy for the planner. One of ['graph_search', 'task'].")
-flags.DEFINE_bool("use_planning_in_evaluator", False, "Whether to use planning in the evaluator or not.")
 flags.DEFINE_integer('option_timeout', 400, 'Max number of steps for which to pursue a goal.')
 flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exploration value function for expansion or the reward function')
 
@@ -119,10 +112,11 @@ def build_experiment_config():
       max_episode_len=max_episode_steps
     )
 
-  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)\
+  checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
   
-  if not FLAGS.use_planning_in_evaluator:
-    assert FLAGS.task_goal_probability > 0, "If not planning in eval, then drive behavior with task goal."
+  # TODO(ab/mm): safe to remove these?
+  # if not FLAGS.use_planning_in_evaluator:
+  #   assert FLAGS.task_goal_probability > 0, "If not planning in eval, then drive behavior with task goal."
 
   # Configure the agent.
   config = r2d2.R2D2Config(
@@ -139,18 +133,11 @@ def build_experiment_config():
       variable_update_period=100,
       # The default hyperbolic transform makes the vf preds small (~0.4 max)
       tx_pair=rlax.IDENTITY_PAIR,
-      amdp_rmax_factor=FLAGS.amdp_rmax_factor,
       n_sigmas_threshold_for_goal_creation=FLAGS.n_sigmas_threshold_for_goal_creation,
-      prob_augmenting_bonus_constant=FLAGS.prob_augmenting_bonus_constant,
-      use_pessimistic_graph_for_planning=FLAGS.use_pessimistic_graph_for_planning,
-      off_policy_edge_threshold=FLAGS.off_policy_edge_threshold,
-      max_vi_iterations=FLAGS.max_vi_iterations,
       novelty_threshold_for_goal_creation=FLAGS.novelty_threshold_for_goal_creation,
       goal_space_size=FLAGS.goal_space_size,
       task_goal_probability=FLAGS.task_goal_probability,
-      use_planning_in_evaluator=FLAGS.use_planning_in_evaluator,
       should_switch_goal=FLAGS.switch_task_expansion_node,
-      subgoal_sampler_default_behavior=FLAGS.planner_backup_strategy,
       option_timeout=FLAGS.option_timeout,
       use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion
   )
@@ -253,6 +240,7 @@ def build_exploration_policy_experiment_config():
   save_config(
     config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'exploration_policy_config.json'))
   
+  # TODO(ab/mm): safe to remove these?
   if FLAGS.use_rnd:
     agent_builder = make_rnd_builder(r2d2.R2D2Builder(config))
   elif FLAGS.use_cfn:

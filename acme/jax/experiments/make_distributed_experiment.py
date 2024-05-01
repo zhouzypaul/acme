@@ -468,41 +468,9 @@ def make_distributed_experiment(
         planner_backup_strategy=default_behavior,
         max_option_duration=experiment.builder._config.option_timeout,
     )
-    
-  def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
-    variable_client = variable_utils.VariableClient(
-        variable_source,
-        key='actor_variables',
-        update_period=datetime.timedelta(minutes=1))
-    exploration_var_client = variable_utils.VariableClient(
-      exploration_var_source,
-      key='rnd_training_state',  # NOTE: this works for CFN b/c it doesn't look at `names`
-      update_period=datetime.timedelta(minutes=1))
-    env = experiment.environment_factory(rng_num)
-    
-    exploration_env = exploration_experiment.environment_factory(
-      utils.sample_uint32(rng_num))
-    explore_env_spec = specs.make_environment_spec(exploration_env)
-    exploration_networks = exploration_experiment.network_factory(
-      explore_env_spec)
-    c_augment = experiment.builder._config.prob_augmenting_bonus_constant
-    pessimism = experiment.builder._config.use_pessimistic_graph_for_planning
-    off_policy_threshold = experiment.builder._config.off_policy_edge_threshold
-    vi_iterations = experiment.builder._config.max_vi_iterations
-    goal_space_size = experiment.builder._config.goal_space_size
-    use_exploration_vf_for_expansion = experiment.builder._config.use_exploration_vf_for_expansion
-    gsm = GoalSpaceManager(env, rng_num, networks,
-                           variable_client,
-                           exploration_networks,
-                           exploration_var_client,
-                           rmax_factor=experiment.builder._config.amdp_rmax_factor,
-                           prob_augmenting_bonus_constant=c_augment,
-                           use_pessimistic_graph_for_planning=pessimism,
-                           off_policy_edge_threshold=off_policy_threshold,
-                           max_vi_iterations=vi_iterations,
-                           goal_space_size=goal_space_size,
-                           should_switch_goal=experiment.builder._config.should_switch_goal,
-                           use_exploration_vf_for_expansion=use_exploration_vf_for_expansion)
+
+  def _gsm_node():
+    gsm = GoalSpaceManager()
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(
@@ -629,22 +597,8 @@ def make_distributed_experiment(
   num_actor_nodes += int(remainder > 0)
   
   with program.group('gsm'):
-    spec = (
-        experiment.environment_spec or
-        specs.make_environment_spec(experiment.environment_factory(1))
-    )
-    gsm_key, _ = jax.random.split(key)
-    use_exploration_vf_for_expansion = experiment.builder._config.use_exploration_vf_for_expansion
-    if use_exploration_vf_for_expansion or not exploration_experiment.is_cfn:
-      explore_var_src = exploration_learner
-    else:
-      explore_var_src = cfn
     gsm_node = lp.CourierNode(
       _gsm_node,
-      gsm_key,
-      experiment.network_factory(spec),
-      variable_sources[0],
-      explore_var_src,
       # TODO(ab): How to set the number of threads for the GSM?
       courier_kwargs={'thread_pool_size': 64}
       )

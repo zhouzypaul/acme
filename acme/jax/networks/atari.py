@@ -210,17 +210,18 @@ class R2D2AtariNetwork(hk.RNNCore):
     # Split the input into obs and goal, only _embed obs.
     assert inputs.observation.shape[-1] == 4, inputs.observation.shape
     obs_img = inputs.observation[..., :3]
-    
+
+    # import ipdb; ipdb.set_trace()
     n_goal_dims = inputs.goals.shape[0]
     goal_vec = inputs.observation[..., -1]  # (84, 84)
     goal_vec = goal_vec.reshape(-1)
-    goal_vec = goal_vec[:n_goal_dims]
+    # goal_vec = goal_vec[:n_goal_dims]
 
     inputs = inputs._replace(observation=obs_img)
-  
+
     embeddings = self._embed(inputs)  # [B, D+A+1]
     core_outputs, new_state = self._core(embeddings, state)
-    
+
     # Pass the goal through the DeepAtariTorso.
     goal_embeddings = self._goal_embed(goal_vec)
 
@@ -247,10 +248,16 @@ class R2D2AtariNetwork(hk.RNNCore):
     embeddings = hk.BatchApply(self._embed)(
       inputs._replace(observation=obs_tensor))  # [T, B, D+A+1]
     core_outputs, new_states = hk.static_unroll(self._core, embeddings, state)
-    
-    goal_tensor = inputs.observation[..., 3:]
-    goal_embeddings = hk.BatchApply(self._goal_embed)(goal_tensor)
-  
+
+    # import ipdb; ipdb.set_trace()
+    n_goal_dims = inputs.goals.shape[0]     # 41
+    goal_vec = inputs.observation[..., -1]  # (T, B, 84, 84)
+    # goal_vec = goal_vec.reshape(-1)      # (T * B * 84 * 84), 9257472
+    goal_vec = goal_vec.reshape(goal_vec.shape[0], goal_vec.shape[1], -1)  # Reshape to (T, B, 84*84=7056)
+    # goal_vec = goal_vec[:,:,:n_goal_dims]    # (T, B, 41)
+
+    goal_embeddings = hk.BatchApply(self._goal_embed)(goal_vec)
+
     augmented_core_outputs = jnp.concatenate(
       [core_outputs, goal_embeddings], axis=-1
     )

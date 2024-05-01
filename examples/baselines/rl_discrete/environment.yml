@@ -1,4 +1,4 @@
-name: acme-env-paul
+name: acmee
 channels:
   - anaconda
   - nvidia/label/cuda-11.4.4
@@ -192,4 +192,3 @@ dependencies:
     - werkzeug==2.2.3
     - wrapt==1.14.1
     - zipp==3.13.0
-prefix: /home/akhil/anaconda3/envs/acme-env-paul
