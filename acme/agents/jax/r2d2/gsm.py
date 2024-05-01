@@ -482,7 +482,11 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
         if (src, dest) in self._edges or (src, dest) in self._off_policy_edges:
           self._transition_matrix[src_idx, dest_idx] = optimistic_prob
         else:
-          self._transition_matrix[src_idx, dest_idx] = 0.      
+          self._transition_matrix[src_idx, dest_idx] = 0.
+
+        # if (src, dest) in self._edges and optimistic_prob < 0.08:
+        #   print(f'[GSM] Setting edge {src} -> {dest} (prob={optimistic_prob:.3f}, n={self._on_policy_counts[src][dest]}) to 0.')
+        #   self._transition_matrix[src_idx, dest_idx] = 0.
 
     # If we zero-ed out some entries, we can reduce the memory consumption of the transition tensor.
     if self._maintain_sparse_transition_matrix:
