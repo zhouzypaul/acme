@@ -547,6 +547,8 @@ class EnvironmentLoop(core.Worker):
     if random_action:
       n_actions = self._env_spec.actions.num_values
       return np.random.randint(0, n_actions, dtype=self._env_spec.actions.dtype)
+    # import ipdb; ipdb.set_trace()
+    
     return self._actor.select_action(timestep.observation)
   
   def vanilla_policy_rollout(

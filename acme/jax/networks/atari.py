@@ -215,8 +215,12 @@ class R2D2AtariNetwork(hk.RNNCore):
     n_goal_dims = inputs.goals.shape[0]
     goal_vec = inputs.observation[..., -1]  # (84, 84)
     goal_vec = goal_vec.reshape(-1)
-    # goal_vec = goal_vec[:n_goal_dims]
+    goal_vec = goal_vec[:n_goal_dims]
+    # print("call", goal_vec.shape)
 
+    print("===========================================================================")
+    print("__call__")
+    print("===========================================================================")
     inputs = inputs._replace(observation=obs_img)
 
     embeddings = self._embed(inputs)  # [B, D+A+1]
@@ -249,12 +253,16 @@ class R2D2AtariNetwork(hk.RNNCore):
       inputs._replace(observation=obs_tensor))  # [T, B, D+A+1]
     core_outputs, new_states = hk.static_unroll(self._core, embeddings, state)
 
+    print("===========================================================================")
+    print("unroll")
+    print("===========================================================================")
     # import ipdb; ipdb.set_trace()
     n_goal_dims = inputs.goals.shape[0]     # 41
     goal_vec = inputs.observation[..., -1]  # (T, B, 84, 84)
     # goal_vec = goal_vec.reshape(-1)      # (T * B * 84 * 84), 9257472
     goal_vec = goal_vec.reshape(goal_vec.shape[0], goal_vec.shape[1], -1)  # Reshape to (T, B, 84*84=7056)
-    # goal_vec = goal_vec[:,:,:n_goal_dims]    # (T, B, 41)
+    goal_vec = goal_vec[:,:,:n_goal_dims]    # (T, B, 41)
+    # print("unroll", goal_vec.shape)
 
     goal_embeddings = hk.BatchApply(self._goal_embed)(goal_vec)
 
