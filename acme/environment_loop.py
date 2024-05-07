@@ -269,7 +269,6 @@ class EnvironmentLoop(core.Worker):
     if method == 'concat':
       return np.concatenate((obs, goal), axis=-1)
     if method == 'relabel':
-      import ipdb; ipdb.set_trace()
       return np.concatenate((obs[:, :, :3], goal), axis=-1)
     raise NotImplementedError(method)
 
@@ -307,7 +306,8 @@ class EnvironmentLoop(core.Worker):
           current_node, task_goal_probability=1.0 if self._is_evaluator else 0.1)
         if ret is not None:
           expansion_node = ret
-      print(f'[EnvironmentLoop] Expansion Node: {expansion_node}')
+
+      print(f'[EnvironmentLoop] Expansion Node: {np.where(expansion_node)}')
       print(f'[EnvironmentLoop] begin_episode() took {time.time() - t0}s.')
 
       t0 = time.time()
@@ -322,7 +322,7 @@ class EnvironmentLoop(core.Worker):
       delta = timestep.reward - self._goal_achievement_rates[expansion_node]
       self._goal_pursual_counts[expansion_node] += 1
       self._goal_achievement_rates[expansion_node] += (delta / self._goal_pursual_counts[expansion_node])
-      print(f'Success rate for {expansion_node} is {self._goal_achievement_rates[expansion_node]} ({self._goal_pursual_counts[expansion_node]})')
+      print(f'Success rate for {np.where(expansion_node)} is {self._goal_achievement_rates[expansion_node]} ({self._goal_pursual_counts[expansion_node]})')
       print(f'[EnvironmentLoop] GC Rollout took {time.time() - t0}s.')
 
       reached_target = reached_expansion_node(timestep, expansion_node)
@@ -334,7 +334,7 @@ class EnvironmentLoop(core.Worker):
         random.random() < self._pure_exploration_probability:
         
         overall_attempted_edges.append((timestep.observation, self.exploration_goal, True))
-        print(f'[EnvironmentLoop] Reached {expansion_node}; starting pure exploration rollout.')
+        print(f'[EnvironmentLoop] Reached {np.where(expansion_node)}; starting pure exploration rollout.')
         timestep, needs_reset, episode_logs = self.exploration_rollout(
           timestep, episode_logs, trajectory_key='exploration_trajectory')
         print(f"[EnvironmentLoop] Length of exploration trajectory = {len(episode_logs['exploration_trajectory'])}")
@@ -380,8 +380,8 @@ class EnvironmentLoop(core.Worker):
     if self._goal_space_manager:
       t0 = time.time()
       print(f'[EnvironmentLoop] Getting goal set from GSM.')
-      goal_set = self._goal_space_manager.get_goal_set()  
-      self.goal_dict = {k: np.asarray(k, dtype=bool) for k in goal_set}
+      self.count_dict = self._goal_space_manager.get_count_dict()
+      self.goal_dict = self._goal_space_manager.get_goal_dict()
       print(f'[EnvironmentLoop] Took {time.time() - t0}s to get goal set from GSM.')
     else:
       print(f'[EnvironmentLoop] self._goal_space_manager is None.')
@@ -411,10 +411,13 @@ class EnvironmentLoop(core.Worker):
     # Stream the episodic trajectory to the goal space manager.
     if self._goal_space_manager is not None and not self._is_evaluator:
       t0 = time.time()
-      filtered_trajectory = self.filter_achieved_goals(
-        new_hash2goals,
-        episode_logs['episode_trajectory'] + episode_logs['exploration_trajectory']
-      )
+      filtered_trajectory = episode_logs['episode_trajectory'] + episode_logs['exploration_trajectory']
+
+      # TODO(ab/mm): HACK - when we discover goals incrementally, we need to uncomment this.
+      # self.filter_achieved_goals(
+      #   new_hash2goals,
+      #   episode_logs['episode_trajectory'] + episode_logs['exploration_trajectory']
+      # )
       t1 = time.time()
 
       if new_hash2goals:
@@ -429,6 +432,7 @@ class EnvironmentLoop(core.Worker):
           start_state, episode_logs['episode_trajectory'], extracted_results['hash2proto'])
       
       self._goal_space_manager.update(
+        hash2proto=extracted_results['hash2proto'],
         hash2count=extracted_results['proto2count'],
       )
 
@@ -444,8 +448,8 @@ class EnvironmentLoop(core.Worker):
       'env_reset_duration_sec': env_reset_duration,
       'select_action_duration_sec': np.mean(episode_logs['select_action_durations']),
       'env_step_duration_sec': np.mean(episode_logs['env_step_durations']),
-      'start_state': start_state.goals,
-      'expansion_node': expansion_node
+      'start_state': np.where(start_state.goals),
+      'expansion_node': np.where(expansion_node)
     }
     result.update(counts)
     for observer in self._observers:
@@ -493,7 +497,7 @@ class EnvironmentLoop(core.Worker):
       print(f'[EnvironmentLoop] Updating CFN with {len(episode_logs[trajectory_key])} transitions.')
       self.update_cfn_ground_truth_counts(episode_logs[trajectory_key])
 
-    print(f'[EnvironmentLoop] Ended exploration in {timestep.observation.goals}')
+    print(f'[EnvironmentLoop] Ended exploration in {np.where(timestep.observation.goals)}')
     assert needs_reset, 'Currently, we run the exploration policy till episode end.'
     
     return timestep, needs_reset, episode_logs
@@ -654,6 +658,8 @@ class EnvironmentLoop(core.Worker):
         done (bool): env needs reset
         logs (dict): updated episode logs
     """
+    assert timestep.first(), timestep
+
     reached = False
     needs_reset = False
     duration = 0
@@ -662,10 +668,12 @@ class EnvironmentLoop(core.Worker):
 
     def should_interrupt(current_ts: dm_env.TimeStep, duration: int, goal: np.ndarray) -> bool:
       """Interrupt the option if you are in a node and duration warrants timeout."""
+      achieved_goal_hashes = self.convert2onehots(current_ts.observation.goals)[0]
+      inside_graph = set(achieved_goal_hashes).intersection(set(self.goal_dict.keys()))
       return duration >= self._max_option_duration and \
         tuple(goal) != tuple(self.task_goal.goals) and \
         tuple(goal) != tuple(self.exploration_goal.goals) and \
-        tuple(current_ts.observation.goals) in self.goal_dict
+        len(inside_graph) > 0
     
     timestep = self.augment_ts_with_goal(
       timestep,
@@ -698,8 +706,6 @@ class EnvironmentLoop(core.Worker):
       episode_logs['env_step_durations'].append(time.time() - env_step_start)
       
       needs_reset = next_timestep.last()  # timeout or terminal state
-      # if needs_reset or duration >= 1001:
-      #   import pdb; pdb.set_trace()
 
       # Save terminal states for transmitting to GSM later.
       extrinsic_reward = next_timestep.reward.copy()
@@ -752,16 +758,17 @@ class EnvironmentLoop(core.Worker):
         print(f'\tT={duration} needs_reset={needs_reset} reached={reached} should_interrupt={should_interrupt_option}')
 
       # Update the episode count dict
-      key = tuple(timestep.observation.goals)
-      
-      if self.count_dict and key in self.count_dict:
-        self.count_dict[key] += 1
-      else:
-        self.count_dict[key] = 1
+      hashes, _ = self.convert2onehots(timestep.observation.goals)
+
+      for key in hashes:
+        if key in self.count_dict:
+          self.count_dict[key] += 1
+        else:
+          self.count_dict[key] = 1
 
     episode_logs['episode_trajectory'].extend(trajectory)
 
-    print(f'Goal={goal} Achieved={timestep.observation.goals} R={timestep.reward} T={duration}')
+    print(f'Goal={np.where(goal)} Achieved={np.where(timestep.observation.goals)} R={timestep.reward} T={duration}')
 
     return timestep, needs_reset, episode_logs
 
@@ -909,96 +916,21 @@ class EnvironmentLoop(core.Worker):
         self._actor.observe(transition.action, truncation(augmented_next_ts))
       else:
         self._actor.observe(transition.action, continuation(augmented_next_ts))
-      
-  def hingsight_experience_replay(
-    self, start_state: OARG, trajectory: List[GoalBasedTransition]):
-    """Learn about goal(s) achieved when following a diff goal."""
 
-    def goal_space_novelty_selection(
-      traj: List[GoalBasedTransition],
-      num_goals_to_replay: int = 5,
-      use_tabular_counts: bool = True
-    ) -> List[OARG]:
-      achieved_goals = {
-        tuple(trans.next_ts.observation.goals): trans.next_ts.observation
-        for trans in traj
-      }
-      goal_hashes = list(achieved_goals.keys())
-
-      # TODO(ab): When the number of goal_hashes is <= num_goals_to_replay and sampling_by_replacement is False,
-      # we can skip computing scores/probs and return all the indices.
-      # Another way to implement this would be to interpret the exploration bonus as a 
-      # replay probability, i.e, with prob = bonus, replay achieved goal.
-      # We would still need to cap the number of goals to replay and should sort by bonus.
-
-      if (not use_tabular_counts) and (self._exploration_actor is not None):
-        achieved_oarg = OARG(
-          observation=jnp.asarray([achieved_goals[g].observation[..., :3] for g in goal_hashes]),
-          action=jnp.asarray([achieved_goals[g].action for g in goal_hashes]),
-          reward=jnp.asarray([achieved_goals[g].reward for g in goal_hashes]),
-          goals=jnp.asarray([achieved_goals[g].goals for g in goal_hashes])
-        )
-        # TODO(ab): this is specific to CFN right now
-        scores = compute_cfn_reward(
-          self._exploration_actor._rnd_state.params,
-          self._exploration_actor._rnd_state.target_params,
-          achieved_oarg,
-          self._exploration_networks,
-          self._exploration_actor._rnd_state.random_prior_mean,
-          jnp.sqrt(self._exploration_actor._rnd_state.random_prior_var + 1e-12))
-        scores = np.asarray(scores)
-      else:
-        counts = [self.count_dict[g] for g in goal_hashes]
-        scores = np.asarray([1. / (1 + count) for count in counts])
-        
-      probs = scores2probabilities(scores)
-      selected_indices = np.random.choice(
-        range(len(goal_hashes)),
-        p=probs,
-        size=min(num_goals_to_replay, len(goal_hashes)),
-        replace=False
-      )
-      return [achieved_goals[goal_hashes[i]] for i in selected_indices]
-
-    def future_selection(traj: List[dm_env.TimeStep]) -> List[OARG]:
-      start_idx = len(traj) // 2
-      goal_idx = random.randint(start_idx, len(traj) - 1)
-      goal_ts = traj[goal_idx]
-      assert isinstance(goal_ts, dm_env.TimeStep)
-      return [goal_ts.observation]
-    
-    def get_achieved_goals() -> List[dm_env.TimeStep]:
-      """Filter out goals that are satisfied at s_t."""
-      feasible_goals: List[dm_env.TimeStep] = []
-      for transition in trajectory:
-        if not self.goal_reward_func(
-          start_state, transition.next_ts.observation.goals)[0]:
-          feasible_goals.append(transition.next_ts)
-      return feasible_goals
-
-    start_time = time.time()
-    
-    filtered_trajectory = get_achieved_goals()
-    if filtered_trajectory:
-      hindsight_goals = goal_space_novelty_selection(trajectory)
-      for hindsight_goal in hindsight_goals:
-        print(f'[HER] replaying wrt to {hindsight_goal.goals}')
-        self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
-      
-      task_goal = self.task_goal
-
-      if self._always_learn_about_task_goal and \
-        not self.goal_reward_func(hindsight_goal, task_goal.goals)[0] and \
-          self._has_seen_task_goal and self._task_goal_probability > 0:
-        print(f'[HER] replaying wrt to task goal {task_goal.goals}')
-        self.replay_trajectory_with_new_goal(trajectory, task_goal)
-
-      if self._always_learn_about_exploration_goal:
-        t0 = time.time()
-        self.replay_trajectory_for_exploration_reward(trajectory)
-        print(f'[HER] Took {time.time() - t0}s to replay for exploration rewards.')
-
-      print(f'HER took {time.time() - start_time}s')
+  @staticmethod
+  def convert2onehots(achieved_protos: np.ndarray) -> Tuple[List[Tuple], jnp.ndarray]:
+    """Given an observation's proto/goals, return the list of 1-hot vectors."""
+    hot_idx = np.where(achieved_protos == 1)
+    if hot_idx:
+      hot_idx = hot_idx[0]
+      n = len(hot_idx)
+      one_hots = np.zeros(
+        shape=(n, achieved_protos.shape[0]),
+        dtype=achieved_protos.dtype)
+      one_hots[range(n), hot_idx] = 1
+      hashes = [(int(i),) for i in hot_idx.tolist()]
+      return hashes, jnp.asarray(one_hots)
+    return [], []
 
   def extract_achieved_goals(
       self,
@@ -1006,23 +938,12 @@ class EnvironmentLoop(core.Worker):
       attempted_edges: List[Tuple[NodeHash, NodeHash, bool]],
   ):
     """Extract goals that were achieved in the input trajectory."""
-    def convert2onehots(achieved_protos):
-      """Given an observation's proto/goals, return the list of 1-hot vectors."""
-      hot_idx = jnp.where(achieved_protos == 1)
-      if hot_idx:
-        one_hots = jnp.zeros(
-          shape=(len(hot_idx), achieved_protos.shape),
-          dtype=achieved_protos.dtype)
-        one_hots[range(len(hot_idx)), hot_idx] = 1
-        hashes = [(int(i),) for i in hot_idx]
-        return hashes, one_hots
-      return [], []
     
-    def attempted2counts():
+    def attempted2counts():  # TODO(ab/mm): adapt for proto-goal edges.
       attempted_hashes = [(x, y) for x, y, _ in attempted_edges]
       return dict(collections.Counter(attempted_hashes))
     
-    def edge2success():
+    def edge2success():  # TODO(ab/mm): adapt for proto-goal edges.
       return {(x, y): success for x, y, success in attempted_edges}
     
     proto2obs = {}
@@ -1034,8 +955,8 @@ class EnvironmentLoop(core.Worker):
     for transition in trajectory:
       observation = transition.next_ts.observation
       prev_observation = transition.ts.observation
-      proto_hashes, proto_one_hots = convert2onehots(observation.goals)
-      prev_proto_hashes, _ = convert2onehots(prev_observation.goals)
+      proto_hashes, proto_one_hots = self.convert2onehots(observation.goals)
+      prev_proto_hashes, _ = self.convert2onehots(prev_observation.goals)
       prev_proto_hashes = set(prev_proto_hashes)
       assert len(proto_hashes) == len(proto_one_hots)
       for key, one_hot in zip(proto_hashes, proto_one_hots):
@@ -1055,8 +976,8 @@ class EnvironmentLoop(core.Worker):
         proto2reward[key] = max(proto2reward[key], extrinsic_reward if achieved else 0.)
         proto2discount[key] = min(proto2discount[key], transition.next_ts.discount)
 
-    hash_pair_to_success = edge2success()
-    hash_pair_to_attempted_counts = attempted2counts()
+    # hash_pair_to_success = edge2success()
+    # hash_pair_to_attempted_counts = attempted2counts()
 
     return dict(
       proto2obs=proto2obs,
@@ -1064,8 +985,8 @@ class EnvironmentLoop(core.Worker):
       proto2count=proto2count,
       proto2reward=proto2reward,
       proto2discount=proto2discount,
-      hash_pair_to_success=hash_pair_to_success,
-      hash_pair_to_attempted_counts=hash_pair_to_attempted_counts,
+      #hash_pair_to_success=hash_pair_to_success,
+      #hash_pair_to_attempted_counts=hash_pair_to_attempted_counts,
     )
   
   def goal_space_hindsight_replay(self, start_state: OARG, trajectory: List[GoalBasedTransition], hash2proto: Dict):
@@ -1086,20 +1007,20 @@ class EnvironmentLoop(core.Worker):
     start_time = time.time()
     
     # Map from tuple hash to 1-hot vector that we can condition the UVFA on.
-    triggered_goals = {g: hash2proto[g] for g in hash2proto if g in self.goal_dict}
+    triggered_goals = {g: np.asarray(hash2proto[g]) for g in hash2proto if g in self.goal_dict}
     goal_hashes = list(triggered_goals.keys())
 
     if triggered_goals:
       hindsight_goals = goal_space_novelty_selection()
       for hindsight_goal in hindsight_goals:
-        print(f'[HER] replaying wrt to {hindsight_goal}')
+        print(f'[HER] replaying wrt to {np.where(hindsight_goal)}')
         if not self._reached(start_state.goals, hindsight_goal):
           self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
 
       # TODO(ab/mm): implement task goal feature.
       if self._always_learn_about_task_goal and \
           self._has_seen_task_goal and self._task_goal_probability > 0:
-        print(f'[HER] replaying wrt to task goal {self.task_goal.goals}')
+        print(f'[HER] replaying wrt to task goal {np.where(self.task_goal.goals)}')
         self.replay_trajectory_with_new_goal(trajectory, self.task_goal)
 
     print(f'HER took {time.time() - start_time}s')
@@ -1200,7 +1121,7 @@ class EnvironmentLoop(core.Worker):
       self,
       num_episodes: Optional[int] = None,
       num_steps: Optional[int] = None,
-      n_warmup_episodes: int = 2
+      n_warmup_episodes: int = 5
   ) -> int:
     """Perform the run loop.
 
@@ -1245,8 +1166,9 @@ class EnvironmentLoop(core.Worker):
         # Log the given episode results.
         self._logger.write(result)
 
-        if self._actor_id == 1 and episode_count % 10 == 0:
-          self.visualize_goal_space(self._start_ts, self._node2successes, episode_count)
+        # TODO(ab/mm): implement this.
+        # if self._actor_id == 1 and episode_count % 10 == 0:
+        #   self.visualize_goal_space(self._start_ts, self._node2successes, episode_count)
 
     return step_count
 
