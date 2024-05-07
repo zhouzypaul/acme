@@ -10,47 +10,53 @@ from acme.utils.utils import scores2probabilities
 class MFGoalSampler:
   def __init__(
     self,
+    proto_dict,  # maps hash -> proto np array
     count_dict,  # maps hash -> count
     bonus_dict, # maps hash -> CFN bonus
     binary_reward_func,  # f: (s.goals, g.goals) -> {0, 1}
     goal_space_size: int = 10
   ):
+    self.proto_dict = proto_dict
     self.count_dict = count_dict
     self.bonus_dict = bonus_dict
     self.binary_reward_func = binary_reward_func
     self.goal_space_size = goal_space_size
 
   def begin_episode(self, current_node: Tuple) -> Tuple:
-    goal_set = self.get_candidate_goals(current_node)
-    if goal_set:
-      target_node = self._select_expansion_node(current_node, goal_set, method='novelty')
+    goal_dict = self.get_candidate_goals(current_node)
+    if goal_dict:
+      target_node = self._select_expansion_node(current_node, goal_dict, method='novelty')
       return target_node
 
-  def get_candidate_goals(self, current_node: Tuple) -> Set[Tuple]:
+  def get_candidate_goals(self, current_node: Tuple) -> dict:
     """Get the possible goals to pursue at the current state."""
     at_goal = lambda goal: self.binary_reward_func(np.asarray(current_node), np.asarray(goal))
-    return {goal for goal in self.count_dict if not at_goal(goal)}
+    return {proto_key: proto for proto_key, proto in self.proto_dict.items() if not at_goal(proto)}  
   
   def _select_expansion_node(
     self,
     current_node: Tuple,
-    goal_set: set,
+    hash2proto: dict,
     method: str
   ) -> Tuple:
     if method == 'random':
-      return random.choice(goal_set)
+      chosen = random.choice(hash2proto.values())
+      return tuple(chosen)
 
     if method == 'novelty':
-      dist = self._get_target_node_probability_dist(current_node, goal_set)
+      hashes = list(hash2proto.keys())
+      dist = self._get_target_node_probability_dist(current_node, hashes)
       if dist is None or len(dist[0]) <= 1:
-        reachables = goal_set
-        probs = np.ones((len(goal_set),)) / len(goal_set)
+        reachables = hashes
+        probs = np.ones((len(hashes),)) / len(hashes)
         print('[GoalSampler] No reachable nodes, using uniform distribution.')
       else:
         reachables = dist[0]
         probs = dist[1]
       idx = np.random.choice(range(len(reachables)), p=probs)
-      return reachables[idx]
+      chosen_hash = reachables[idx]
+      chosen = hash2proto[chosen_hash]
+      return tuple(chosen)
     raise NotImplementedError(method)
 
   def _get_expansion_scores(self, reachable_goals, use_tabular_counts=False):

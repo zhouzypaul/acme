@@ -21,20 +21,31 @@ import numpy as np
 class GoalSpaceManager(Saveable):
   """Worker that maintains the skill-graph."""
 
-  def __init__(self):
+  def __init__(self, goal_space_size, use_tabular_bonuses=True):
+    self._hash2proto = {}
     self._hash2counts = collections.defaultdict(int)
     self._hash2bonus = {}
-    self._tabular_bonus = True
+    self._tabular_bonus = use_tabular_bonuses
+    self._goal_space_size = goal_space_size
     self._count_dict_lock = threading.Lock()
     print('Created model-free GSM.')
 
-  def get_goal_set(self) -> Dict:
-    return list(self._hash2counts.keys())
+  def get_goal_dict(self) -> Dict:
+    keys = list(self._hash2proto.keys())
+    return {k: self._hash2proto[k] for k in keys}
+
+  def get_count_dict(self) -> Dict:
+    keys = list(self._hash2counts.keys())
+    return {k: self._hash2counts[k] for k in keys}
 
   def update(
     self,
+    hash2proto: Dict,
     hash2count: Dict,
   ):
+    for hash, proto in hash2proto.items():
+      self._hash2proto[hash] = np.asarray(proto)
+
     with self._count_dict_lock:
       for hash, count in hash2count.items():
         self._hash2counts[hash] += count
@@ -57,9 +68,10 @@ class GoalSpaceManager(Saveable):
 
   def begin_episode(self, current_node: Tuple, task_goal_probability: float = 0.1) -> Tuple[Tuple, Dict]:
     goal_sampler = MFGoalSampler(
+      self._hash2proto,
       self._hash2counts,
       self._hash2bonus,
       binary_reward_func=self._reached,
-      goal_space_size=10)
+      goal_space_size=self._goal_space_size)
     expansion_node = goal_sampler.begin_episode(current_node)
     return expansion_node, {}

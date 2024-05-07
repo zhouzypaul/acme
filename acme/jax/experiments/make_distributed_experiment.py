@@ -470,7 +470,9 @@ def make_distributed_experiment(
     )
 
   def _gsm_node():
-    gsm = GoalSpaceManager()
+    gsm = GoalSpaceManager(
+      goal_space_size=experiment.builder._config.goal_space_size,
+    )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(
