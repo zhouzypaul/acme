@@ -321,7 +321,9 @@ class EnvironmentLoop(core.Worker):
       # Log the attempted edge and whether it was successful.
       # Each gc-rollout corresponds to many edges, so we need to log them all.
       current_one_hot_idx, _ = self.convert2onehots(timestep.observation.goals)
-      attempted_edges = [(current_hash, expansion_node, timestep.reward > 0.) for current_hash in current_one_hot_idx]
+      expansion_node_one_hot_idx, _ = self.convert2onehots(np.asarray(expansion_node))
+      expansion_node_one_hot_idx = expansion_node_one_hot_idx[0]  # Expansion node will surely be 1-hot.
+      attempted_edges = [(current_hash, expansion_node_one_hot_idx, bool(timestep.reward > 0.)) for current_hash in current_one_hot_idx]
 
       delta = timestep.reward - self._goal_achievement_rates[expansion_node]
       self._goal_pursual_counts[expansion_node] += 1
