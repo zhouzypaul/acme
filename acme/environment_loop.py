@@ -293,6 +293,8 @@ class EnvironmentLoop(core.Worker):
     
     needs_reset = False
     expansion_node = None
+
+    # Map pairs of tuples (each containing the hot indices) to whether the edge was successful.
     overall_attempted_edges: List[Tuple[NodeHash, NodeHash, bool]] = []
     
     while not needs_reset:
@@ -317,7 +319,9 @@ class EnvironmentLoop(core.Worker):
       )
 
       # Log the attempted edge and whether it was successful.
-      attempted_edge = [(current_node, expansion_node, timestep.reward > 0.)]
+      # Each gc-rollout corresponds to many edges, so we need to log them all.
+      current_one_hot_idx, _ = self.convert2onehots(timestep.observation.goals)
+      attempted_edges = [(current_hash, expansion_node, timestep.reward > 0.) for current_hash in current_one_hot_idx]
 
       delta = timestep.reward - self._goal_achievement_rates[expansion_node]
       self._goal_pursual_counts[expansion_node] += 1
@@ -328,12 +332,10 @@ class EnvironmentLoop(core.Worker):
       reached_target = reached_expansion_node(timestep, expansion_node)
       self._node2successes[expansion_node].append(reached_target)
 
-      overall_attempted_edges.extend(attempted_edge)
+      overall_attempted_edges.extend(attempted_edges)
 
       if not needs_reset and reached_target and \
         random.random() < self._pure_exploration_probability:
-        
-        overall_attempted_edges.append((timestep.observation, self.exploration_goal, True))
         print(f'[EnvironmentLoop] Reached {np.where(expansion_node)}; starting pure exploration rollout.')
         timestep, needs_reset, episode_logs = self.exploration_rollout(
           timestep, episode_logs, trajectory_key='exploration_trajectory')
@@ -369,6 +371,7 @@ class EnvironmentLoop(core.Worker):
       _generate_zeros_from_spec, self._environment.reward_spec())
     
     new_hash2goals = {}
+    attempted_edges = []
     env_reset_start = time.time()
     timestep = self._environment.reset()
     env_reset_duration = time.time() - env_reset_start
@@ -392,7 +395,6 @@ class EnvironmentLoop(core.Worker):
       print(f'[EnvironmentLoop] Took {time.time() - t0}s to get episodic_rollout.')
     else:
       t0 = time.time()
-      attempted_edges = [(tuple(timestep.observation.goals), tuple(self.exploration_goal.goals), True)]
       _, _, episode_logs = self.exploration_rollout(timestep, episode_logs, 'episode_trajectory')
       print(f'[EnvironmentLoop] Took {time.time() - t0}s to get exploration_rollout.')
 
@@ -434,6 +436,7 @@ class EnvironmentLoop(core.Worker):
       self._goal_space_manager.update(
         hash2proto=extracted_results['hash2proto'],
         hash2count=extracted_results['proto2count'],
+        edge2success=extracted_results['hash_pair_to_success']
       )
 
       print(f'Took {t1 - t0}s to filter achieved goals')
@@ -943,7 +946,9 @@ class EnvironmentLoop(core.Worker):
       attempted_hashes = [(x, y) for x, y, _ in attempted_edges]
       return dict(collections.Counter(attempted_hashes))
     
-    def edge2success():  # TODO(ab/mm): adapt for proto-goal edges.
+    def edge2success():
+      # Mapping a pair of one-hot tuples to success bool.
+      # E.g, ((1,), (3,)) -> True means that the edge from node 1 to node 3 was successful.
       return {(x, y): success for x, y, success in attempted_edges}
     
     proto2obs = {}
@@ -976,7 +981,7 @@ class EnvironmentLoop(core.Worker):
         proto2reward[key] = max(proto2reward[key], extrinsic_reward if achieved else 0.)
         proto2discount[key] = min(proto2discount[key], transition.next_ts.discount)
 
-    # hash_pair_to_success = edge2success()
+    hash_pair_to_success = edge2success()
     # hash_pair_to_attempted_counts = attempted2counts()
 
     return dict(
@@ -985,7 +990,7 @@ class EnvironmentLoop(core.Worker):
       proto2count=proto2count,
       proto2reward=proto2reward,
       proto2discount=proto2discount,
-      #hash_pair_to_success=hash_pair_to_success,
+      hash_pair_to_success=hash_pair_to_success,
       #hash_pair_to_attempted_counts=hash_pair_to_attempted_counts,
     )
   
