@@ -60,10 +60,11 @@ class MFGoalSampler:
       return tuple(chosen)
     raise NotImplementedError(method)
 
+  # TODO(ab/mm): Sanity check count_dict and bonus_dict to ensure that they are not consistently missing `g`.
   def _get_expansion_scores(self, reachable_goals, use_tabular_counts=False):
     if use_tabular_counts:
-      return [1. / np.sqrt(self.count_dict[g] + 1) for g in reachable_goals]
-    return [self.bonus_dict[g] for g in reachable_goals]
+      return [1. / np.sqrt(self.count_dict.get(g, 0) + 1) for g in reachable_goals]
+    return [self.bonus_dict.get(g, 1) for g in reachable_goals]
   
   def _get_target_node_probability_dist(
     self,
