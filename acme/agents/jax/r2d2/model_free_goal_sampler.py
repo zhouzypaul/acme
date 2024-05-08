@@ -31,7 +31,8 @@ class MFGoalSampler:
   def get_candidate_goals(self, current_node: Tuple) -> dict:
     """Get the possible goals to pursue at the current state."""
     at_goal = lambda goal: self.binary_reward_func(np.asarray(current_node), np.asarray(goal))
-    return {proto_key: proto for proto_key, proto in self.proto_dict.items() if not at_goal(proto)}  
+    keys = list(self.proto_dict.keys())
+    return {k: self.proto_dict[k] for k in keys if not at_goal(self.proto_dict[k])}  
   
   def _select_expansion_node(
     self,
