@@ -14,7 +14,8 @@ from acme.utils.paths import get_save_directory
 
 
 class ModelFreeGSMPlotter:
-  def __init__(self, time_between_plots=1 * 60):
+  def __init__(self, env, time_between_plots=1 * 60):
+    self._env = env
     self._time_between_plots = time_between_plots
     
     base_dir = get_save_directory()
@@ -43,17 +44,20 @@ class ModelFreeGSMPlotter:
   def __call__(self, episode=0):
     vars = self.get_gsm_variables()
     if vars:
-      self._plot_hash2bonus(vars['hash2bonus'], episode)
+      self._plot_hash2bonus(vars['hash2bonus'], vars['hash2proto'], episode)
 
     self._log_memory_usage(episode)
 
-  def _plot_hash2bonus(self, hash2bonus, episode):
+  def _plot_hash2bonus(self, hash2bonus, hash2proto, episode):
     """Plot the hash2bonus dictionary."""
     hashes = list(hash2bonus.keys())  # list of tuples where each tuple represents the hot idx in the proto-vector.
     values = list(hash2bonus.values())
-    plt.bar([x[0] for x in hashes], values)  # assumung 1-hot nodes.
-    plt.xlabel('Proto-Goal Hash')
-    plt.ylabel('Bonus')
+    one_hot_vectors = [hash2proto[h] for h in hashes]
+    infos = [self._env.binary2info(b) for b in one_hot_vectors]
+    xs = [info['player_x'] for info in infos]
+    ys = [info['player_y'] for info in infos]
+    plt.scatter(xs, ys, c=values)
+    plt.colorbar()
     plt.title(f'Hash2Bonus at episode {episode}')
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'hash2bonus_{episode}.png'))
     plt.close()
