@@ -111,6 +111,53 @@ class MinigridInfoWrapper(Wrapper):
     info['env_pg_vector_size'] = self.vector_size
     
     return info
+  
+  def binary2info(self, binary_vector):
+    info = {}
+    width = self.grid.width
+    height = self.grid.height
+    num_doors = get_num_doors(self)
+
+    player_pos_size = width * height
+    key_pos_size = player_pos_size
+    
+    # Decode player position
+    player_vector = binary_vector[:player_pos_size]
+    if np.sum(player_vector) > 0:
+      player_index = np.where(player_vector == 1)[0][0]
+      info['player_y'], info['player_x'] = divmod(player_index, width)
+    else:
+      info['player_y'], info['player_x'] = -1, -1
+    
+    # Decode has_key
+    has_key_index = player_pos_size
+    info['has_key'] = binary_vector[has_key_index]
+
+    def decode_key_pos():
+      key_vector = binary_vector[has_key_index + 1:has_key_index + 1 + key_pos_size]
+      if np.sum(key_vector) > 0:
+        key_index = np.where(key_vector == 1)[0][0]
+        key_y, key_x = divmod(key_index, width)
+        return (key_x, key_y)
+      return (-1, -1)  # unknown
+    
+    # Decode key position
+    if INCLUDE_KEY_POS:
+      info['key_pos'] = decode_key_pos()
+        
+    # Decode door states
+    door_start_index = player_pos_size + 1 + key_pos_size
+    door_states = {0: 'open', 1: 'closed', 2: 'locked'}
+    for i in range(num_doors):
+      door_vector = binary_vector[door_start_index + i*3 : door_start_index + (i+1)*3]
+      if door_vector.sum() > 0:
+        door_state = np.where(door_vector == 1)[0][0]
+        info[f'door{i}'] = door_states[door_state]
+    
+    # Decode has_ball
+    info['has_ball'] = binary_vector[-1]
+    
+    return info
 
 
 class ResizeObsWrapper(ObservationWrapper):
@@ -402,54 +449,6 @@ def info2binary(info):
   binary_vector[-1] = 1 if info['has_ball'] else 0
   
   return binary_vector
-
-
-def binary2info(binary_vector, env):
-  info = {}
-  width = env.grid.width
-  height = env.grid.height
-  num_doors = get_num_doors(env)
-
-  player_pos_size = width * height
-  key_pos_size = player_pos_size
-  
-  # Decode player position
-  player_vector = binary_vector[:player_pos_size]
-  if np.sum(player_vector) > 0:
-    player_index = np.where(player_vector == 1)[0][0]
-    info['player_y'], info['player_x'] = divmod(player_index, width)
-  else:
-    info['player_y'], info['player_x'] = -1, -1
-  
-  # Decode has_key
-  has_key_index = player_pos_size
-  info['has_key'] = binary_vector[has_key_index]
-
-  def decode_key_pos():
-    key_vector = binary_vector[has_key_index + 1:has_key_index + 1 + key_pos_size]
-    if np.sum(key_vector) > 0:
-      key_index = np.where(key_vector == 1)[0][0]
-      key_y, key_x = divmod(key_index, width)
-      return (key_x, key_y)
-    return (-1, -1)  # unknown
-  
-  # Decode key position
-  if INCLUDE_KEY_POS:
-    info['key_pos'] = decode_key_pos()
-      
-  # Decode door states
-  door_start_index = player_pos_size + 1 + key_pos_size
-  door_states = {0: 'open', 1: 'closed', 2: 'locked'}
-  for i in range(num_doors):
-    door_vector = binary_vector[door_start_index + i*3 : door_start_index + (i+1)*3]
-    if door_vector.sum() > 0:
-      door_state = np.where(door_vector == 1)[0][0]
-      info[f'door{i}'] = door_states[door_state]
-  
-  # Decode has_ball
-  info['has_ball'] = binary_vector[-1]
-  
-  return info
 
 
 def get_all_door_states(env):
