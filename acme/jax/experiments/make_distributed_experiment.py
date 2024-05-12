@@ -469,9 +469,24 @@ def make_distributed_experiment(
         max_option_duration=experiment.builder._config.option_timeout,
     )
 
-  def _gsm_node():
+  def _gsm_node(rng_num, exploration_var_source):
+    exploration_env = exploration_experiment.environment_factory(
+      utils.sample_uint32(rng_num))
+    explore_env_spec = specs.make_environment_spec(exploration_env)
+    exploration_networks = exploration_experiment.network_factory(
+      explore_env_spec)
+    exploration_var_client = variable_utils.VariableClient(
+      exploration_var_source,
+      key='rnd_training_state',  # NOTE: this works for CFN b/c it doesn't look at `names`
+      update_period=datetime.timedelta(minutes=1))
+    use_exploration_vf_for_expansion = experiment.builder._config.use_exploration_vf_for_expansion
     gsm = GoalSpaceManager(
+      rng_key=rng_num,
       goal_space_size=experiment.builder._config.goal_space_size,
+      exploration_networks=exploration_networks,
+      exploration_variable_client=exploration_var_client,
+      use_exploration_vf_for_expansion=use_exploration_vf_for_expansion,
+      use_tabular_bonuses=not use_exploration_vf_for_expansion,
     )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
@@ -487,6 +502,10 @@ def make_distributed_experiment(
         checkpoint_ttl_seconds=checkpointing.checkpoint_ttl_seconds
       )
     return gsm
+  
+  def _plotting_node():
+    env = experiment.environment_factory(0)
+    return GSMPlotter(env)
 
   if not program:
     program = lp.Program(name=name)
@@ -599,8 +618,11 @@ def make_distributed_experiment(
   num_actor_nodes += int(remainder > 0)
   
   with program.group('gsm'):
+    gsm_key, _ = jax.random.split(key)
     gsm_node = lp.CourierNode(
       _gsm_node,
+      gsm_key,
+      exploration_learner,
       # TODO(ab): How to set the number of threads for the GSM?
       courier_kwargs={'thread_pool_size': 64}
       )
@@ -664,6 +686,6 @@ def make_distributed_experiment(
       lp.CourierNode(build_exploration_model_saver, exploration_learner),
       label='exploration_model_saver')
     
-  program.add_node(lp.CourierNode(GSMPlotter), 'plotter')
+  program.add_node(lp.CourierNode(_plotting_node), 'plotter')
 
   return program
