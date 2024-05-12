@@ -438,7 +438,8 @@ class EnvironmentLoop(core.Worker):
       self._goal_space_manager.update(
         hash2proto=extracted_results['hash2proto'],
         hash2count=extracted_results['proto2count'],
-        edge2success=extracted_results['hash_pair_to_success']
+        edge2success=extracted_results['hash_pair_to_success'],
+        hash2obs=extracted_results['proto2obs']
       )
 
       print(f'Took {t1 - t0}s to filter achieved goals')
