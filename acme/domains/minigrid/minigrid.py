@@ -112,7 +112,10 @@ class MinigridInfoWrapper(Wrapper):
     
     return info
   
-  def binary2info(self, binary_vector):
+  def binary2info(self, binary_vector, sparse_info: bool = False):
+    if isinstance(binary_vector, tuple):
+      binary_vector = np.asarray(binary_vector)
+
     info = {}
     width = self.grid.width
     height = self.grid.height
@@ -126,12 +129,14 @@ class MinigridInfoWrapper(Wrapper):
     if np.sum(player_vector) > 0:
       player_index = np.where(player_vector == 1)[0][0]
       info['player_y'], info['player_x'] = divmod(player_index, width)
-    else:
+    elif not sparse_info:
       info['player_y'], info['player_x'] = -1, -1
     
     # Decode has_key
     has_key_index = player_pos_size
-    info['has_key'] = binary_vector[has_key_index]
+
+    if not sparse_info or binary_vector[has_key_index]:
+      info['has_key'] = binary_vector[has_key_index]
 
     def decode_key_pos():
       key_vector = binary_vector[has_key_index + 1:has_key_index + 1 + key_pos_size]
@@ -142,8 +147,9 @@ class MinigridInfoWrapper(Wrapper):
       return (-1, -1)  # unknown
     
     # Decode key position
-    if INCLUDE_KEY_POS:
-      info['key_pos'] = decode_key_pos()
+    keypos = decode_key_pos()
+    if INCLUDE_KEY_POS and (not sparse_info or keypos != (-1, -1)):
+      info['key_pos'] = keypos
         
     # Decode door states
     door_start_index = player_pos_size + 1 + key_pos_size
@@ -155,7 +161,8 @@ class MinigridInfoWrapper(Wrapper):
         info[f'door{i}'] = door_states[door_state]
     
     # Decode has_ball
-    info['has_ball'] = binary_vector[-1]
+    if not sparse_info or binary_vector[-1]:
+      info['has_ball'] = binary_vector[-1]
     
     return info
 

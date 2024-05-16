@@ -147,6 +147,7 @@ class EnvironmentLoop(core.Worker):
     # For debugging and visualizations
     self._start_ts = None
     self._episode_iter = itertools.count()
+    self._binary2info = lambda vec: self._environment.binary2info(vec, sparse_info=True)
 
     base_dir = get_save_directory()
     self._exploration_traj_dir = os.path.join(base_dir, 'plots', 'exploration_trajectories')
@@ -309,7 +310,7 @@ class EnvironmentLoop(core.Worker):
         if ret is not None:
           expansion_node = ret
 
-      print(f'[EnvironmentLoop] Expansion Node: {np.where(expansion_node)}')
+      print(f'[EnvironmentLoop] Expansion Node: {self._binary2info(expansion_node)}')
       print(f'[EnvironmentLoop] begin_episode() took {time.time() - t0}s.')
 
       t0 = time.time()
@@ -328,7 +329,7 @@ class EnvironmentLoop(core.Worker):
       delta = timestep.reward - self._goal_achievement_rates[expansion_node]
       self._goal_pursual_counts[expansion_node] += 1
       self._goal_achievement_rates[expansion_node] += (delta / self._goal_pursual_counts[expansion_node])
-      print(f'Success rate for {np.where(expansion_node)} is {self._goal_achievement_rates[expansion_node]} ({self._goal_pursual_counts[expansion_node]})')
+      print(f'Success rate for {self._binary2info(expansion_node)} is {self._goal_achievement_rates[expansion_node]} ({self._goal_pursual_counts[expansion_node]})')
       print(f'[EnvironmentLoop] GC Rollout took {time.time() - t0}s.')
 
       reached_target = reached_expansion_node(timestep, expansion_node)
@@ -338,7 +339,7 @@ class EnvironmentLoop(core.Worker):
 
       if not needs_reset and reached_target and \
         random.random() < self._pure_exploration_probability:
-        print(f'[EnvironmentLoop] Reached {np.where(expansion_node)}; starting pure exploration rollout.')
+        print(f'[EnvironmentLoop] Reached {self._binary2info(expansion_node)}; starting pure exploration rollout.')
         timestep, needs_reset, episode_logs = self.exploration_rollout(
           timestep, episode_logs, trajectory_key='exploration_trajectory')
         print(f"[EnvironmentLoop] Length of exploration trajectory = {len(episode_logs['exploration_trajectory'])}")
@@ -454,8 +455,8 @@ class EnvironmentLoop(core.Worker):
       'env_reset_duration_sec': env_reset_duration,
       'select_action_duration_sec': np.mean(episode_logs['select_action_durations']),
       'env_step_duration_sec': np.mean(episode_logs['env_step_durations']),
-      'start_state': np.where(start_state.goals),
-      'expansion_node': np.where(expansion_node)
+      'start_state': self._binary2info(start_state.goals),
+      'expansion_node': self._binary2info(expansion_node)
     }
     result.update(counts)
     for observer in self._observers:
@@ -503,7 +504,7 @@ class EnvironmentLoop(core.Worker):
       print(f'[EnvironmentLoop] Updating CFN with {len(episode_logs[trajectory_key])} transitions.')
       self.update_cfn_ground_truth_counts(episode_logs[trajectory_key])
 
-    print(f'[EnvironmentLoop] Ended exploration in {np.where(timestep.observation.goals)}')
+    print(f'[EnvironmentLoop] Ended exploration in {self._binary2info(timestep.observation.goals)}')
     assert needs_reset, 'Currently, we run the exploration policy till episode end.'
     
     return timestep, needs_reset, episode_logs
@@ -695,7 +696,7 @@ class EnvironmentLoop(core.Worker):
         # and the initial timestep.
         observer.observe_first(self._environment, timestep)
 
-    print(f'[EnvironmentLoop] Starting gc-rollout towards g={np.where(goal)}.')
+    print(f'[EnvironmentLoop] Starting gc-rollout towards g={self._binary2info(goal)}.')
     while not needs_reset and not reached and not should_interrupt_option:
       # Book-keeping.
       episode_logs['episode_steps'] += 1
@@ -774,7 +775,7 @@ class EnvironmentLoop(core.Worker):
 
     episode_logs['episode_trajectory'].extend(trajectory)
 
-    print(f'Goal={np.where(goal)} Achieved={np.where(timestep.observation.goals)} R={timestep.reward} T={duration}')
+    print(f'Goal={self._binary2info(goal)} Achieved={self._binary2info(timestep.observation.goals)} R={timestep.reward} T={duration}')
 
     return timestep, needs_reset, episode_logs
 
@@ -1016,14 +1017,18 @@ class EnvironmentLoop(core.Worker):
     
     # Map from tuple hash to 1-hot vector that we can condition the UVFA on.
     triggered_goals = {g: np.asarray(hash2proto[g]) for g in hash2proto if g in self.goal_dict}
+
+    # Filter out the goals from triggered_goals that are reached in the start_state
+    triggered_goals = {k: v for k, v in triggered_goals.items() if not self._reached(start_state.goals, v)}
+
     goal_hashes = list(triggered_goals.keys())
 
     if triggered_goals:
       hindsight_goals = goal_space_novelty_selection()
       for hindsight_goal in hindsight_goals:
-        print(f'[HER] replaying wrt to {np.where(hindsight_goal)}')
-        if not self._reached(start_state.goals, hindsight_goal):
-          self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
+        print(f'[HER] replaying wrt to {self._binary2info(hindsight_goal)}')
+        assert not self._reached(start_state.goals, hindsight_goal), self._binary2info(hindsight_goal)
+        self.replay_trajectory_with_new_goal(trajectory, hindsight_goal)
 
       # TODO(ab/mm): implement task goal feature.
       if self._always_learn_about_task_goal and \
