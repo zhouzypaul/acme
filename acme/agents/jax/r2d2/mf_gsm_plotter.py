@@ -54,14 +54,54 @@ class ModelFreeGSMPlotter:
     values = list(hash2bonus.values())
     one_hot_vectors = [hash2proto[h] for h in hashes]
     infos = [self._env.binary2info(b) for b in one_hot_vectors]
-    xs = [info['player_x'] for info in infos]
-    ys = [info['player_y'] for info in infos]
-    plt.scatter(xs, ys, c=values)
-    plt.colorbar()
-    plt.title(f'Hash2Bonus at episode {episode}')
+    
+    info_val_with_key = [(infos[i], values[i]) for i in range(len(infos)) if infos[i]['has_key']]
+    info_val_without_key = [(infos[i], values[i]) for i in range(len(infos)) if not infos[i]['has_key']]
+    info_val_with_open_door = [(infos[i], values[i]) for i in range(len(infos)) if 'door1' in infos[i] and infos[i]['door1'] == 'open']
+
+    xs_without_key = [info['player_x'] for info, _ in info_val_without_key]
+    ys_without_key = [info['player_y'] for info, _ in info_val_without_key]
+    values_without_key = [v for _, v in info_val_without_key]
+
+    plt.figure(figsize=(15, 5))
+    
+    if not info_val_with_key:
+      plt.scatter(xs_without_key, ys_without_key, c=values_without_key)
+      plt.colorbar()
+    else:
+      n_subplots = 2 + (len(info_val_with_open_door) > 0)
+      xs_with_key = [info['player_x'] for info, _ in info_val_with_key]
+      ys_with_key = [info['player_y'] for info, _ in info_val_with_key]
+      values_with_key = [v for _, v in info_val_with_key]
+      plt.subplot(1, n_subplots, 1)
+      plt.scatter(xs_with_key, ys_with_key, c=values_with_key)
+      plt.colorbar()
+      plt.title('With Key')
+      
+      xs_without_key = [info['player_x'] for info, _ in info_val_without_key]
+      ys_without_key = [info['player_y'] for info, _ in info_val_without_key]
+      values_without_key = [v for _, v in info_val_without_key]
+      plt.subplot(1, n_subplots, 2)
+      plt.scatter(xs_without_key, ys_without_key, c=values_without_key)
+      plt.colorbar()
+      plt.title('Without Key')
+
+      if info_val_with_open_door:
+        xs_with_open_door = [info['player_x'] for info, _ in info_val_with_open_door]
+        ys_with_open_door = [info['player_y'] for info, _ in info_val_with_open_door]
+        values_with_open_door = [v for _, v in info_val_with_open_door]
+        plt.subplot(1, n_subplots, 3)
+        plt.scatter(xs_with_open_door, ys_with_open_door, c=values_with_open_door)
+        plt.colorbar()
+        plt.title('With Open Door')
+
+    plt.suptitle(f'Hash2Bonus at episode {episode}')
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'hash2bonus_{episode}.png'))
     plt.close()
 
+  def _plot_goal_learning_curves():
+    pass
+  
   def _log_memory_usage(self, episode):
     """Log the memory usage at the end of each episode."""
     print(f'Logging memory usage at episode {episode}')
