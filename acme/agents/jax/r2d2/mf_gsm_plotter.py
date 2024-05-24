@@ -45,6 +45,7 @@ class ModelFreeGSMPlotter:
     vars = self.get_gsm_variables()
     if vars:
       self._plot_hash2bonus(vars['hash2bonus'], vars['hash2proto'], episode)
+      self._plot_goal_learning_curves(vars['edge2successes'], vars['hash2proto'], episode)
 
     self._log_memory_usage(episode)
 
@@ -57,7 +58,7 @@ class ModelFreeGSMPlotter:
     
     info_val_with_key = [(infos[i], values[i]) for i in range(len(infos)) if infos[i]['has_key']]
     info_val_without_key = [(infos[i], values[i]) for i in range(len(infos)) if not infos[i]['has_key']]
-    info_val_with_open_door = [(infos[i], values[i]) for i in range(len(infos)) if 'door1' in infos[i] and infos[i]['door1'] == 'open']
+    info_val_with_open_door = [(infos[i], values[i]) for i in range(len(infos)) if 'door4' in infos[i] and infos[i]['door4'] == 'open']
 
     xs_without_key = [info['player_x'] for info, _ in info_val_without_key]
     ys_without_key = [info['player_y'] for info, _ in info_val_without_key]
@@ -99,8 +100,84 @@ class ModelFreeGSMPlotter:
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'hash2bonus_{episode}.png'))
     plt.close()
 
-  def _plot_goal_learning_curves():
-    pass
+  def _plot_goal_learning_curves(self, edge2successes, hash2proto, episode):
+    """Grab the destination node in each edge of edge2successes, group them based on whether they are player_pos goals, key goals, or door goals, and plot the learning curves for each group."""
+    category_to_mean_success_rate = collections.defaultdict(float)
+    category_to_std_error = collections.defaultdict(float)
+    category_to_count = collections.defaultdict(int)
+    category_to_n_attempts = collections.defaultdict(int)
+
+    node2successes = collections.defaultdict(list)
+    for edge, successes in edge2successes.items():
+      node2successes[edge[1]].extend(successes)
+    
+    for dest, successes in node2successes.items():
+      info = self._env.binary2info(hash2proto[dest], sparse_info=True)
+      def _categorize_goal(info):
+        if 'player_y' in info or 'player_x' in info:
+          category = 'player_pos'
+        elif 'has_key' in info:
+          category = 'has_key'
+        elif 'key_pos' in info:
+          category = 'key_pos'
+        elif 'door0' in info:
+          category = 'door0'
+        elif 'door1' in info:
+          category = 'door1'
+        elif 'door2' in info:
+          category = 'door2'
+        elif 'door3' in info:
+          category = 'door3'
+        elif 'door4' in info:
+          category = 'door4'
+        elif 'door5' in info:
+          category = 'door5'
+        elif 'has_ball' in info:
+          category = 'has_ball'
+        return category
+      category = _categorize_goal(info)
+      category_to_mean_success_rate[category] += np.mean(successes)
+      category_to_std_error[category] += np.std(successes)
+      category_to_count[category] += 1
+      category_to_n_attempts[category] += len(successes)
+    
+    categories = []
+    mean_success_rates = []
+    std_errors = []
+    counts = []
+    attempts = []
+    for category, total_successes in category_to_mean_success_rate.items():
+      mean_success_rate = total_successes / category_to_count[category]
+      std_error = category_to_std_error[category] / np.sqrt(category_to_count[category])
+      categories.append(category)
+      mean_success_rates.append(mean_success_rate)
+      std_errors.append(std_error)
+      counts.append(category_to_count[category])
+      attempts.append(category_to_n_attempts[category])
+    
+    plt.figure(figsize=(30, 10))
+    plt.subplot(1, 3, 1)
+    plt.bar(categories, mean_success_rates)
+    plt.xlabel('Category')
+    plt.ylabel('Mean Success Rate')
+    plt.title('Goal Learning Curves')
+    
+    plt.subplot(1, 3, 2)
+    plt.bar(categories, counts)
+    plt.yscale('log')
+    plt.xlabel('Category')
+    plt.ylabel('Number of goals per category (log scale)')
+    plt.title('Goal Counts')
+
+    plt.subplot(1, 3, 3)
+    plt.bar(categories, attempts)
+    plt.yscale('log')
+    plt.xlabel('Category')
+    plt.ylabel('Number of attempts (log scale)')
+    plt.title('Attempts')
+    
+    plt.savefig(os.path.join(self._gc_learning_curves_plotting_dir, f'goal_learning_curves_{episode}.png'))
+    plt.close()
   
   def _log_memory_usage(self, episode):
     """Log the memory usage at the end of each episode."""
