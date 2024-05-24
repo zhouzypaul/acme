@@ -50,6 +50,7 @@ class GoalSpaceManager(Saveable):
     self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
 
     self._hash2obs = {}
+    self._hash2obs_lock = threading.Lock()
 
     # Learning curve for each goal
     self._edge2successes = collections.defaultdict(list)
@@ -91,7 +92,9 @@ class GoalSpaceManager(Saveable):
           self._hash2bonus[hash] = 1. / np.sqrt(self._hash2counts[hash] + 1)
 
     self._update_edge_success_dict(edge2success)
-    self._update_obs_dict(hash2obs)
+
+    with self._hash2obs_lock:
+      self._update_obs_dict(hash2obs)
 
   def _update_edge_success_dict(self, edge2success: Dict):
     with self._edge2successes_lock:
@@ -101,7 +104,9 @@ class GoalSpaceManager(Saveable):
   def _update_obs_dict(self, hash2obs: Dict):
     for goal in hash2obs:
       oarg = self._construct_oarg(*hash2obs[goal], goal)
-      self._hash2obs[goal] = oarg
+      if goal not in self._hash2obs:
+        self._hash2obs[goal] = collections.deque(maxlen=10)
+      self._hash2obs[goal].append(oarg)
 
   def _construct_oarg(self, obs, action, reward, goal_features) -> OARG:
     """Convert the obs, action, etc from the GSM into an OARG object.
@@ -194,7 +199,9 @@ class GoalSpaceManager(Saveable):
     t0 = time.time()
     n_nodes = min(n_nodes, len(self._hash2obs))
     keys = random.sample(self._hash2obs.keys(), k=n_nodes)
-    nodes = {key: self._hash2obs[key] for key in keys}
+    key2lens = {key: len(self._hash2obs[key]) for key in keys}
+    key2idx = {key: random.choice(range(length)) for key, length in key2lens.items()}
+    nodes = {key: self._hash2obs[key][key2idx[key]] for key in keys}
     node_hashes, oarg = self._nodes2oarg(nodes)
     cfn_oar = oarg._replace(
         observation=oarg.observation[..., :3])
@@ -219,11 +226,17 @@ class GoalSpaceManager(Saveable):
     self._update_bonuses(node_hashes, values)
     print(f'[GSM-Profiling] Took {time.time() - t0}s to compute & update CFN values.')
 
-  def _update_bonuses(self, src_hashes, bonuses, use_incremental_update: bool = False):
+  def _update_bonuses(self, src_hashes, bonuses,
+                      use_incremental_update: bool = False,
+                      use_intermediate_difficulty: bool = False):
     assert len(src_hashes) == len(bonuses)
     for key, value in zip(src_hashes, bonuses):
       if not use_incremental_update:
-        self._hash2bonus[key] = value
+        if use_intermediate_difficulty:
+          value = np.clip(value, 0., 1.)
+          self._hash2bonus[key] = (-4. * ((value - 0.5) ** 2) + 1)
+        else:
+          self._hash2bonus[key] = value
       else:
         # Incremental mean update
         assert key in self._bonus_counts and self._bonus_counts[key] > 0, (
