@@ -469,7 +469,11 @@ def make_distributed_experiment(
         max_option_duration=experiment.builder._config.option_timeout,
     )
 
-  def _gsm_node(rng_num, exploration_var_source):
+  def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
+    variable_client = variable_utils.VariableClient(
+        variable_source,
+        key='actor_variables',
+        update_period=datetime.timedelta(minutes=1))
     exploration_env = exploration_experiment.environment_factory(
       utils.sample_uint32(rng_num))
     explore_env_spec = specs.make_environment_spec(exploration_env)
@@ -480,6 +484,7 @@ def make_distributed_experiment(
       key='rnd_training_state',  # NOTE: this works for CFN b/c it doesn't look at `names`
       update_period=datetime.timedelta(minutes=1))
     use_exploration_vf_for_expansion = experiment.builder._config.use_exploration_vf_for_expansion
+    use_intermediate_difficulty = experiment.builder._config.use_intermediate_difficulty
     gsm = GoalSpaceManager(
       rng_key=rng_num,
       goal_space_size=experiment.builder._config.goal_space_size,
@@ -487,6 +492,9 @@ def make_distributed_experiment(
       exploration_variable_client=exploration_var_client,
       use_exploration_vf_for_expansion=use_exploration_vf_for_expansion,
       use_tabular_bonuses=not use_exploration_vf_for_expansion,
+      networks=networks,
+      variable_client=variable_client,
+      use_intermediate_difficulty=use_intermediate_difficulty,
     )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
@@ -618,10 +626,16 @@ def make_distributed_experiment(
   num_actor_nodes += int(remainder > 0)
   
   with program.group('gsm'):
+    spec = (
+        experiment.environment_spec or
+        specs.make_environment_spec(experiment.environment_factory(1))
+    )
     gsm_key, _ = jax.random.split(key)
     gsm_node = lp.CourierNode(
       _gsm_node,
       gsm_key,
+      experiment.network_factory(spec),
+      variable_sources[0],
       exploration_learner,
       # TODO(ab): How to set the number of threads for the GSM?
       courier_kwargs={'thread_pool_size': 64}

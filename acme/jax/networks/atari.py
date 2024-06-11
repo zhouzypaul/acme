@@ -42,8 +42,9 @@ Images = jnp.ndarray
 class AtariTorso(hk.Module):
   """Simple convolutional stack commonly used for Atari."""
 
-  def __init__(self):
+  def __init__(self, to_float: bool = True):
     super().__init__(name='atari_torso')
+    self._to_float = to_float
     self._network = hk.Sequential([
         hk.Conv2D(32, [8, 8], 4), jax.nn.relu,
         hk.Conv2D(64, [4, 4], 2), jax.nn.relu,
@@ -55,6 +56,10 @@ class AtariTorso(hk.Module):
     batched_inputs = inputs_rank == 4
     if inputs_rank < 3 or inputs_rank > 4:
       raise ValueError('Expected input BHWC or HWC. Got rank %d' % inputs_rank)
+
+    if self._to_float:
+      assert inputs.dtype == jnp.uint8, (inputs.max(), inputs.dtype)
+      inputs = inputs.astype(jnp.float32) / 255.
 
     outputs = self._network(inputs)
 
@@ -87,9 +92,12 @@ class DeepAtariTorso(hk.Module):
           resnet.DownsamplingStrategy.CONV_MAX,) * 3,
       hidden_sizes: Sequence[int] = (256,),
       use_layer_norm: bool = False,
-      name: str = 'deep_atari_torso'):
+      name: str = 'deep_atari_torso',
+      to_float: bool = False,
+    ):
     super().__init__(name=name)
     self._use_layer_norm = use_layer_norm
+    self._to_float = to_float
     self.resnet = resnet.ResNetTorso(
         channels_per_group=channels_per_group,
         blocks_per_group=blocks_per_group,
@@ -100,6 +108,9 @@ class DeepAtariTorso(hk.Module):
     self.mlp_head = hk.nets.MLP(output_sizes=hidden_sizes, activate_final=True)
 
   def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+    if self._to_float:
+      assert x.dtype == jnp.uint8, (x.max(), x.dtype)
+      x = x.astype(jnp.float32) / 255.
     output = self.resnet(x)
     output = jax.nn.relu(output)
     output = hk.Flatten(preserve_dims=-3)(output)
@@ -150,10 +161,11 @@ class OldR2D2AtariNetwork(hk.RNNCore):
   See https://openreview.net/forum?id=r1lyTjAqYX for more information.
   """
 
-  def __init__(self, num_actions: int):
+  def __init__(self, num_actions: int, to_float: bool = False):
     super().__init__(name='r2d2_atari_network')
     self._embed = embedding.OAREmbedding(
-        DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True), num_actions)
+        DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True, to_float=to_float),
+        num_actions)
     self._core = hk.LSTM(512)
     self._duelling_head = duelling.DuellingMLP(num_actions, hidden_sizes=[512])
     self._num_actions = num_actions
@@ -190,10 +202,11 @@ class R2D2AtariNetwork(hk.RNNCore):
   See https://openreview.net/forum?id=r1lyTjAqYX for more information.
   """
 
-  def __init__(self, num_actions: int):
+  def __init__(self, num_actions: int, to_float: bool = False):
     super().__init__(name='r2d2_atari_network')
     self._embed = embedding.OAREmbedding(
-        DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True), num_actions)
+        DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True, to_float=to_float),
+        num_actions)
     # self._goal_embed = embedding.GoalEmbedding(
     #   DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True))
     self._goal_embed = hk.Linear(256)
@@ -224,7 +237,7 @@ class R2D2AtariNetwork(hk.RNNCore):
     core_outputs, new_state = self._core(embeddings, state)
 
     # Pass the goal through the DeepAtariTorso.
-    goal_embeddings = self._goal_embed(goal_vec)
+    goal_embeddings = self._goal_embed(goal_vec.astype(jnp.float32))
 
     # Concat the goal embeddings to the core_outputs.
     augmented_core_outputs = jnp.concatenate(
@@ -258,7 +271,7 @@ class R2D2AtariNetwork(hk.RNNCore):
     goal_vec = goal_vec[:,:,:n_goal_dims]    # (T, B, 130)
     # print("unroll", goal_vec.shape)
 
-    goal_embeddings = hk.BatchApply(self._goal_embed)(goal_vec)
+    goal_embeddings = hk.BatchApply(self._goal_embed)(goal_vec.astype(jnp.float32))
 
     augmented_core_outputs = jnp.concatenate(
       [core_outputs, goal_embeddings], axis=-1

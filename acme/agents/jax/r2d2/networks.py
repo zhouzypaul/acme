@@ -14,6 +14,8 @@
 
 """R2D2 Networks."""
 
+import jax.numpy as jnp
+
 from acme import specs
 from acme.jax import networks as networks_lib
 
@@ -25,7 +27,9 @@ def make_atari_networks(env_spec: specs.EnvironmentSpec) -> R2D2Networks:
   """Builds default R2D2 networks for Atari games."""
 
   def make_core_module() -> networks_lib.R2D2AtariNetwork:
-    return networks_lib.R2D2AtariNetwork(env_spec.actions.num_values)
+    # The env_spec.observations.observation.dtype check is true for np.uin8 as well
+    to_float = env_spec.observations.observation.dtype == jnp.uint8
+    return networks_lib.R2D2AtariNetwork(env_spec.actions.num_values, to_float)
 
   return networks_lib.make_unrollable_network(env_spec, make_core_module)
 
@@ -34,6 +38,7 @@ def make_vanilla_atari_networks(env_spec: specs.EnvironmentSpec) -> R2D2Networks
   """Builds default R2D2 networks for Atari games."""
 
   def make_core_module() -> networks_lib.R2D2AtariNetwork:
-    return networks_lib.OldR2D2AtariNetwork(env_spec.actions.num_values)
+    to_float = env_spec.observations.observation.dtype == jnp.uint8
+    return networks_lib.OldR2D2AtariNetwork(env_spec.actions.num_values, to_float)
 
   return networks_lib.make_unrollable_network(env_spec, make_core_module)

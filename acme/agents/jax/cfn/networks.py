@@ -76,8 +76,9 @@ def make_networks(
 
     def __init__(self, name = 'convolutional_network_class'):
       super().__init__(name=name)
+      to_float = spec.observations.observation.dtype == jnp.uint8
       self._network = hk.Sequential([
-        networks_lib.AtariTorso(),
+        networks_lib.AtariTorso(to_float=to_float),
         # TODO(ab/sl): test if fc_hidden is a good idea
         # hk.Linear(256),
         # jax.nn.relu,

@@ -67,6 +67,7 @@ flags.DEFINE_integer('spi', 0, 'Samples per insert')
 flags.DEFINE_string('acme_dir', 'local_testing', 'Directory to do acme logging')
 flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
+flags.DEFINE_integer('target_update_period', 1200, 'Target update period')
 
 # Novelty search flags.
 flags.DEFINE_float('intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
@@ -92,6 +93,8 @@ flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task 
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
 flags.DEFINE_integer('option_timeout', 400, 'Max number of steps for which to pursue a goal.')
 flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exploration value function for expansion or the reward function')
+flags.DEFINE_bool('use_intermediate_difficulty', False, 'Whether to sample goals of intermediate difficulty.')
+flags.DEFINE_bool('use_uvfa_reachability', False, 'Whether to use UVFA for reachability estimation')
 
 FLAGS = flags.FLAGS
 
@@ -109,7 +112,8 @@ def build_experiment_config():
   def environment_factory(seed: int) -> dm_env.Environment:
     return helpers.make_minigrid_environment(
       level_name=env_name,
-      max_episode_len=max_episode_steps
+      max_episode_len=max_episode_steps,
+      to_float=False,
     )
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
@@ -117,6 +121,7 @@ def build_experiment_config():
   # TODO(ab/mm): safe to remove these?
   # if not FLAGS.use_planning_in_evaluator:
   #   assert FLAGS.task_goal_probability > 0, "If not planning in eval, then drive behavior with task goal."
+  assert FLAGS.use_uvfa_reachability + FLAGS.use_intermediate_difficulty <= 1, "Only one of these can be true."
 
   # Configure the agent.
   config = r2d2.R2D2Config(
@@ -129,7 +134,7 @@ def build_experiment_config():
       samples_per_insert=FLAGS.spi,
       evaluation_epsilon=1e-3,
       learning_rate=1e-4,
-      target_update_period=1200,
+      target_update_period=FLAGS.target_update_period,
       variable_update_period=100,
       # The default hyperbolic transform makes the vf preds small (~0.4 max)
       tx_pair=rlax.IDENTITY_PAIR,
@@ -139,7 +144,9 @@ def build_experiment_config():
       task_goal_probability=FLAGS.task_goal_probability,
       should_switch_goal=FLAGS.switch_task_expansion_node,
       option_timeout=FLAGS.option_timeout,
-      use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion
+      use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion,
+      use_intermediate_difficulty=FLAGS.use_intermediate_difficulty,
+      use_uvfa_reachability=FLAGS.use_uvfa_reachability
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
@@ -206,7 +213,9 @@ def build_exploration_policy_experiment_config():
       level_name=env_name,
       max_episode_len=max_episode_steps,
       goal_conditioned=False,  # This is the reason we have a different env_factory
-      seed=seed)
+      seed=seed,
+      to_float=False,
+    )
   
   def rnd_network_factory(env_spec):
     from acme.agents.jax import rnd

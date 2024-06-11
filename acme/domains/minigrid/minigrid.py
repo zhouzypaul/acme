@@ -483,7 +483,8 @@ def environment_builder(
   seed=42,
   random_reset=False,
   max_steps=None,
-  goal_conditioned=True
+  goal_conditioned=True,
+  to_float=False
 ):
   if max_steps is not None and max_steps > 0:
     env = gym.make(level_name, max_steps=max_steps)  #, goal_pos=(11, 11))
@@ -518,7 +519,7 @@ def environment_builder(
     flatten_frame_stack=True,
     grayscaling=False, 
     pooled_frames=1,
-    to_float=True,
+    to_float=to_float,
     goal_conditioned=goal_conditioned,
     task_goal_features=determine_binary_goal_features(env)
   )

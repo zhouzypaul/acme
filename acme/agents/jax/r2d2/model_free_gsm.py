@@ -31,9 +31,13 @@ class GoalSpaceManager(Saveable):
       goal_space_size,
       rng_key: networks_lib.PRNGKey,
       use_tabular_bonuses=False,
+      networks: Optional[r2d2_networks.R2D2Networks] = None,
+      variable_client: Optional[variable_utils.VariableClient] = None,
       exploration_networks: Optional[CFNNetworks] = None,
       exploration_variable_client: Optional[variable_utils.VariableClient] = None,
-      use_exploration_vf_for_expansion: bool = False
+      use_exploration_vf_for_expansion: bool = False,
+      use_intermediate_difficulty: bool = True,
+      use_uvfa_reachability: bool = False,
     ):
     self._rng_key = rng_key
     self._hash2proto = {}
@@ -48,6 +52,11 @@ class GoalSpaceManager(Saveable):
     self._exploration_networks = exploration_networks
     self._exploration_variable_client = exploration_variable_client
     self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
+    self._use_intermediate_difficulty = use_intermediate_difficulty
+    self._use_uvfa_reachability = use_uvfa_reachability
+
+    self._networks = networks
+    self._variable_client = variable_client
 
     self._hash2obs = {}
     self._hash2obs_lock = threading.Lock()
@@ -62,6 +71,8 @@ class GoalSpaceManager(Saveable):
     os.makedirs(self._base_plotting_dir, exist_ok=True)
 
     print('Created model-free GSM.')
+    print(f'[GSM] use_intermediate_difficulty: {use_intermediate_difficulty} ',
+          f'use_uvfa_reachability: {use_uvfa_reachability}')
 
   def get_goal_dict(self) -> Dict:
     keys = list(self._hash2proto.keys())
@@ -70,6 +81,10 @@ class GoalSpaceManager(Saveable):
   def get_count_dict(self) -> Dict:
     keys = list(self._hash2counts.keys())
     return {k: self._hash2counts[k] for k in keys}
+  
+  @property
+  def _params(self):
+    return self._variable_client.params if self._variable_client else []
   
   @property
   def _exploration_params(self):
@@ -118,7 +133,7 @@ class GoalSpaceManager(Saveable):
         goal_features (tuple): goal hash in tuple format
     """
     return OARG(
-      observation=np.asarray(obs, dtype=np.float32),
+      observation=np.asarray(obs, dtype=obs.dtype),
       action=action,
       reward=reward,
       goals=np.asarray(goal_features, dtype=np.int16)
@@ -151,6 +166,8 @@ class GoalSpaceManager(Saveable):
   def update_params(self, wait: bool = False):
     if self._exploration_variable_client:
       self._exploration_variable_client.update(wait=wait)
+    if self._variable_client:
+      self._variable_client.update(wait=wait)
 
   def _reached(self, current_hash, goal_hash) -> bool:  # TODO(ab/mm): don't replicate
     assert isinstance(current_hash, np.ndarray), type(current_hash)
@@ -161,12 +178,18 @@ class GoalSpaceManager(Saveable):
     return (current_hash[dims]).all()
 
   def begin_episode(self, current_node: Tuple, task_goal_probability: float = 0.1) -> Tuple[Tuple, Dict]:
+    # print('[GSM] Beginning episode with current node:', current_node)
     goal_sampler = MFGoalSampler(
       self._hash2proto,
       self._hash2counts,
       self._hash2bonus,
       binary_reward_func=self._reached,
-      goal_space_size=self._goal_space_size)
+      goal_space_size=self._goal_space_size,
+      uvfa_params=self._params,
+      uvfa_rng_key=self._rng_key,
+      uvfa_networks=self._networks,
+      use_uvfa_reachability=self._use_uvfa_reachability,
+    )
     expansion_node = goal_sampler.begin_episode(current_node)
     return expansion_node, {}
   
@@ -224,15 +247,14 @@ class GoalSpaceManager(Saveable):
         self._bonus_counts[key] = self._bonus_counts.get(key, 0) + 1
 
     self._update_bonuses(node_hashes, values)
-    print(f'[GSM-Profiling] Took {time.time() - t0}s to compute & update CFN values.')
+    # print(f'[GSM-Profiling] Took {time.time() - t0}s to compute & update CFN values.')
 
   def _update_bonuses(self, src_hashes, bonuses,
-                      use_incremental_update: bool = False,
-                      use_intermediate_difficulty: bool = False):
+                      use_incremental_update: bool = False):
     assert len(src_hashes) == len(bonuses)
     for key, value in zip(src_hashes, bonuses):
       if not use_incremental_update:
-        if use_intermediate_difficulty:
+        if self._use_intermediate_difficulty:
           value = np.clip(value, 0., 1.)
           self._hash2bonus[key] = (-4. * ((value - 0.5) ** 2) + 1)
         else:

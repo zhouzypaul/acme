@@ -301,12 +301,19 @@ class EnvironmentLoop(core.Worker):
     while not needs_reset:
       t0 = time.time()
       expansion_node = tuple(self.task_goal.goals)
-      current_node = self._get_current_node(timestep)
+      current_oarg = (
+        jnp.asarray(timestep.observation.observation[..., :3]),
+        int(timestep.observation.action),
+        float(timestep.observation.reward.item()),
+        tuple([int(g) for g in timestep.observation.goals])
+      )
 
       # TODO(ab/mm): Add task goal feature
       if self._goal_space_manager:
         ret, _ = self._goal_space_manager.begin_episode(
-          current_node, task_goal_probability=1.0 if self._is_evaluator else 0.1)
+          current_oarg,
+          task_goal_probability=1.0 if self._is_evaluator else 0.1
+        )
         if ret is not None:
           expansion_node = ret
 
