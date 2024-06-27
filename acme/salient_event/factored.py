@@ -58,6 +58,7 @@ class SalientEventClassifierGenerator:
       self,
       obs_traj: List[np.ndarray],
       hash_traj: List[Tuple],
+      full_obs_traj: List[np.ndarray],
       most_novel_obs: np.ndarray,
       most_novel_hash: Tuple,
       novelty_func: Callable,
@@ -66,7 +67,7 @@ class SalientEventClassifierGenerator:
   ):
     self._input_hash_traj = hash_traj
     self._most_novel_obs = patch_lib.np2cv(most_novel_obs.copy())
-    self._input_obs_traj = patch_lib.opencv_to_imageio(obs_traj)
+    self._input_obs_traj = patch_lib.opencv_to_imageio(full_obs_traj)
     self._most_novel_hash = most_novel_hash
 
     self._novelty_fn = novelty_func

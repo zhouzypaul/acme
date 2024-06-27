@@ -417,7 +417,10 @@ class EnvironmentLoop(core.Worker):
     explore_traj_key = 'exploration_trajectory' if not is_warmup_episode else 'episode_trajectory'
 
     if (episode_logs[explore_traj_key] or is_warmup_episode) and not self._is_evaluator:
-      new_hash2goals = self.extract_new_goals(episode_logs[explore_traj_key])
+      new_hash2goals = self.extract_new_goals(
+        exploration_trajectory=episode_logs[explore_traj_key],
+        full_trajectory=episode_logs['episode_trajectory'] + episode_logs['exploration_trajectory']
+      )
     
     # Record counts.
     counts = self._counter.increment(episodes=1, steps=episode_logs['episode_steps'])
@@ -551,7 +554,9 @@ class EnvironmentLoop(core.Worker):
 
     return hash_trajectory
 
-  def extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
+  def extract_new_goals(self,
+                        exploration_trajectory: List[GoalBasedTransition],
+                        full_trajectory: List[GoalBasedTransition]) -> Dict:
     """Get all the proto-goal bits that are on in the most-novel obs."""
     def should_create_new_goals(novelty_scores: List[float]) -> bool:
       cfn_state = self._exploration_actor._rnd_state
@@ -560,19 +565,20 @@ class EnvironmentLoop(core.Worker):
       return not self._is_evaluator and \
         np.max(novelty_scores) > (mean + self._n_sigmas_threshold_for_goal_creation * std)
     
-    oargs: List[OARG] = [trans.next_ts.observation for trans in trajectory]
-    novelties: List[float] = [trans.intrinsic_reward for trans in trajectory]
+    oargs: List[OARG] = [trans.next_ts.observation for trans in exploration_trajectory]
+    novelties: List[float] = [trans.intrinsic_reward for trans in exploration_trajectory]
     hashes: List[tuple] = [tuple(oarg.goals) for oarg in oargs]
     if novelties != [] and should_create_new_goals(novelties):
       most_salient_idx = np.argmax(novelties)
       most_salient_obs: OARG = oargs[most_salient_idx]
       generator: SalientEventClassifierGenerator = self._create_salient_event_classifier(
-        trajectory,
+        exploration_trajectory,
+        full_trajectory,
         hashes[most_salient_idx],
         most_salient_obs,
       )
 
-      start_ts = trajectory[0].ts
+      start_ts = exploration_trajectory[0].ts
       ref_img = start_ts.observation.observation[:, :, :3]
       ref_hash = tuple(np.where(start_ts.observation.goals)[0])
       salient_patches, bboxes, ref_bboxes = generator.generate_salient_patches(ref_img, ref_hash)
@@ -1114,7 +1120,8 @@ class EnvironmentLoop(core.Worker):
 
   def _create_salient_event_classifier(
       self,
-      trajectory: List[GoalBasedTransition],
+      exploration_trajectory: List[GoalBasedTransition],
+      full_trajectory: List[GoalBasedTransition],
       most_novel_goal_hash: Tuple,
       most_novel_state: OARG,
   ) -> Dict:
@@ -1141,7 +1148,8 @@ class EnvironmentLoop(core.Worker):
     # TODO(ab): get rid of the assumption on the input obs shape
 
     # Extract the color images from the trajectory
-    images = [trans.ts.observation.observation[:, :, :3] for trans in trajectory]
+    images = [trans.ts.observation.observation[:, :, :3] for trans in exploration_trajectory]
+    all_images = [trans.ts.observation.observation[:, :, :3] for trans in full_trajectory]
 
     # Extract the hash version of the trajectory
     hash_trajectory = []
@@ -1151,6 +1159,7 @@ class EnvironmentLoop(core.Worker):
     gen = SalientEventClassifierGenerator(
       images,
       hash_trajectory,
+      all_images,
       most_novel_obs,
       np.where(most_novel_goal_hash)[0],
       novelty_func=novelty_func,
