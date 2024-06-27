@@ -28,6 +28,7 @@ from acme.utils import loggers
 from acme.utils import observers as observers_lib
 from acme.utils import signals
 from acme.wrappers.oar_goal import OARG
+from acme.wrappers.observation_action_reward import OAR
 from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.r2d2.subgoal_sampler import SubgoalSampler
 from acme.utils.utils import GoalBasedTransition
@@ -39,6 +40,8 @@ from acme.agents.jax.cfn.cfn import CFN
 from acme.agents.jax.cfn.networks import compute_cfn_reward, CFNNetworks
 from acme import dsc
 from acme.agents.jax.r2d2.networks import R2D2Networks
+from acme.salient_event.factored import SalientEventClassifierGenerator, SalientEventClassifier
+import acme.salient_event.patch_utils as patch_utils
 
 import dm_env
 from dm_env import specs
@@ -153,10 +156,12 @@ class EnvironmentLoop(core.Worker):
     self._exploration_traj_dir = os.path.join(base_dir, 'plots', 'exploration_trajectories')
     self._target_node_plot_dir = os.path.join(base_dir, 'plots', 'target_node_plots')
     self._n_planner_failures_dir = os.path.join(base_dir, 'plots', 'n_planner_failures')
+    self._salient_event_plotting_dir = os.path.join(base_dir, 'plots', 'salient_event_plots')
     
     os.makedirs(self._exploration_traj_dir, exist_ok=True)
     os.makedirs(self._target_node_plot_dir, exist_ok=True)
     os.makedirs(self._n_planner_failures_dir, exist_ok=True)
+    os.makedirs(self._salient_event_plotting_dir, exist_ok=True)
     
     print(f'Going to save exploration trajectories to {self._exploration_traj_dir}')
     print(f'Going to save target node plots to {self._target_node_plot_dir}')
@@ -546,19 +551,81 @@ class EnvironmentLoop(core.Worker):
 
     return hash_trajectory
 
-  def new_extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
+  def extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
     """Get all the proto-goal bits that are on in the most-novel obs."""
+    def should_create_new_goals(novelty_scores: List[float]) -> bool:
+      cfn_state = self._exploration_actor._rnd_state
+      mean = cfn_state.reward_mean
+      std = np.sqrt(cfn_state.reward_var + 1e-12)
+      return not self._is_evaluator and \
+        np.max(novelty_scores) > (mean + self._n_sigmas_threshold_for_goal_creation * std)
+    
     oargs: List[OARG] = [trans.next_ts.observation for trans in trajectory]
     novelties: List[float] = [trans.intrinsic_reward for trans in trajectory]
-    if novelties != [] and self.should_create_new_goals(novelties):
+    hashes: List[tuple] = [tuple(oarg.goals) for oarg in oargs]
+    if novelties != [] and should_create_new_goals(novelties):
       most_salient_idx = np.argmax(novelties)
       most_salient_obs: OARG = oargs[most_salient_idx]
-      most_salient_obs_bits = np.where(most_salient_obs.goals)
-      return {b: most_salient_obs for b in most_salient_obs_bits if b not in self.goal_dict}
+      generator: SalientEventClassifierGenerator = self._create_salient_event_classifier(
+        trajectory,
+        hashes[most_salient_idx],
+        most_salient_obs,
+      )
+
+      start_ts = trajectory[0].ts
+      ref_img = start_ts.observation.observation[:, :, :3]
+      ref_hash = tuple(np.where(start_ts.observation.goals)[0])
+      salient_patches, bboxes, ref_bboxes = generator.generate_salient_patches(ref_img, ref_hash)
+
+      print('[EnvLoop] Salient patches:', salient_patches)
+      print('[EnvLoop] Bounding boxes:', bboxes)
+
+      if salient_patches:
+
+        # cast the patches from np array to jnp arrays for serialization
+        salient_patches = {k: jnp.array(v) for k, v in salient_patches.items()}
+        
+        t0 = time.time()
+        clf_id = self._goal_space_manager.potentially_register_new_classifier(salient_patches)
+        print(f'[EnvLoop] Took {time.time() - t0}s to register new classifier {clf_id}.')
+        
+        if clf_id != -1:
+          self._plot_new_classifier(
+            most_salient_obs.observation[:, :, :3],
+            bboxes,
+            np.max(novelties),
+            ref_img,
+            ref_bboxes,
+            novelties[0],
+            clf_id,
+            generator._save_dir)
+      
+    return {}
   
-  def extract_new_goals(self, trajectory: List[GoalBasedTransition]) -> Dict:
-    """Given the exploration trajectory, create a new node / salient event clf out of the most novel transition."""
-    return {}  # TODO(ab/mm): implement this.
+  def _plot_new_classifier(self,
+                           most_novel_img,
+                           bboxes,
+                           max_novelty,
+                           ref_img,
+                           ref_bboxes,
+                           ref_novelty,
+                           clf_id,
+                           save_dir):
+    # Things to visualize:
+    # 1. Reference image with its bounding boxes
+    # 2. Most novel image with its bounding boxes
+    # 4. Novelty drops from the counterfactuals
+    # I would like all these plots as subplots in the same figure.
+    fig, axs = plt.subplots(1, 2, figsize=(15, 15))
+    fig.suptitle(f'New classifier {clf_id}')
+    axs[0].imshow(patch_utils.draw_bounding_boxes(ref_img.copy(), ref_bboxes))
+    axs[1].imshow(patch_utils.draw_bounding_boxes(most_novel_img.copy(), bboxes))
+
+    axs[0].set_title(f'Ref novelty {ref_novelty:.3f}')
+    axs[1].set_title(f'Most novel novelty {max_novelty:.3f}')
+
+    plt.savefig(os.path.join(save_dir, f'clf_{clf_id}.png'))
+    plt.close()
 
   def _select_action(self, timestep: dm_env.TimeStep, random_action: bool):
     """Generate an action from the agent's policy."""
@@ -682,12 +749,12 @@ class EnvironmentLoop(core.Worker):
 
     def should_interrupt(current_ts: dm_env.TimeStep, duration: int, goal: np.ndarray) -> bool:
       """Interrupt the option if you are in a node and duration warrants timeout."""
-      achieved_goal_hashes = self.convert2onehots(current_ts.observation.goals)[0]
-      inside_graph = set(achieved_goal_hashes).intersection(set(self.goal_dict.keys()))
+      # achieved_goal_hashes = self.convert2onehots(current_ts.observation.goals)[0]
+      # inside_graph = set(achieved_goal_hashes).intersection(set(self.goal_dict.keys()))
       return duration >= self._max_option_duration and \
         tuple(goal) != tuple(self.task_goal.goals) and \
-        tuple(goal) != tuple(self.exploration_goal.goals) and \
-        len(inside_graph) > 0
+        tuple(goal) != tuple(self.exploration_goal.goals)# and \
+        # len(inside_graph) > 0
     
     timestep = self.augment_ts_with_goal(
       timestep,
@@ -1044,6 +1111,53 @@ class EnvironmentLoop(core.Worker):
         self.replay_trajectory_with_new_goal(trajectory, self.task_goal)
 
     print(f'HER took {time.time() - start_time}s')
+
+  def _create_salient_event_classifier(
+      self,
+      trajectory: List[GoalBasedTransition],
+      most_novel_goal_hash: Tuple,
+      most_novel_state: OARG,
+  ) -> Dict:
+    """Create a generator that yields salient events from the trajectory."""
+
+    action_dtype = most_novel_state.action.dtype
+    reward_dtype = most_novel_state.reward.dtype
+
+    def novelty_func(image: np.ndarray) -> np.ndarray:  # (H, W, 3) -> (1,)
+      assert image.dtype == np.uint8, image.dtype
+      oar = OAR(
+        observation=patch_utils.cv2np(image)[np.newaxis, ...],
+        action=np.zeros((1,), dtype=action_dtype),
+        reward=np.zeros((1,), dtype=reward_dtype))
+      scores = compute_cfn_reward(
+          self._exploration_actor._rnd_state.params,
+          self._exploration_actor._rnd_state.target_params,
+          oar,
+          self._exploration_networks,
+          self._exploration_actor._rnd_state.random_prior_mean,
+          jnp.sqrt(self._exploration_actor._rnd_state.random_prior_var + 1e-12))
+      return np.asarray(scores)
+    
+    # TODO(ab): get rid of the assumption on the input obs shape
+
+    # Extract the color images from the trajectory
+    images = [trans.ts.observation.observation[:, :, :3] for trans in trajectory]
+
+    # Extract the hash version of the trajectory
+    hash_trajectory = []
+
+    most_novel_obs = most_novel_state.observation[:, :, :3]
+    
+    gen = SalientEventClassifierGenerator(
+      images,
+      hash_trajectory,
+      most_novel_obs,
+      np.where(most_novel_goal_hash)[0],
+      novelty_func=novelty_func,
+      save_dir=self._salient_event_plotting_dir
+    )
+    
+    return gen
 
   def get_logging_counts_dict(self, counts: Dict) -> Dict:
     """Return which counts to log, we are omitting CFN counts to prevent race conditions."""
