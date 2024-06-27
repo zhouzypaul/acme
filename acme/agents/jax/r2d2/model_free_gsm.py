@@ -19,6 +19,7 @@ from acme.jax import variable_utils
 from acme.jax import networks as networks_lib
 from acme.core import Saveable
 from acme.agents.jax.r2d2.model_free_goal_sampler import MFGoalSampler
+from acme.salient_event.factored import SalientEventClassifier
 # from acme.agents.jax.r2d2.goal_sampler import GoalSampler
 from acme.utils.paths import get_save_directory
 import numpy as np
@@ -60,6 +61,9 @@ class GoalSpaceManager(Saveable):
 
     self._hash2obs = {}
     self._hash2obs_lock = threading.Lock()
+
+    self.classifier_id_lock = threading.Lock()
+    self.classifiers = []
 
     # Learning curve for each goal
     self._edge2successes = collections.defaultdict(list)
@@ -144,15 +148,17 @@ class GoalSpaceManager(Saveable):
       self._hash2counts,
       self._hash2proto,
       self._hash2bonus,
-      self._edge2successes
+      self._edge2successes,
+      self.classifiers,
     )
 
   def restore(self, state):
-    assert len(state) == 4, len(state)
+    assert len(state) == 5, len(state)
     self._hash2counts = state[0]
     self._hash2proto = state[1]
     self._hash2bonus = state[2]
     self._edge2successes = state[3]
+    self.classifiers = state[4]
 
   def step(self):
     if self._use_exploration_vf_for_expansion and self._hash2obs:
@@ -266,6 +272,30 @@ class GoalSpaceManager(Saveable):
         curr = self._hash2bonus.get(key, 0)
         error = value - curr
         self._hash2bonus[key] = curr + (error / self._bonus_counts[key])
+
+  def potentially_register_new_classifier(self, salient_patches: dict) -> int:
+    """Register a new classifier if it doesn't already exist. Return the ID of the classifier."""
+    print(f'[GSM] Registering new classifier with {len(salient_patches)} salient patches.')
+    
+    if len(salient_patches) == 0:
+      print(f'[GSM] SalientEventClassifier has no salient patches.')
+      return -1
+    
+    # convert the jnp arrays to np arrays
+    salient_patches = {k: np.asarray(v) for k, v in salient_patches.items()}
+    
+    classifier = SalientEventClassifier(salient_patches)
+    
+    for existing_classifier in self.classifiers:
+      if existing_classifier.equals(classifier):
+        print(f'[GSM] Classifier already exists with ID {existing_classifier.classifier_id}.')
+        return -1  # Classifier already exists.
+        
+    with self.classifier_id_lock:  
+      print(f'[GSM] Adding new classifier with ID {len(self.classifiers)}.')
+      classifier.assign_id(len(self.classifiers))
+      self.classifiers.append(classifier)
+      return classifier.classifier_id
 
   def dump_plotting_vars(self):
     """Save plotting vars for the GSMPlotter to load and do its magic with."""
