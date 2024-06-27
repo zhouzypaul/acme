@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 import gymnasium as gym
 from gymnasium.core import Wrapper, ObservationWrapper, ActionWrapper
-from minigrid.wrappers import RGBImgObsWrapper, ImgObsWrapper, ReseedWrapper, PositionBonus
+from minigrid.wrappers import ImgObsWrapper, ReseedWrapper, PositionBonus
 
 from gymnasium import spaces
 from acme.wrappers.gymnasium_wrapper import GymnasiumWrapper
@@ -211,6 +211,34 @@ class GrayscaleWrapper(ObservationWrapper):
       (-1, 0)
     )
     return processed_pixels
+  
+
+class RGBImgObsWrapper(ObservationWrapper):
+  """
+  Wrapper to use fully observable RGB image as observation,
+  This can be used to have the agent to solve the gridworld in pixel space.
+  """
+
+  def __init__(self, env, tile_size=8):
+    super().__init__(env)
+
+    self.tile_size = tile_size
+
+    new_image_space = spaces.Box(
+      low=0,
+      high=255,
+      shape=(self.env.width * tile_size, self.env.height * tile_size, 3),
+      dtype="uint8",
+    )
+
+    self.observation_space = spaces.Dict(
+      {**self.observation_space.spaces, "image": new_image_space}
+    )
+
+  def observation(self, obs):
+    rgb_img = self.get_frame(highlight=False, tile_size=self.tile_size)
+
+    return {**obs, "image": rgb_img}
   
 class ScaledStateBonus(PositionBonus):
   """Slight mod of StateBonus: scale the count-based bonus before adding."""
@@ -521,7 +549,8 @@ def environment_builder(
     pooled_frames=1,
     to_float=to_float,
     goal_conditioned=goal_conditioned,
-    task_goal_features=determine_binary_goal_features(env)
+    task_goal_features=determine_binary_goal_features(env),
+    scale_dims=(104, 104),
   )
   
   # Use the OARG Wrapper
