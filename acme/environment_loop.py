@@ -578,9 +578,10 @@ class EnvironmentLoop(core.Worker):
         most_salient_obs,
       )
 
-      start_ts = exploration_trajectory[0].ts
-      ref_img = start_ts.observation.observation[:, :, :3]
-      ref_hash = tuple(np.where(start_ts.observation.goals)[0])
+      lowest_novelty_idx = np.argmin(novelties)
+      lowest_novelty_obs = oargs[lowest_novelty_idx]
+      ref_img = lowest_novelty_obs.observation[:, :, :3]
+      ref_hash = tuple(np.where(lowest_novelty_obs.goals)[0])
       salient_patches, bboxes, ref_bboxes = generator.generate_salient_patches(ref_img, ref_hash)
 
       print('[EnvLoop] Salient patches:', salient_patches)
