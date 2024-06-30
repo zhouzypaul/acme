@@ -22,9 +22,11 @@ class ModelFreeGSMPlotter:
     self._checkpoint_path = os.path.join(base_dir, 'plots', 'plotting_vars.pkl')
     self._node_expansion_prob_dir = os.path.join(base_dir, 'plots', 'node_expansion_prob')
     self._gc_learning_curves_plotting_dir = os.path.join(base_dir, 'plots', 'gc_learning_curves')
+    self._classifier_positives_plotting_dir = os.path.join(base_dir, 'plots', 'classifier_positives')
 
     os.makedirs(self._node_expansion_prob_dir, exist_ok=True)
     os.makedirs(self._gc_learning_curves_plotting_dir, exist_ok=True)
+    os.makedirs(self._classifier_positives_plotting_dir, exist_ok=True)
 
   def get_gsm_variables(self):
     try:
@@ -38,7 +40,10 @@ class ModelFreeGSMPlotter:
       hash2counts=state[0],
       hash2proto=state[1],
       hash2bonus=state[2],
-      edge2successes=state[3]
+      edge2successes=state[3],
+      classifiers=state[4],
+      hash2obs=state[5],
+      classifier2positives=state[6],
     )
   
   def __call__(self, episode=0):
@@ -46,8 +51,41 @@ class ModelFreeGSMPlotter:
     if vars:
       self._plot_hash2bonus(vars['hash2bonus'], vars['hash2proto'], episode)
       self._plot_goal_learning_curves(vars['edge2successes'], vars['hash2proto'], episode)
+      self._plot_classifier_to_positives(vars['classifier2positives'])
 
     self._log_memory_usage(episode)
+
+  def _plot_classifier_to_positives(self, classifier2positives):
+    """Plot the classifier2positives dictionary."""
+    for classifier, positives in classifier2positives.items():
+      num_images = len(positives)
+      
+      if num_images == 0:
+        continue
+      
+      cols = int(np.ceil(np.sqrt(num_images)))
+      rows = int(np.ceil(num_images / cols))
+      
+      fig, axes = plt.subplots(rows, cols, figsize=(15, 15))
+      if isinstance(axes, plt.Axes):
+        axes = [axes]
+      else:
+        axes = axes.flatten()  # Flatten to iterate easily
+      
+      for i, oarg in enumerate(positives):
+        if i < len(axes):
+          axes[i].imshow(oarg.observation[:,:,:3])
+          axes[i].axis('off')
+      
+      # Hide any unused subplots
+      for j in range(i+1, len(axes)):
+        axes[j].axis('off')
+      
+      plt.suptitle(f'Classifier {classifier} Positives')
+      plt.tight_layout()
+      plt.subplots_adjust(top=0.9)  # Adjust title position
+      plt.savefig(os.path.join(self._classifier_positives_plotting_dir, f'classifier_{classifier}.png'))
+      plt.close()
 
   def _plot_hash2bonus(self, hash2bonus, hash2proto, episode):
     """Plot the hash2bonus dictionary."""
@@ -132,6 +170,8 @@ class ModelFreeGSMPlotter:
           category = 'door4'
         elif 'door5' in info:
           category = 'door5'
+        elif 'door6' in info:
+          category = 'door6'
         elif 'has_ball' in info:
           category = 'has_ball'
         return category
