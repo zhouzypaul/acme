@@ -1,4 +1,5 @@
 import os
+import jax
 import time
 import random
 import pickle
@@ -74,6 +75,8 @@ class GoalSpaceManager(Saveable):
     self._base_plotting_dir = os.path.join(base_dir, 'plots')
     os.makedirs(self._base_plotting_dir, exist_ok=True)
 
+    self._classifier2positives = collections.defaultdict(list)
+
     print('Created model-free GSM.')
     print(f'[GSM] use_intermediate_difficulty: {use_intermediate_difficulty} ',
           f'use_uvfa_reachability: {use_uvfa_reachability}')
@@ -144,21 +147,27 @@ class GoalSpaceManager(Saveable):
     )
 
   def save(self):
+    keys = list(self._hash2obs.keys())
+    hash2obs = {k: self._hash2obs[k] for k in keys}  # Storing as deques
     return (
       self._hash2counts,
       self._hash2proto,
       self._hash2bonus,
       self._edge2successes,
       self.classifiers,
+      hash2obs,
+      self._classifier2positives
     )
 
   def restore(self, state):
-    assert len(state) == 5, len(state)
+    assert len(state) == 7, len(state)
     self._hash2counts = state[0]
     self._hash2proto = state[1]
     self._hash2bonus = state[2]
     self._edge2successes = state[3]
     self.classifiers = state[4]
+    self._hash2obs = state[5]
+    self._classifier2positives = state[6]
 
   def step(self):
     if self._use_exploration_vf_for_expansion and self._hash2obs:
@@ -166,7 +175,8 @@ class GoalSpaceManager(Saveable):
         self.update_params(wait=False)
     
     if time.time() - self._gsm_loop_last_timestamp > 1 * 60:
-      self.dump_plotting_vars()  
+      self.dump_plotting_vars()
+      self._update_classifier_decisions()
       self._gsm_loop_last_timestamp = time.time()
 
   def update_params(self, wait: bool = False):
@@ -273,7 +283,7 @@ class GoalSpaceManager(Saveable):
         error = value - curr
         self._hash2bonus[key] = curr + (error / self._bonus_counts[key])
 
-  def potentially_register_new_classifier(self, salient_patches: dict) -> int:
+  def potentially_register_new_classifier(self, salient_patches: dict, most_novel_img: jax.Array) -> int:
     """Register a new classifier if it doesn't already exist. Return the ID of the classifier."""
     print(f'[GSM] Registering new classifier with {len(salient_patches)} salient patches.')
     
@@ -284,7 +294,10 @@ class GoalSpaceManager(Saveable):
     # convert the jnp arrays to np arrays
     salient_patches = {k: np.asarray(v) for k, v in salient_patches.items()}
     
-    classifier = SalientEventClassifier(salient_patches)
+    classifier = SalientEventClassifier(
+      salient_patches,
+      prototype_image=np.asarray(most_novel_img, dtype=most_novel_img.dtype)
+    )
     
     for existing_classifier in self.classifiers:
       if existing_classifier.equals(classifier):
@@ -304,3 +317,29 @@ class GoalSpaceManager(Saveable):
         pickle.dump(self.save(), f)
     except Exception as e:
       print(f'Failed to dump plotting vars: {e}')
+
+  def _update_classifier_decisions(self):
+    """Save the decisions made by the classifier."""
+    t0 = time.time()
+
+    observations: List[OARG] = []
+    
+    for obs_deque in self._hash2obs.values():
+      observations.extend(list(obs_deque))
+
+    # If there are more than 1000 observations, sample 1000 of them.
+    if len(observations) > 1000:
+      observations = random.sample(observations, 1000)
+
+    for classifier in self.classifiers:
+      decisions = [classifier(obs.observation) for obs in observations]
+
+      # update classifier decisions
+      self._classifier2positives[classifier.classifier_id] = [
+        obs for obs, decision in zip(observations, decisions) if decision
+      ]
+
+      print(f'[GSM] Classifier {classifier.classifier_id} found {sum(decisions)} positives.')
+      
+    print(f'[GSM] Took {time.time() - t0}s to update {len(self.classifiers)} classifier',
+          f'decisions on {len(observations)} observations.')
