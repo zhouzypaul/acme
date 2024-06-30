@@ -20,16 +20,23 @@ class SalientEventClassifier:
   def __init__(
       self,
       salient_patches: Dict[patch_lib.BoundingBox, np.ndarray],
+      prototype_image: np.ndarray,
       classifier_id: Optional[int] = None,
     ):
     self.salient_patches = salient_patches
     self.classifier_id = classifier_id
+    self.prototype_image = prototype_image  # RGB image (not BGR)
 
   def __call__(self, obs: np.ndarray) -> bool:
     assert self.classifier_id is not None, 'Assign ID before use.'
     if len(self.salient_patches) == 0:
       return False
-    # obs = patch_lib.np2cv(obs)
+    
+    # salient patches are in BGR so we need to convert obs to BGR as well.
+    obs = patch_lib.np2cv(obs)
+
+    # TODO(ab): do we need to subtract the background from the obs?
+    
     for bb in self.salient_patches:
       salient_patch = self.salient_patches[bb]
       obs_patch = patch_lib.extract_patch(obs, bb)
@@ -67,7 +74,7 @@ class SalientEventClassifierGenerator:
   ):
     self._input_hash_traj = hash_traj
     self._most_novel_obs = patch_lib.np2cv(most_novel_obs.copy())
-    self._input_obs_traj = patch_lib.opencv_to_imageio(full_obs_traj)
+    self._input_obs_traj = [patch_lib.np2cv(obs.copy()) for obs in obs_traj]
     self._most_novel_hash = most_novel_hash
 
     self._novelty_fn = novelty_func
@@ -106,6 +113,17 @@ class SalientEventClassifierGenerator:
         patch = patch_lib.extract_patch(self._most_novel_obs, bbox)
         print(f'Found bbox {bbox} shape: {patch.shape}')
         salient_patches[bbox] = patch
+
+    # Step 6. Filter out bboxes that are too small.
+    # Filter out bounding boxes that are too small
+    # Each bbox is stored as tuple (x, y, width, height)
+    n_grid_tiles_per_dim = 13
+    tile_size = ref_img.shape[0] // n_grid_tiles_per_dim
+    bbox_size_threshold = 0.25 * tile_size
+    cond = lambda bbox: bbox[2] > bbox_size_threshold and bbox[3] > bbox_size_threshold
+    salient_patches = {bbox: patch for bbox, patch in salient_patches.items() if cond(bbox)}
+    most_novel_img_bboxes = {oid: bbox for oid, bbox in most_novel_img_bboxes.items() if cond(bbox)}
+    ref_img_bboxes = {oid: bbox for oid, bbox in ref_img_bboxes.items() if cond(bbox)}
 
     self._debug_info['ref_img_with_bboxes'] = patch_lib.draw_bounding_boxes(
       ref_img.copy(), ref_img_bboxes)
@@ -151,13 +169,15 @@ class SalientEventClassifierGenerator:
   ):
     background_img = patch_lib.learn_background(obs_traj)
     ref_foreground_img = patch_lib.subtract_background([ref_img], background_img)[0]
+    novel_img_fg = patch_lib.subtract_background([self._most_novel_obs], background_img)[0]
     
     ref_img_bboxes = patch_lib.find_objects(ref_foreground_img)
     new_bboxes = patch_lib.track_objects_in_img(
-      ref_foreground_img, ref_img_bboxes, self._most_novel_obs)
+      ref_foreground_img, ref_img_bboxes, novel_img_fg)
     
     self._debug_info['background_img'] = background_img
     self._debug_info['ref_foreground_img'] = ref_foreground_img
+    self._debug_info['novel_foreground_img'] = novel_img_fg
       
     return ref_img_bboxes, new_bboxes
   
