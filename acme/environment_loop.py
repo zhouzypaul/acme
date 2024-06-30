@@ -593,7 +593,10 @@ class EnvironmentLoop(core.Worker):
         salient_patches = {k: jnp.array(v) for k, v in salient_patches.items()}
         
         t0 = time.time()
-        clf_id = self._goal_space_manager.potentially_register_new_classifier(salient_patches)
+        clf_id = self._goal_space_manager.potentially_register_new_classifier(
+          salient_patches=salient_patches,
+          most_novel_img=jnp.asarray(most_salient_obs.observation[:, :, :3])
+        )
         print(f'[EnvLoop] Took {time.time() - t0}s to register new classifier {clf_id}.')
         
         if clf_id != -1:
