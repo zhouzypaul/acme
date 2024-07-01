@@ -148,7 +148,8 @@ class GoalSpaceManager(Saveable):
 
   def save(self):
     keys = list(self._hash2obs.keys())
-    hash2obs = {k: self._hash2obs[k] for k in keys}  # Storing as deques
+    with self._hash2obs_lock:
+      hash2obs = {k: list(self._hash2obs[k]) for k in keys}
     return (
       self._hash2counts,
       self._hash2proto,
@@ -166,7 +167,7 @@ class GoalSpaceManager(Saveable):
     self._hash2bonus = state[2]
     self._edge2successes = state[3]
     self.classifiers = state[4]
-    self._hash2obs = state[5]
+    self._hash2obs = {k: collections.deque(v, maxlen=10) for k, v in state[5].items()}
     self._classifier2positives = state[6]
 
   def step(self):
