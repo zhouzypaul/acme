@@ -297,7 +297,8 @@ class GoalSpaceManager(Saveable):
     
     classifier = SalientEventClassifier(
       salient_patches,
-      prototype_image=np.asarray(most_novel_img, dtype=most_novel_img.dtype)
+      prototype_image=np.asarray(most_novel_img, dtype=most_novel_img.dtype),
+      base_plotting_dir=self._base_plotting_dir,
     )
     
     for existing_classifier in self.classifiers:
