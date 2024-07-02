@@ -584,6 +584,11 @@ class EnvironmentLoop(core.Worker):
       ref_hash = tuple(np.where(lowest_novelty_obs.goals)[0])
       salient_patches, bboxes, ref_bboxes = generator.generate_salient_patches(ref_img, ref_hash)
 
+      appearance_salient_patches, *_ = generator.generate_appearance_salient_patches(
+        ref_img, ref_hash)
+
+      salient_patches.update(appearance_salient_patches)
+
       print('[EnvLoop] Salient patches:', salient_patches)
       print('[EnvLoop] Bounding boxes:', bboxes)
 

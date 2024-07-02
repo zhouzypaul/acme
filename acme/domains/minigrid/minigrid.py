@@ -508,7 +508,7 @@ def environment_builder(
   reward_fn='sparse',
   add_count_based_bonus=True,
   exploration_reward_scale=0,
-  seed=42,
+  seed=0,
   random_reset=False,
   max_steps=None,
   goal_conditioned=True,
