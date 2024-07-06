@@ -467,6 +467,7 @@ def make_distributed_experiment(
         task_goal_probability=task_goal_prob,
         planner_backup_strategy=default_behavior,
         max_option_duration=experiment.builder._config.option_timeout,
+        num_goals_to_replay=experiment.builder._config.num_goals_to_replay,
     )
 
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):

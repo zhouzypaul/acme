@@ -96,6 +96,9 @@ flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exp
 flags.DEFINE_bool('use_intermediate_difficulty', False, 'Whether to sample goals of intermediate difficulty.')
 flags.DEFINE_bool('use_uvfa_reachability', False, 'Whether to use UVFA for reachability estimation')
 
+# HER
+flags.DEFINE_integer('num_goals_to_replay', 5, 'Number of goals to replay')
+
 FLAGS = flags.FLAGS
 
 
@@ -146,7 +149,8 @@ def build_experiment_config():
       option_timeout=FLAGS.option_timeout,
       use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion,
       use_intermediate_difficulty=FLAGS.use_intermediate_difficulty,
-      use_uvfa_reachability=FLAGS.use_uvfa_reachability
+      use_uvfa_reachability=FLAGS.use_uvfa_reachability,
+      num_goals_to_replay=FLAGS.num_goals_to_replay,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
