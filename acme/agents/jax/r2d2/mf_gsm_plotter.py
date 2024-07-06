@@ -43,7 +43,7 @@ class ModelFreeGSMPlotter:
       edge2successes=state[3],
       classifiers=state[4],
       hash2obs=state[5],
-      classifier2positives=state[6],
+      classifier2inferredinfo=state[6],
     )
   
   def __call__(self, episode=0):
@@ -51,9 +51,23 @@ class ModelFreeGSMPlotter:
     if vars:
       self._plot_hash2bonus(vars['hash2bonus'], vars['hash2proto'], episode)
       self._plot_goal_learning_curves(vars['edge2successes'], vars['hash2proto'], episode)
-      self._plot_classifier_to_positives(vars['classifier2positives'])
+      classifier2positives = self._convert_hash2obs_to_classifier2positives(vars['hash2obs'])
+      self._plot_classifier_to_positives(classifier2positives)
+      self._print_classifier_inferred_info(vars['classifier2inferredinfo'])
 
     self._log_memory_usage(episode)
+
+  def _print_classifier_inferred_info(self, classifier2inferredinfo):
+    for classifier, inferred_info in classifier2inferredinfo.items():
+      print(f'Classifier {classifier} inferred info: {self._env.binary2info(inferred_info)}')
+
+  def _convert_hash2obs_to_classifier2positives(self, hash2obs):
+    """Convert the hash2obs dictionary to a classifier2positives dictionary."""
+    classifier2positives = collections.defaultdict(list)
+    for hash, observations in hash2obs.items():
+      classifier_id = hash[0]
+      classifier2positives[classifier_id].extend(list(observations))
+    return classifier2positives
 
   def _plot_classifier_to_positives(self, classifier2positives):
     """Plot the classifier2positives dictionary."""
