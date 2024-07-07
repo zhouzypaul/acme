@@ -40,7 +40,7 @@ from acme.agents.jax.cfn.cfn import CFN
 from acme.agents.jax.cfn.networks import compute_cfn_reward, CFNNetworks
 from acme import dsc
 from acme.agents.jax.r2d2.networks import R2D2Networks
-from acme.salient_event.factored import SalientEventClassifierGenerator, SalientEventClassifier
+from acme.salient_event.factored import SalientEventClassifierGenerator
 import acme.salient_event.patch_utils as patch_utils
 
 import dm_env
@@ -51,6 +51,7 @@ import random
 import copy
 import collections
 import ipdb
+import time
 import jax.numpy as jnp
 
 NodeHash = Tuple
@@ -104,7 +105,8 @@ class EnvironmentLoop(core.Worker):
       novelty_threshold_for_goal_creation: float = -1.,
       is_evaluator: bool = False,
       planner_backup_strategy: str = 'graph_search',
-      max_option_duration: int = 400
+      max_option_duration: int = 400,
+      num_goals_to_replay: int = 5
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -129,6 +131,7 @@ class EnvironmentLoop(core.Worker):
     self._novelty_threshold_for_goal_creation = novelty_threshold_for_goal_creation
     self._planner_backup_strategy = planner_backup_strategy
     self._max_option_duration = max_option_duration
+    self._num_goals_to_replay = num_goals_to_replay
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -151,6 +154,20 @@ class EnvironmentLoop(core.Worker):
     self._start_ts = None
     self._episode_iter = itertools.count()
     self._binary2info = lambda vec: self._environment.binary2info(vec, sparse_info=True)
+
+    self._clf2info = {}
+
+    def binary2info(vec: np.ndarray):
+      infos = []
+      hot_idx = np.where(vec)[0]
+      for i in hot_idx:
+        if i in self._clf2info:
+          info = self._environment.binary2info(self._clf2info[i], sparse_info=True)
+          if info:
+            infos.append((i, info))
+      return infos
+
+    self._binary2info = binary2info
 
     base_dir = get_save_directory()
     self._exploration_traj_dir = os.path.join(base_dir, 'plots', 'exploration_trajectories')
@@ -388,6 +405,12 @@ class EnvironmentLoop(core.Worker):
     new_hash2goals = {}
     attempted_edges = []
     env_reset_start = time.time()
+    if self._goal_space_manager:
+      start_time = time.time()
+      classifiers = self._goal_space_manager.get_salient_event_classifiers()
+      print(f'[EnvironmentLoop] Got {len(classifiers)} classifiers from GSM (dt={time.time() - start_time}s)')
+      self._environment._environment.classifiers = classifiers
+      self._clf2info = self._goal_space_manager.get_inferred_info_dict()
     timestep = self._environment.reset()
     env_reset_duration = time.time() - env_reset_start
     start_state = copy.deepcopy(timestep.observation)
@@ -455,7 +478,8 @@ class EnvironmentLoop(core.Worker):
         hash2proto=extracted_results['hash2proto'],
         hash2count=extracted_results['proto2count'],
         edge2success=extracted_results['hash_pair_to_success'],
-        hash2obs=extracted_results['proto2obs']
+        hash2obs=extracted_results['proto2obs'],
+        hash2infos=extracted_results['proto2infos'],
       )
 
       print(f'Took {t1 - t0}s to filter achieved goals')
@@ -519,7 +543,7 @@ class EnvironmentLoop(core.Worker):
       print(f'[EnvironmentLoop] Updating CFN with {len(episode_logs[trajectory_key])} transitions.')
       self.update_cfn_ground_truth_counts(episode_logs[trajectory_key])
 
-    print(f'[EnvironmentLoop] Ended exploration in {self._binary2info(timestep.observation.goals)}')
+    print(f'[EnvironmentLoop] Ended exploration in {self._environment.get_info()}')
     assert needs_reset, 'Currently, we run the exploration policy till episode end.'
     
     return timestep, needs_reset, episode_logs
@@ -571,6 +595,7 @@ class EnvironmentLoop(core.Worker):
     if novelties != [] and should_create_new_goals(novelties):
       most_salient_idx = np.argmax(novelties)
       most_salient_obs: OARG = oargs[most_salient_idx]
+      most_salient_info: np.ndarray = exploration_trajectory[most_salient_idx].next_info
       generator: SalientEventClassifierGenerator = self._create_salient_event_classifier(
         exploration_trajectory,
         full_trajectory,
@@ -600,7 +625,8 @@ class EnvironmentLoop(core.Worker):
         t0 = time.time()
         clf_id = self._goal_space_manager.potentially_register_new_classifier(
           salient_patches=salient_patches,
-          most_novel_img=jnp.asarray(most_salient_obs.observation[:, :, :3])
+          most_novel_img=jnp.asarray(most_salient_obs.observation[:, :, :3]),
+          most_novel_info=tuple([bool(bit) for bit in most_salient_info]),
         )
         print(f'[EnvLoop] Took {time.time() - t0}s to register new classifier {clf_id}.')
         
@@ -704,7 +730,8 @@ class EnvironmentLoop(core.Worker):
           pursued_goal=self.exploration_goal,
           # intrinsic reward corresponding to timestep.observation
           # TODO(ab): what should we initialize prev_intrinsic_reward to? Does it matter?
-          intrinsic_reward=self._exploration_actor._state.prev_intrinsic_reward
+          intrinsic_reward=self._exploration_actor._state.prev_intrinsic_reward,
+          next_info=self._environment.get_info_vector()
         ))
 
       # Have the agent and observers observe the timestep.
@@ -817,7 +844,8 @@ class EnvironmentLoop(core.Worker):
           reward=extrinsic_reward,
           discount=extrinsic_discount,
           next_ts=next_timestep,
-          pursued_goal=goal
+          pursued_goal=goal,
+          next_info=self._environment.get_info_vector()
       ))
 
       should_interrupt_option = should_interrupt(next_timestep, duration, goal)
@@ -1049,6 +1077,7 @@ class EnvironmentLoop(core.Worker):
     proto2count = collections.defaultdict(int)
     proto2reward = collections.defaultdict(float)
     proto2discount = collections.defaultdict(float)
+    proto2infos = collections.defaultdict(set)
 
     for transition in trajectory:
       observation = transition.next_ts.observation
@@ -1074,6 +1103,9 @@ class EnvironmentLoop(core.Worker):
         proto2reward[key] = max(proto2reward[key], extrinsic_reward if achieved else 0.)
         proto2discount[key] = min(proto2discount[key], transition.next_ts.discount)
 
+        # Maintain the set of infos that were achieved when the proto-goal was achieved
+        proto2infos[key].add(tuple([int(b) for b in transition.next_info]))
+
     hash_pair_to_success = edge2success()
     # hash_pair_to_attempted_counts = attempted2counts()
 
@@ -1085,11 +1117,12 @@ class EnvironmentLoop(core.Worker):
       proto2discount=proto2discount,
       hash_pair_to_success=hash_pair_to_success,
       #hash_pair_to_attempted_counts=hash_pair_to_attempted_counts,
+      proto2infos=proto2infos
     )
   
   def goal_space_hindsight_replay(self, start_state: OARG, trajectory: List[GoalBasedTransition], hash2proto: Dict):
     
-    def goal_space_novelty_selection(num_goals_to_replay: int = 5) -> List[OARG]:
+    def goal_space_novelty_selection() -> List[OARG]:
       counts = [self.count_dict[g] for g in goal_hashes]
       scores = np.asarray([1. / (1 + count) for count in counts])
         
@@ -1097,7 +1130,7 @@ class EnvironmentLoop(core.Worker):
       selected_indices = np.random.choice(
         range(len(goal_hashes)),
         p=probs,
-        size=min(num_goals_to_replay, len(goal_hashes)),
+        size=min(self._num_goals_to_replay, len(goal_hashes)),
         replace=False
       )
       return [triggered_goals[goal_hashes[i]] for i in selected_indices]
