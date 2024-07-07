@@ -20,7 +20,7 @@ from acme.jax import variable_utils
 from acme.jax import networks as networks_lib
 from acme.core import Saveable
 from acme.agents.jax.r2d2.model_free_goal_sampler import MFGoalSampler
-from acme.salient_event.factored import SalientEventClassifier
+import acme.salient_event.classifier as classifier_lib
 # from acme.agents.jax.r2d2.goal_sampler import GoalSampler
 from acme.utils.paths import get_save_directory
 import numpy as np
@@ -62,6 +62,8 @@ class GoalSpaceManager(Saveable):
 
     self._hash2obs = {}
     self._hash2obs_lock = threading.Lock()
+    self._hash2infos = collections.defaultdict(set)
+    self._hash2infos_lock = threading.Lock()
 
     self.classifier_id_lock = threading.Lock()
     self.classifiers = []
@@ -75,7 +77,7 @@ class GoalSpaceManager(Saveable):
     self._base_plotting_dir = os.path.join(base_dir, 'plots')
     os.makedirs(self._base_plotting_dir, exist_ok=True)
 
-    self._classifier2positives = collections.defaultdict(list)
+    self._classifier2inferredinfo = {}
 
     print('Created model-free GSM.')
     print(f'[GSM] use_intermediate_difficulty: {use_intermediate_difficulty} ',
@@ -88,6 +90,9 @@ class GoalSpaceManager(Saveable):
   def get_count_dict(self) -> Dict:
     keys = list(self._hash2counts.keys())
     return {k: self._hash2counts[k] for k in keys}
+
+  def get_inferred_info_dict(self) -> Dict:
+    return self._classifier2inferredinfo
   
   @property
   def _params(self):
@@ -97,12 +102,16 @@ class GoalSpaceManager(Saveable):
   def _exploration_params(self):
     return self._exploration_variable_client.params if self._exploration_variable_client else []
 
+  def get_salient_event_classifiers(self) -> List[Dict]:
+    return self.classifiers
+
   def update(
     self,
     hash2proto: Dict,
     hash2count: Dict,
     edge2success: Dict,
     hash2obs: Dict,
+    hash2infos: Dict,
   ):
     for hash, proto in hash2proto.items():
       self._hash2proto[hash] = np.asarray(proto)
@@ -118,10 +127,18 @@ class GoalSpaceManager(Saveable):
     with self._hash2obs_lock:
       self._update_obs_dict(hash2obs)
 
+    with self._hash2infos_lock:
+      self._update_info_dict(hash2infos)
+
   def _update_edge_success_dict(self, edge2success: Dict):
     with self._edge2successes_lock:
       for key in edge2success:
         self._edge2successes[key].append(edge2success[key])
+
+  def _update_info_dict(self, hash2infos: Dict):
+    for clf_id_tuple, info_set in hash2infos.items():
+      for info in info_set:
+        self._hash2infos[clf_id_tuple].add(info)
 
   def _update_obs_dict(self, hash2obs: Dict):
     for goal in hash2obs:
@@ -157,18 +174,20 @@ class GoalSpaceManager(Saveable):
       self._edge2successes,
       self.classifiers,
       hash2obs,
-      self._classifier2positives
+      self._classifier2inferredinfo,
+      self._hash2infos,
     )
 
   def restore(self, state):
-    assert len(state) == 7, len(state)
+    assert len(state) == 8, len(state)
     self._hash2counts = state[0]
     self._hash2proto = state[1]
     self._hash2bonus = state[2]
     self._edge2successes = state[3]
     self.classifiers = state[4]
     self._hash2obs = {k: collections.deque(v, maxlen=10) for k, v in state[5].items()}
-    self._classifier2positives = state[6]
+    self._classifier2inferredinfo = state[6]
+    self._hash2infos = state[7]
 
   def step(self):
     if self._use_exploration_vf_for_expansion and self._hash2obs:
@@ -284,33 +303,49 @@ class GoalSpaceManager(Saveable):
         error = value - curr
         self._hash2bonus[key] = curr + (error / self._bonus_counts[key])
 
-  def potentially_register_new_classifier(self, salient_patches: dict, most_novel_img: jax.Array) -> int:
+  def potentially_register_new_classifier(
+    self,
+    salient_patches: dict,
+    most_novel_img: jax.Array,
+    most_novel_info: Tuple,
+  ) -> int:
     """Register a new classifier if it doesn't already exist. Return the ID of the classifier."""
     print(f'[GSM] Registering new classifier with {len(salient_patches)} salient patches.')
     
     if len(salient_patches) == 0:
       print(f'[GSM] SalientEventClassifier has no salient patches.')
       return -1
+
     
+    if self._hash2proto:
+      key = list(self._hash2proto.keys())[0]
+      proto = self._hash2proto[key]
+
+      if len(self.classifiers) >= proto.shape[0]:
+        print(f'[GSM] Already have {len(self.classifiers)} classifiers, not registering new one.')
+        return -1
+
     # convert the jnp arrays to np arrays
     salient_patches = {k: np.asarray(v) for k, v in salient_patches.items()}
     
-    classifier = SalientEventClassifier(
+    classifier: Dict = classifier_lib.create_classifier(
       salient_patches,
       prototype_image=np.asarray(most_novel_img, dtype=most_novel_img.dtype),
+      prototype_info_vector=most_novel_info,
       base_plotting_dir=self._base_plotting_dir,
     )
     
     for existing_classifier in self.classifiers:
-      if existing_classifier.equals(classifier):
-        print(f'[GSM] Classifier already exists with ID {existing_classifier.classifier_id}.')
+      if classifier_lib.equals(existing_classifier, classifier):
+        print(f'[GSM] Classifier already exists with ID {existing_classifier["classifier_id"]}.')
         return -1  # Classifier already exists.
         
     with self.classifier_id_lock:  
       print(f'[GSM] Adding new classifier with ID {len(self.classifiers)}.')
-      classifier.assign_id(len(self.classifiers))
+      classifier = classifier_lib.assign_id(classifier, len(self.classifiers))
       self.classifiers.append(classifier)
-      return classifier.classifier_id
+
+    return classifier['classifier_id']
 
   def dump_plotting_vars(self):
     """Save plotting vars for the GSMPlotter to load and do its magic with."""
@@ -323,25 +358,14 @@ class GoalSpaceManager(Saveable):
   def _update_classifier_decisions(self):
     """Save the decisions made by the classifier."""
     t0 = time.time()
-
-    observations: List[OARG] = []
     
-    for obs_deque in self._hash2obs.values():
-      observations.extend(list(obs_deque))
+    with self._hash2infos_lock:
+      for classifier_id, info_set in self._hash2infos.items():
+        # Compute the logical And of all the info vectors
+        inferred_info = np.ones_like(list(info_set)[0])
+        for info in info_set:
+          inferred_info = np.logical_and(inferred_info, info)
+        idx = classifier_id[0]
+        self._classifier2inferredinfo[idx] = inferred_info
 
-    # If there are more than 1000 observations, sample 1000 of them.
-    if len(observations) > 1000:
-      observations = random.sample(observations, 1000)
-
-    for classifier in self.classifiers:
-      decisions = [classifier(obs.observation) for obs in observations]
-
-      # update classifier decisions
-      self._classifier2positives[classifier.classifier_id] = [
-        obs for obs, decision in zip(observations, decisions) if decision
-      ]
-
-      print(f'[GSM] Classifier {classifier.classifier_id} found {sum(decisions)} positives.')
-      
-    print(f'[GSM] Took {time.time() - t0}s to update {len(self.classifiers)} classifier',
-          f'decisions on {len(observations)} observations.')
+    print(f'[GSM] Updated classifier decisions in {time.time() - t0}s.')
