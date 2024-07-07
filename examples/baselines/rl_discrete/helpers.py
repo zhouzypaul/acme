@@ -138,6 +138,7 @@ def make_minigrid_environment(
     seed: int = 42,
     goal_conditioned: bool = True,
     to_float: bool = True,
+    use_learned_goal_classifiers: bool = False,
 ) -> dm_env.Environment:
   """Loads the Atari environment."""
   del seed
@@ -148,6 +149,7 @@ def make_minigrid_environment(
     max_steps=max_episode_len,
     goal_conditioned=goal_conditioned,
     to_float=to_float,
+    use_learned_goal_classifiers=use_learned_goal_classifiers,
   )
   env = wrappers.SinglePrecisionWrapper(env)
   return env

@@ -24,6 +24,8 @@ import dm_env
 import tree
 import numpy as np
 
+from acme.salient_event.classifier import classify
+
 
 class OARG(NamedTuple):
   """Container for (Observation, Action, Reward) tuples."""
@@ -39,10 +41,23 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
   def __init__(self,
                environment: dm_env.Environment,
                info2goals,
-               n_goal_dims: int):
+               n_goal_dims: int,
+               use_learned_goal_classifiers: bool = False):
     super().__init__(environment)
     self._info2goals = info2goals  # func to map dict -> np.ndarray of goals
     self._n_goal_dims = n_goal_dims
+    self.classifiers = []
+    self._use_learned_goal_classifiers = use_learned_goal_classifiers
+
+  def get_info_vector(self):
+    return self._info2goals(self._environment.get_info())
+
+  def get_learned_goal_classifier_vector(self, ts: dm_env.TimeStep):
+    goals = np.zeros((self._n_goal_dims), dtype=bool)
+    for classifier in self.classifiers:
+      if classify(classifier, ts.observation):
+        goals[classifier["classifier_id"]] = True
+    return goals
 
   def reset(self) -> dm_env.TimeStep:
     # Initialize with zeros of the appropriate shape/dtype.
@@ -51,13 +66,22 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
     reward = tree.map_structure(
         lambda x: x.generate_value(), self._environment.reward_spec())
     timestep = self._environment.reset()
-    goals = self._info2goals(self._environment.get_info())
+    
+    if self._use_learned_goal_classifiers:
+      goals = self.get_learned_goal_classifier_vector(timestep)
+      print(f'Reset with {len(self.classifiers)} classifiers')
+    else:
+      goals = self.get_info_vector()
+    
     new_timestep = self._augment_observation(action, reward, timestep, goals)
     return new_timestep
 
   def step(self, action: types.NestedArray) -> dm_env.TimeStep:
     timestep = self._environment.step(action)
-    goals = self._info2goals(self._environment.get_info())
+    if self._use_learned_goal_classifiers:
+      goals = self.get_learned_goal_classifier_vector(timestep)
+    else:
+      goals = self.get_info_vector()
     new_timestep = self._augment_observation(action, timestep.reward, timestep, goals)
     return new_timestep
 

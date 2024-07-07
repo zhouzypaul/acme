@@ -512,7 +512,8 @@ def environment_builder(
   random_reset=False,
   max_steps=None,
   goal_conditioned=True,
-  to_float=False
+  to_float=False,
+  use_learned_goal_classifiers=False
 ):
   if max_steps is not None and max_steps > 0:
     env = gym.make(level_name, max_steps=max_steps)  #, goal_pos=(11, 11))
@@ -559,7 +560,8 @@ def environment_builder(
     # info2goals,
     info2binary,
     # n_goal_dims=N_GOAL_DIMS
-    n_goal_dims=env.vector_size
+    n_goal_dims=env.vector_size,
+    use_learned_goal_classifiers=use_learned_goal_classifiers
   )
 
   ts0 = env.reset()
