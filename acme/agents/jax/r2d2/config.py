@@ -78,3 +78,4 @@ class R2D2Config:
   use_exploration_vf_for_expansion: bool = True
   use_intermediate_difficulty: bool = False
   use_uvfa_reachability: bool = False
+  num_goals_to_replay: int = 5

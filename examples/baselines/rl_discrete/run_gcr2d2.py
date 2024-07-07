@@ -99,6 +99,9 @@ flags.DEFINE_bool('use_uvfa_reachability', False, 'Whether to use UVFA for reach
 # HER
 flags.DEFINE_integer('num_goals_to_replay', 5, 'Number of goals to replay')
 
+# Factored goals flags.
+flags.DEFINE_bool('use_learned_goal_classifiers', False, 'Whether to use learned goal classifiers')
+
 FLAGS = flags.FLAGS
 
 
@@ -111,12 +114,14 @@ def build_experiment_config():
   # experiments via Launchpad.
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
+  use_learned_goal_classifiers = FLAGS.use_learned_goal_classifiers
   
   def environment_factory(seed: int) -> dm_env.Environment:
     return helpers.make_minigrid_environment(
       level_name=env_name,
       max_episode_len=max_episode_steps,
       to_float=False,
+      use_learned_goal_classifiers=use_learned_goal_classifiers,
     )
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
@@ -219,6 +224,7 @@ def build_exploration_policy_experiment_config():
       goal_conditioned=False,  # This is the reason we have a different env_factory
       seed=seed,
       to_float=False,
+      use_learned_goal_classifiers=False,  # Save on computation time for CFN rollouts.
     )
   
   def rnd_network_factory(env_spec):
