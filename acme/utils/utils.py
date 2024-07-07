@@ -28,6 +28,8 @@ class GoalBasedTransition:
   next_ts: dm_env.TimeStep
   pursued_goal: Tuple
   intrinsic_reward: float = 0.
+  # binary vector of GT goals in next state:
+  next_info: np.ndarray = np.array([], dtype=bool)
 
 
 def truncation(ts: dm_env.TimeStep) -> dm_env.TimeStep:
