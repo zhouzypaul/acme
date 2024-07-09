@@ -92,9 +92,7 @@ flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for targe
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
 flags.DEFINE_integer('option_timeout', 400, 'Max number of steps for which to pursue a goal.')
-flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exploration value function for expansion or the reward function')
-flags.DEFINE_bool('use_intermediate_difficulty', False, 'Whether to sample goals of intermediate difficulty.')
-flags.DEFINE_bool('use_uvfa_reachability', False, 'Whether to use UVFA for reachability estimation')
+
 
 # HER
 flags.DEFINE_integer('num_goals_to_replay', 5, 'Number of goals to replay')
@@ -102,6 +100,12 @@ flags.DEFINE_integer('num_goals_to_replay', 5, 'Number of goals to replay')
 # Factored goals flags.
 flags.DEFINE_bool('use_learned_goal_classifiers', False, 'Whether to use learned goal classifiers')
 
+# Goal sampling flags.
+flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exploration value function for expansion or the reward function')
+flags.DEFINE_bool('use_intermediate_difficulty', False, 'Whether to sample goals of intermediate difficulty.')
+flags.DEFINE_bool('use_uvfa_reachability', False, 'Whether to use UVFA for reachability estimation')
+flags.DEFINE_string('reachability_novelty_combination_method', 'multiplication', 'Method for combining reachability and novelty scores')
+flags.DEFINE_float('reachability_novelty_combination_alpha', 0.5, 'Alpha value for combining reachability and novelty scores')
 FLAGS = flags.FLAGS
 
 
@@ -156,6 +160,8 @@ def build_experiment_config():
       use_intermediate_difficulty=FLAGS.use_intermediate_difficulty,
       use_uvfa_reachability=FLAGS.use_uvfa_reachability,
       num_goals_to_replay=FLAGS.num_goals_to_replay,
+      reachability_novelty_combination_method=FLAGS.reachability_novelty_combination_method,
+      reachability_novelty_combination_alpha=FLAGS.reachability_novelty_combination_alpha,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

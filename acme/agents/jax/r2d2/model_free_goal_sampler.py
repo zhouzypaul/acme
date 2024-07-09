@@ -21,7 +21,9 @@ class MFGoalSampler:
     uvfa_params=None,
     uvfa_rng_key=None,
     uvfa_networks=None,
-    use_uvfa_reachability: bool = False
+    use_uvfa_reachability: bool = False,
+    reachability_method: str = 'multiplication',
+    reachability_novelty_combination_alpha: float = 0.5
   ):
     self.proto_dict = proto_dict
     self.count_dict = count_dict
@@ -29,6 +31,8 @@ class MFGoalSampler:
     self.binary_reward_func = binary_reward_func
     self.goal_space_size = goal_space_size
     self.use_uvfa_reachability = use_uvfa_reachability
+    self.reachability_method = reachability_method
+    self.reachability_novelty_combination_alpha = reachability_novelty_combination_alpha
 
     def get_recurrent_state(batch_size=None):
       return uvfa_networks.init_recurrent_state(uvfa_rng_key, batch_size)
@@ -87,7 +91,7 @@ class MFGoalSampler:
         goal_features (tuple): goal hash in tuple format
     """
     return OARG(
-      observation=np.asarray(obs, dtype=np.float32),
+      observation=np.asarray(obs, dtype=obs.dtype),
       action=action,
       reward=reward,
       goals=np.asarray(goal_features, dtype=np.int16)
@@ -152,40 +156,61 @@ class MFGoalSampler:
     values = self._value_function(current_state, nodes)
     return values.clip(0., 1.)
 
+  def _combine_reachability_and_novelty(self, reachability_scores, novelty_scores):
+    if self.reachability_method == 'multiplication':
+      return reachability_scores * novelty_scores
+    elif self.reachability_method == 'addition':
+      alpha = self.reachability_novelty_combination_alpha
+      return (alpha * reachability_scores) + ((1-alpha) * novelty_scores)
+    elif self.reachability_method == 'argmax':  # TODO(ab): Untested
+      # assign 1 to the max reachability score and 0 to the rest
+      max_idx = np.argmax(reachability_scores)
+      combined_scores = np.zeros_like(reachability_scores)
+      combined_scores[max_idx] = 1.
+      return combined_scores
+    elif self.reachability_method == 'sample_then_argmax':
+      # Sample 5 goals using novelty scores and then pick the argmax according to reachability
+      n_samples = min(5, len(novelty_scores))
+      sample_idx = np.random.choice(
+        range(len(novelty_scores)),
+        n_samples,
+        replace=False,
+        p=scores2probabilities(novelty_scores))
+      sampled_reachability_scores = reachability_scores[sample_idx]
+      max_reachability_idx = sample_idx[np.argmax(sampled_reachability_scores)]
+      combined_scores = np.zeros_like(reachability_scores)
+      combined_scores[max_reachability_idx] = 1.
+      return combined_scores
+      
+    raise NotImplementedError(self.reachability_method)
+
   def _get_target_node_probability_dist(
     self,
     current_oarg: OARG,
     goal_set: Set[Tuple],
-    sampling_type: str = 'sort_then_sample',
-    
   ) -> Tuple[List[Tuple], np.ndarray]:
-    assert sampling_type in ('argmax', 'sum_sample', 'sort_then_sample'), sampling_type
     
     reachable_goals = goal_set  # TODO(ab/mm): Incorporate descendants
 
     if reachable_goals:
-      scores = self._get_expansion_scores(reachable_goals)
-      scores = np.asarray(scores)
-      
-      if self.use_uvfa_reachability:
-        reachability_scores = self._get_reachability_scores(current_oarg, reachable_goals)
-        reachability_scores = np.asarray(reachability_scores)
-        scores = scores * reachability_scores
+      novelty_scores = self._get_expansion_scores(reachable_goals)
+      novelty_scores = np.asarray(novelty_scores)
 
-      if sampling_type == 'sum_sample':
-        probs = scores2probabilities(scores)
-      elif sampling_type == 'sort_then_sample':
-        # Sort by score, then sample based on scores from the top 10%.
-        idx = np.argsort(scores)[::-1]  # descending order sort.
-        # n_non_zero_probs = len(scores) // 10 if len(scores) > 50 else len(scores)
-        n_non_zero_probs = min(self.goal_space_size, len(scores))
-        non_zero_probs_idx  = idx[:n_non_zero_probs]
-        probs = np.zeros_like(scores)
-        probs[non_zero_probs_idx] = scores2probabilities(scores[non_zero_probs_idx])
-      elif sampling_type == 'argmax':
-        probs = np.zeros_like(scores)
-        probs[np.argmax(scores)] = 1.
-      else:
-        raise NotImplementedError(sampling_type)
+      # Sort by novelty score
+      idx = np.argsort(novelty_scores)[::-1]  # descending order sort.
+      n_non_zero_probs = min(self.goal_space_size, len(novelty_scores))
+      non_zero_probs_idx  = idx[:n_non_zero_probs]
+
+      selected_scores = novelty_scores[non_zero_probs_idx]
+
+      if self.use_uvfa_reachability:
+        selected_goals = [reachable_goals[i] for i in non_zero_probs_idx]
+        reachability_scores = self._get_reachability_scores(current_oarg, selected_goals)
+        reachability_scores = np.asarray(reachability_scores)
+        selected_scores = self._combine_reachability_and_novelty(
+          reachability_scores, selected_scores)
+
+      probs = np.zeros_like(novelty_scores)
+      probs[non_zero_probs_idx] = scores2probabilities(selected_scores)
       
       return reachable_goals, probs

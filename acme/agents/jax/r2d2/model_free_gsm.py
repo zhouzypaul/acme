@@ -40,6 +40,8 @@ class GoalSpaceManager(Saveable):
       use_exploration_vf_for_expansion: bool = False,
       use_intermediate_difficulty: bool = True,
       use_uvfa_reachability: bool = False,
+      reachability_novelty_combination_method: str = 'multiplication',
+      reachability_novelty_addition_alpha: float = 0.5,
     ):
     self._rng_key = rng_key
     self._hash2proto = {}
@@ -67,6 +69,9 @@ class GoalSpaceManager(Saveable):
 
     self.classifier_id_lock = threading.Lock()
     self.classifiers = []
+
+    self.reachability_novelty_addition_alpha = reachability_novelty_addition_alpha
+    self.reachability_novelty_combination_method = reachability_novelty_combination_method
 
     # Learning curve for each goal
     self._edge2successes = collections.defaultdict(list)
@@ -225,6 +230,8 @@ class GoalSpaceManager(Saveable):
       uvfa_rng_key=self._rng_key,
       uvfa_networks=self._networks,
       use_uvfa_reachability=self._use_uvfa_reachability,
+      reachability_method=self.reachability_novelty_combination_method,
+      reachability_novelty_combination_alpha=self.reachability_novelty_addition_alpha
     )
     expansion_node = goal_sampler.begin_episode(current_node)
     return expansion_node, {}

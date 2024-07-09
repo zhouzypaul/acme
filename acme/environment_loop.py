@@ -1123,7 +1123,7 @@ class EnvironmentLoop(core.Worker):
   def goal_space_hindsight_replay(self, start_state: OARG, trajectory: List[GoalBasedTransition], hash2proto: Dict):
     
     def goal_space_novelty_selection() -> List[OARG]:
-      counts = [self.count_dict[g] for g in goal_hashes]
+      counts = [self.count_dict.get(g, 0.) for g in goal_hashes]
       scores = np.asarray([1. / (1 + count) for count in counts])
         
       probs = scores2probabilities(scores)

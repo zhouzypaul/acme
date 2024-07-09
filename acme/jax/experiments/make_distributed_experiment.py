@@ -496,6 +496,9 @@ def make_distributed_experiment(
       networks=networks,
       variable_client=variable_client,
       use_intermediate_difficulty=use_intermediate_difficulty,
+      use_uvfa_reachability=experiment.builder._config.use_uvfa_reachability,
+      reachability_novelty_combination_method=experiment.builder._config.reachability_novelty_combination_method,
+      reachability_novelty_addition_alpha=experiment.builder._config.reachability_novelty_combination_alpha,
     )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
