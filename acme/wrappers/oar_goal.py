@@ -23,6 +23,9 @@ from acme.wrappers import base
 import dm_env
 import tree
 import numpy as np
+import hashlib
+
+from collections import OrderedDict
 
 from acme.salient_event.classifier import classify
 
@@ -42,20 +45,32 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
                environment: dm_env.Environment,
                info2goals,
                n_goal_dims: int,
-               use_learned_goal_classifiers: bool = False):
+               use_learned_goal_classifiers: bool = False,
+               cache_maxsize: int = 100_000):
     super().__init__(environment)
     self._info2goals = info2goals  # func to map dict -> np.ndarray of goals
     self._n_goal_dims = n_goal_dims
     self.classifiers = []
     self._use_learned_goal_classifiers = use_learned_goal_classifiers
 
+    self.cache = OrderedDict()
+    self.cache_maxsize = cache_maxsize
+
   def get_info_vector(self):
     return self._info2goals(self._environment.get_info())
 
   def get_learned_goal_classifier_vector(self, ts: dm_env.TimeStep):
     goals = np.zeros((self._n_goal_dims), dtype=bool)
+    obs_hash = hashlib.sha256(ts.observation.tobytes()).hexdigest()
     for classifier in self.classifiers:
-      if classify(classifier, ts.observation):
+      if (classifier['classifier_id'], obs_hash) in self.cache:
+        decision = self.cache[(classifier['classifier_id'], obs_hash)]
+      else:
+        decision = classify(classifier, ts.observation)
+        self.cache[(classifier['classifier_id'], obs_hash)] = decision
+        if len(self.cache) > self.cache_maxsize:
+          self.cache.popitem(last=False)
+      if decision:
         goals[classifier["classifier_id"]] = True
     return goals
 
