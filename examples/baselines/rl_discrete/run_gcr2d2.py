@@ -101,11 +101,15 @@ flags.DEFINE_integer('option_timeout', 400, 'Max number of steps for which to pu
 flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exploration value function for expansion or the reward function')
 flags.DEFINE_bool('use_decentralized_planner', False, 'In decentralized planning, each actor computes its own plan.')
 flags.DEFINE_bool('use_gsm_var_client', False, 'Whether to use the GSM variable client or not')
+flags.DEFINE_bool('warmstart_vi', False, 'Whether to warmstart VI with the previous soln of VI.')
+
+# Environment flags
+flags.DEFINE_integer('action_repeat', 4, 'Number of frames to repeat the action for.')
 
 FLAGS = flags.FLAGS
 
 
-def make_environment_factory(env_name, max_episode_steps, to_float):
+def make_environment_factory(env_name, max_episode_steps, to_float, action_repeat):
   
   minigrid_factory = functools.partial(
     helpers.make_minigrid_environment,
@@ -121,7 +125,9 @@ def make_environment_factory(env_name, max_episode_steps, to_float):
       grayscaling=False,
       to_float=to_float,
       scale_dims=(84, 84),
-      max_episode_steps=max_episode_steps)
+      max_episode_steps=max_episode_steps,
+      action_repeat=action_repeat,
+    )
   
   return minigrid_factory if 'MiniGrid' in env_name else montezuma_factory
 
@@ -134,9 +140,15 @@ def build_experiment_config():
   # experiments via Launchpad.
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
+  action_repeat = FLAGS.action_repeat
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return make_environment_factory(env_name, max_episode_steps, to_float=False)(seed=seed, goal_conditioned=True)
+    return make_environment_factory(
+      env_name,
+      max_episode_steps,
+      to_float=False,
+      action_repeat=action_repeat
+    )(seed=seed, goal_conditioned=True)
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)\
   
@@ -173,7 +185,8 @@ def build_experiment_config():
       option_timeout=FLAGS.option_timeout,
       use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion,
       use_decentralized_planner=FLAGS.use_decentralized_planner,
-      use_gsm_var_client=FLAGS.use_gsm_var_client
+      use_gsm_var_client=FLAGS.use_gsm_var_client,
+      warmstart_vi=FLAGS.warmstart_vi
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
@@ -234,9 +247,15 @@ def build_exploration_policy_experiment_config():
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
   target_update_period = FLAGS.cfn_target_update_period
+  action_repeat = FLAGS.action_repeat
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return make_environment_factory(env_name, max_episode_steps, to_float=False)(seed=seed, goal_conditioned=False)
+    return make_environment_factory(
+      env_name,
+      max_episode_steps,
+      to_float=False,
+      action_repeat=action_repeat,
+    )(seed=seed, goal_conditioned=False)
   
   def rnd_network_factory(env_spec):
     from acme.agents.jax import rnd

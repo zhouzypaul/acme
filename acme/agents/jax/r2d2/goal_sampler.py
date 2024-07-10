@@ -9,7 +9,7 @@ import networkx as nx
 import collections
 
 from scipy.sparse import csr_matrix
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 from acme.wrappers.oar_goal import OARG
 from acme.utils.utils import scores2probabilities
@@ -32,6 +32,7 @@ class GoalSampler:
       task_goal_probability: float,
       task_goal: OARG,
       exploration_goal: OARG,
+      hash2vstar: Optional[Dict] = None,
       exploration_goal_probability: float = 0.,
       method: str = 'amdp',
       ignore_non_rewarding_terminal_nodes: bool = False,
@@ -62,6 +63,7 @@ class GoalSampler:
     self.max_vi_iterations = max_vi_iterations
     self._goal_space_size = goal_space_size
     self._should_switch_goal = should_switch_goal
+    self.hash2vstar = hash2vstar
     
     self._n_courier_errors = 0
     
@@ -89,6 +91,7 @@ class GoalSampler:
         discount_dict=self.discount_dict,
         count_dict=self.on_policy_edge_count_dict,
         target_node=target_node,
+        hash2vstar=self.hash2vstar,
         rmax_factor=self.rmax_factor,
         max_vi_iterations=self.max_vi_iterations,
         should_switch_goal=self._should_switch_goal,

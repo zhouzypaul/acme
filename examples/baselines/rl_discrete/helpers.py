@@ -145,6 +145,7 @@ def make_montezuma_environment(
     scale_dims: Tuple[int, int] = (84, 84),
     max_episode_steps: int = 4500,
     goal_conditioned: bool = True,
+    action_repeat: int = 4,
     seed=0,
 ) -> dm_env.Environment:
   assert oar_wrapper ^ oarg_wrapper, "Only one of oar_wrapper and oarg_wrapper can be True"
@@ -157,7 +158,9 @@ def make_montezuma_environment(
     grayscaling=grayscaling,
     scale_dims=scale_dims,
     to_float=to_float,
-    oarg_wrapper=oarg_wrapper)
+    oarg_wrapper=oarg_wrapper,
+    action_repeat=action_repeat,
+  )
   
   if oar_wrapper:
     env = wrappers.ObservationActionRewardWrapper(env)

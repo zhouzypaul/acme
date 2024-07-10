@@ -1,7 +1,7 @@
 import random
 import numpy as np
 
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 from scipy.sparse import csr_matrix, diags
 
 
@@ -14,6 +14,7 @@ class AMDP:
     discount_dict,
     count_dict, 
     target_node,
+    hash2vstar: Optional[Dict] = None,
     rmax_factor: float = 2.,
     gamma: float = 0.99,
     max_vi_iterations: int = 10,
@@ -33,6 +34,7 @@ class AMDP:
     self._verbose = verbose
     self._rmax_factor = rmax_factor
     self._use_sparse_matrix = use_sparse_matrix
+    self._hash2vstar = hash2vstar
 
     # TODO(ab): pass this from GoalSampler rather than recomputing it.
     self._idx2hash = {v: k for k, v in hash2idx.items()}
@@ -88,7 +90,7 @@ class AMDP:
   
   def _solve_abstract_mdp(self, n_iterations, tol):
     max_bellman_errors = []
-    values = np.zeros((self._n_states,), dtype=np.float32)
+    values = self.get_vinit(self._hash2vstar)
 
     for i in range(n_iterations):
       prev_values = np.copy(values)
@@ -155,7 +157,7 @@ class AMDP:
   def get_vinit(self, hash2vstar):
     """Get the initial value function for the AMDP."""
     v0 = np.zeros((self._n_states,), dtype=np.float32)
-    if self._target_node in self._hash2idx:
+    if hash2vstar and self._target_node in self._hash2idx and self._target_node in hash2vstar:
       for node, idx in self._hash2idx.items():
         v0[idx] = hash2vstar[self._target_node].get(node, 0.)
     return v0
