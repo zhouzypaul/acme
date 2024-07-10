@@ -772,7 +772,7 @@ class EnvironmentLoop(core.Worker):
       filtered_goals = []
       for g in new_goals:
         goal = np.asarray(g)
-        if not np.any(goal[idx_to_filter]):
+        if not np.any(goal[idx_to_filter]) and goal[0] > 5 and goal[0] <= 148:
           filtered_goals.append(g)
       return filtered_goals
 
@@ -873,6 +873,9 @@ class EnvironmentLoop(core.Worker):
       env_step_start = time.time()
       next_timestep = self._environment.step(action)
       episode_logs['env_step_durations'].append(time.time() - env_step_start)
+
+      # if self._environment.get_current_info({})['room_number'] == 0:
+      #   ipdb.set_trace()
 
       trajectory.append(
         GoalBasedTransition(
