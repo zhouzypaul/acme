@@ -1,5 +1,6 @@
 import gym
 import ipdb
+import pickle
 import functools
 import numpy as np
 from dm_env import specs
@@ -12,15 +13,18 @@ from acme.wrappers.oar_goal import ObservationActionRewardGoalWrapper
 
 
 class MontezumaInfoWrapper(Wrapper):
-    def __init__(self, env):
+    def __init__(self, env, reset_to_laser_room: bool = False):
         super().__init__(env)
         self._timestep = 0
         self.num_lives = None
         self.imaginary_ladder_locations = set()
+        self.reset_to_laser_room = reset_to_laser_room
         self.reset()
     
     def reset(self):
         s0 = self.env.reset()
+        if self.reset_to_laser_room:
+            s0, info0 = self._reset_player_to_laser_room()
         self.num_lives = self.get_num_lives(self.get_current_ram())
         info = self.get_current_info(info={})
         return s0, info
@@ -147,6 +151,14 @@ class MontezumaInfoWrapper(Wrapper):
         locked = int(right_door) == 1 and self.get_room_number(ram) in [1, 5, 17]
         return not locked
 
+    def _reset_player_to_laser_room(self):
+        ram_location = "left_with_laser_numpy.pkl"
+        with open(ram_location, 'rb') as f:
+            state = pickle.load(f)
+        ram = state['ram']
+        new_obs, new_info = set_player_ram(self.env, ram)
+        return new_obs, new_info
+
 
 class TransposeObsWrapper(gym.ObservationWrapper):
     def __init__(self, env: gym.Env):
@@ -161,6 +173,7 @@ class TransposeObsWrapper(gym.ObservationWrapper):
 
 def info2goals(info):
     """Serialize the info dict into a np vector of integers."""
+    # TODO(ab): don't put jumping, dead and falling in goal-space but access it using the info.
     goals = [
         info["player_x"],
         info["player_y"],
@@ -226,6 +239,23 @@ class UVFAObsSpecWrapper(montezuma_wrapper.AtariWrapper):
             shape=new_shape, dtype=pixel_spec.dtype, name=pixel_spec.name)
         pixel_spec = self._frame_stacker.update_spec(pixel_spec)
         return pixel_spec
+
+
+def set_player_ram(env, ram_state):
+    """
+    completely override the ram with a saved ram state
+    """
+    raise NotImplementedError("This implementation doesnt work with the new ALE.")
+    
+    state_ref = env.unwrapped.ale.cloneState()
+    env.unwrapped.ale.deleteState(state_ref)
+    
+    new_state_ref = env.unwrapped.ale.decodeState(ram_state)
+    env.unwrapped.ale.restoreState(new_state_ref)
+    env.unwrapped.ale.deleteState(new_state_ref)
+    obs, _, _, info = env.step(0)  # NO-OP action to update the RAM state
+    
+    return obs, info
     
 
 def environment_builder(
@@ -239,6 +269,7 @@ def environment_builder(
     scale_dims=(84, 84),
     to_float=True,
     oarg_wrapper=True,
+    action_repeat=4,
 ):
     version = 'v0' if sticky_actions else 'v4'
     level_name = f'MontezumaRevengeNoFrameskip-{version}'
@@ -255,7 +286,10 @@ def environment_builder(
             num_stacked_frames=num_stacked_frames,
             flatten_frame_stack=flatten_frame_stack,
             grayscaling=grayscaling,
-            max_abs_reward=1.0)  # TODO(ab): reward clipping
+            max_abs_reward=1.0,
+            action_repeats=action_repeat,
+            pooled_frames=1 if action_repeat == 1 else 2,
+        )  # TODO(ab): reward clipping
     
     if oarg_wrapper:
         env = ObservationActionRewardGoalWrapper(env, info2goals=info2goals, n_goal_dims=n_goal_dims)
