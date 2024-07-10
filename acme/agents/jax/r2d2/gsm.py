@@ -54,6 +54,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       use_exploration_vf_for_expansion: bool = False,
       use_decentralized_planning: bool = False,
       maintain_sparse_transition_matrix: bool = True,
+      warmstart_vi: bool = False,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -68,6 +69,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
     self._use_decentralized_planning = use_decentralized_planning
     self._maintain_sparse_transition_matrix = maintain_sparse_transition_matrix
+    self._warmstart_vi = warmstart_vi
 
     def compute_uvfa_values(params, rng_key, batch_oarg, initial_lstm_state):
       # Perform the unroll operation of the network.
@@ -145,7 +147,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
           f'Off-policy edge threshold {self._off_policy_edge_threshold}',
           f'Prob augmenting bonus constant {self._prob_augmenting_bonus_constant}',
           f'Use pessimistic graph for planning {self._use_pessimistic_graph_for_planning}',
-          f'Max VI iterations {max_vi_iterations}')
+          f'Max VI iterations {max_vi_iterations}, warmstart VI {warmstart_vi}',)
 
   def begin_episode(self, current_node: Tuple, task_goal_probability: float = 0.1) -> Tuple[Tuple, Dict]:
     """Create and solve the AMDP. Then return the abstract policy."""
@@ -155,6 +157,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       task_goal_probability=task_goal_probability,
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
+      hash2vstar=self._hash2vstar if self._warmstart_vi else None,
       exploration_goal_probability=0.,
       rmax_factor=self._rmax_factor,
       goal_space_size=self._goal_space_size,
@@ -176,6 +179,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       task_goal_probability=0.1,
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
+      hash2vstar=self._hash2vstar if self._warmstart_vi else None,
       exploration_goal_probability=0.,
       rmax_factor=self._rmax_factor,
       goal_space_size=self._goal_space_size,
@@ -597,6 +601,18 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       self._update_transition_tensor(edges, values)
     print(f'[GSM-Profiling] Took {time.time() - t0}s to update on-policy edges.')
 
+  def _update_existing_off_policy_edge_probabilities(self, n_edges: int = 1000):
+    """Update the transition tensor with the values from the UVFA network."""
+    t0 = time.time()
+    n_edges = min(n_edges, len(self._off_policy_edges))
+    edges = random.sample(self._off_policy_edges, k=n_edges)
+    batch_oarg = self._edges2oarg(edges)
+    if batch_oarg:
+      print(f'[GSM] Updating {len(edges)} existing off-policy edges.')
+      values = self._oarg2probabilities(batch_oarg)
+      self._update_transition_tensor(edges, values)
+    print(f'[GSM-Profiling] Took {time.time() - t0}s to update existing off-policy edges.')
+
   def _update_off_policy_edge_probabilities(self, n_nodes: int = 50):
     """Update the transition tensor with the values from the UVFA network."""
     t0 = time.time()
@@ -712,6 +728,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     if len(self._hash2obs) > 2 and self._edges:
       print(f'[GSM-RunLoop] Time since last iter: {time.time() - self._gsm_loop_last_timestamp}s')
       self._update_on_policy_edge_probabilities()
+      self._update_existing_off_policy_edge_probabilities()
       self._update_off_policy_edge_probabilities()
       if self._use_exploration_vf_for_expansion:
         self._compute_and_update_novelty_values()
