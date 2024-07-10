@@ -168,20 +168,6 @@ class MFGoalSampler:
       combined_scores = np.zeros_like(reachability_scores)
       combined_scores[max_idx] = 1.
       return combined_scores
-    elif self.reachability_method == 'sample_then_argmax':
-      # Sample 5 goals using novelty scores and then pick the argmax according to reachability
-      n_samples = min(5, len(novelty_scores))
-      sample_idx = np.random.choice(
-        range(len(novelty_scores)),
-        n_samples,
-        replace=False,
-        p=scores2probabilities(novelty_scores))
-      sampled_reachability_scores = reachability_scores[sample_idx]
-      max_reachability_idx = sample_idx[np.argmax(sampled_reachability_scores)]
-      combined_scores = np.zeros_like(reachability_scores)
-      combined_scores[max_reachability_idx] = 1.
-      return combined_scores
-      
     raise NotImplementedError(self.reachability_method)
 
   def _get_target_node_probability_dist(
@@ -205,10 +191,26 @@ class MFGoalSampler:
 
       if self.use_uvfa_reachability:
         selected_goals = [reachable_goals[i] for i in non_zero_probs_idx]
-        reachability_scores = self._get_reachability_scores(current_oarg, selected_goals)
-        reachability_scores = np.asarray(reachability_scores)
-        selected_scores = self._combine_reachability_and_novelty(
-          reachability_scores, selected_scores)
+
+        if self.reachability_method == 'sample_then_argmax':
+          # Sample goals based on novelty and compute reachability only for those
+          n_samples = min(5, len(selected_scores))
+          sample_idx = np.random.choice(
+            range(len(selected_scores)),
+            n_samples,
+            replace=False,
+            p=scores2probabilities(selected_scores))
+          sampled_goals = [selected_goals[i] for i in sample_idx]
+          reachability_scores = self._get_reachability_scores(current_oarg, sampled_goals)
+          max_reachability_idx = sample_idx[np.argmax(reachability_scores)]
+          combined_scores = np.zeros_like(selected_scores)
+          combined_scores[max_reachability_idx] = 1.
+          selected_scores = combined_scores
+        else:
+          reachability_scores = self._get_reachability_scores(current_oarg, selected_goals)
+          reachability_scores = np.asarray(reachability_scores)
+          selected_scores = self._combine_reachability_and_novelty(
+            reachability_scores, selected_scores)
 
       probs = np.zeros_like(novelty_scores)
       probs[non_zero_probs_idx] = scores2probabilities(selected_scores)
