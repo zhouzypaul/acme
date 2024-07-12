@@ -174,10 +174,10 @@ def negative_value_probability():
     computed_policy = planner.get_policy()
     values = planner.get_values()
     value_vector = np.array([values[i] for i in range(len(values))])
-    reward_vector = planner._reward_vector
+    reward_vector = planner._reward_function
     discount_vector = planner._discount_vector
     q_matrix = transition_matrix @ (reward_vector[:, None] + discount_vector * value_vector)
-    print(f'reward_vec: {planner._reward_vector}')
+    print(f'reward_vec: {planner._reward_function}')
     print(f'discount_vec: {planner._discount_vector}')
     print(f'Q-Matrix: {q_matrix}')
     print(f'[+] negative_value_probability policy: {computed_policy}.')
@@ -272,7 +272,7 @@ def test_low_probability_graph(size=4, transition_probability=1e-10):
 
 
 def test_large_sparse_graph(n_nodes=4000):
-    transition_matrix = np.zeros((n_nodes, n_nodes))
+    transition_matrix = np.zeros((n_nodes, n_nodes), dtype=np.float32)
     # Sparse transitions
     for i in range(n_nodes - 1):
         transition_matrix[i, i + 1] = 1
@@ -318,6 +318,169 @@ def performance_comparison(size):
     print(f'Sparse matrix elapsed time: {elapsed_time_sparse} seconds')
 
 
+def test_simple_reward_matrix():
+    transition_matrix = np.array([
+        [0, 1, 1, 0],
+        [0, 0, 0, 1],
+        [0, 0, 0, 1],
+        [0, 0, 0, 1]
+    ])
+    reward_dict = {
+        0: {1: 1, 2: 2},
+        1: {3: 3},
+        2: {3: 1},
+        3: {}
+    }
+    hash2idx = {0: 0, 1: 1, 2: 2, 3: 3}
+    target_node = 3
+    expected_policy = {0: 1, 1: 3, 2: 3, 3: 3}
+    planner = make_amdp_planner(transition_matrix, hash2idx, target_node, reward_dict=reward_dict, amdp_reward_factor=1.0, verbose=True)
+    computed_policy = planner.get_policy()
+    assert policy_equals(computed_policy, expected_policy, (target_node,)), \
+        f'Expected {expected_policy} but got {computed_policy}.'
+    print('[+] Simple reward matrix test passed.')
+    print(f'[+] Value function: {planner.get_values()}')
+
+
+def test_delayed_reward_dict():
+    transition_matrix = np.array([
+        [0, 1, 1, 0, 0],
+        [0, 0, 0, 1, 0],
+        [0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 1],
+        [0, 0, 0, 0, 1]
+    ])
+    reward_dict = {
+        0: {1: 1, 2: 0},
+        1: {3: 1},
+        2: {4: 5},
+        3: {4: 2},
+        4: {}
+    }
+    target_node = 4
+    hash2idx = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4}
+    expected_policy = {0: 2, 1: 3, 2: 4, 3: 4, 4: 4}
+    planner = make_amdp_planner(transition_matrix, hash2idx, target_node, reward_dict=reward_dict)
+    computed_policy = planner.get_policy()
+    assert policy_equals(computed_policy, expected_policy, (target_node,)), \
+        f'Expected {expected_policy} but got {computed_policy}.'
+    print('[+] Delayed reward dict test passed.')
+    print(f'[+] Value function: {planner.get_values()}')
+
+
+def test_cyclic_reward_dict():
+    transition_matrix = np.array([
+        [0, 1, 0, 0],
+        [0, 0, 1, 1],
+        [1, 0, 0, 1],
+        [0, 0, 0, 1]
+    ])
+    reward_dict = {
+        0: {1: 1},
+        1: {2: 2, 3: 3},
+        2: {0: 1, 3: 4},
+        3: {}
+    }
+    hash2idx = {0: 0, 1: 1, 2: 2, 3: 3}
+    target_node = 3
+    expected_policy = {0: 1, 1: 2, 2: 0, 3: 3}
+    planner = make_amdp_planner(transition_matrix, hash2idx, target_node,
+        reward_dict=reward_dict, amdp_reward_factor=1.0, verbose=True)
+    computed_policy = planner.get_policy()
+    print(f'[+] Value function: {planner.get_values()}')
+    assert policy_equals(computed_policy, expected_policy, (target_node,)), \
+        f'Expected {expected_policy} but got {computed_policy}.'
+    print('[+] Cyclic reward dict test passed.')
+
+
+def test_simple_probabilistic_graph():
+    transition_matrix = np.array([
+        [0, 0.7, 0.3, 0],
+        [0, 0, 0.6, 0.4],
+        [0, 0, 0, 1],
+        [0, 0, 0, 1]
+    ])
+    reward_dict = {
+        0: {1: 1, 2: 2},
+        1: {2: 3, 3: 4},
+        2: {3: 5},
+        3: {}
+    }
+    hash2idx = {0: 0, 1: 1, 2: 2, 3: 3}
+    target_node = 3
+    
+    planner = make_amdp_planner(transition_matrix, hash2idx, target_node, reward_dict=reward_dict, use_sparse_matrix=True)
+    computed_policy = planner.get_policy()
+    computed_values = planner.get_values()
+
+    # The optimal policy should be to always move towards the highest reward
+    expected_policy = {0: 1, 1: 2, 2: 3, 3: 3}
+    assert policy_equals(computed_policy, expected_policy, (target_node,)), \
+        f'Expected {expected_policy} but got {computed_policy}.'
+    
+    print('[+] Simple probabilistic graph test passed.')
+    print(f'Computed values: {computed_values}')
+
+
+def test_large_sparse_graph_with_reward_matrix(n_nodes=4000):
+    transition_matrix = np.zeros((n_nodes, n_nodes), dtype=np.float32)
+    reward_dict = {i: {} for i in range(n_nodes)}
+    
+    # Sparse transitions and rewards
+    for i in range(n_nodes - 1):
+        transition_matrix[i, i + 1] = 1
+        
+        # Add some sparse rewards
+        if i % 100 == 0:
+            reward_dict[i][i + 1] = 1  # Big reward every 100 steps
+        elif i % 10 == 0:
+            reward_dict[i][i + 1] = 0.1   # Small reward every 10 steps
+        else:
+            reward_dict[i][i + 1] = 0.01  # Tiny reward for other steps
+
+    transition_matrix[-1, -1] = 1  # Terminal state
+
+    hash2idx = {i: i for i in range(n_nodes)}
+    target_node = n_nodes - 1
+    
+    planner = make_amdp_planner(
+        transition_matrix,
+        hash2idx,
+        target_node,
+        reward_dict=reward_dict,
+        max_vi_iterations=n_nodes,
+        use_sparse_matrix=True,
+        verbose=True)
+    
+    start_time = time.time()
+    computed_policy = planner.get_policy()
+    computed_values = planner.get_values()
+    elapsed_time = time.time() - start_time
+
+    # Check basic properties
+    assert len(computed_policy) == n_nodes, f"Policy size mismatch: {len(computed_policy)} != {n_nodes}"
+    assert len(computed_values) == n_nodes, f"Value function size mismatch: {len(computed_values)} != {n_nodes}"
+
+    # Check that the policy always moves forward
+    for i in range(n_nodes - 1):
+        assert computed_policy[i] == i + 1, f"Policy should move forward: policy[{i}] = {computed_policy[i]}"
+
+    # Check that values are non-negative and the terminal state has zero value
+    assert all(v >= 0 for v in computed_values), "Negative values in value function"
+    assert computed_values[n_nodes-1] == 1., f"V(final_state): {computed_values[n_nodes-1]}"
+
+    # Check that values spike at the big reward states
+    for i in range(0, n_nodes - 100, 100):
+        if i > 0:
+            assert computed_values[i] > computed_values[i-1], f"Expected value spike at state {i}"
+
+    print(f'[+] Large Sparse Graph Test with Reward Matrix: Elapsed time = {elapsed_time} seconds')
+    print(f'Last 20 values: {dict(list(computed_values.items())[-20:])}')
+    print(f'Last 20 actions: {dict(list(computed_policy.items())[-20:])}')
+
+    return computed_policy, computed_values
+
+
 if __name__ == '__main__':
     test_linear_graph()
     test_branching_graph()
@@ -330,3 +493,8 @@ if __name__ == '__main__':
     test_low_probability_graph(size=40, transition_probability=0.1)
     test_large_sparse_graph(n_nodes=4000)
     performance_comparison(size=4000)
+    test_simple_reward_matrix()
+    test_delayed_reward_dict()
+    test_cyclic_reward_dict()
+    test_simple_probabilistic_graph()
+    test_large_sparse_graph_with_reward_matrix()
