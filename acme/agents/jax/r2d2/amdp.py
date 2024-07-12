@@ -1,6 +1,7 @@
 import random
 import numpy as np
 
+from collections import defaultdict
 from typing import Dict, Tuple, List
 from scipy.sparse import csr_matrix, diags
 
@@ -21,7 +22,8 @@ class AMDP:
     verbose: bool = False,
     should_switch_goal: bool = False,
     use_sparse_matrix: bool = True,
-    hash2vstar: Dict = None
+    hash2vstar: Dict = None,
+    rmin_for_death_node: float = 0.
   ):
     self._transition_matrix =  csr_matrix(transition_tensor) if \
       use_sparse_matrix and not isinstance(transition_tensor, csr_matrix) else transition_tensor
@@ -34,6 +36,10 @@ class AMDP:
     self._verbose = verbose
     self._rmax_factor = rmax_factor
     self._use_sparse_matrix = use_sparse_matrix
+    self._rmin_for_death_node = rmin_for_death_node
+
+    self._use_reward_matrix = any(isinstance(v, (dict, defaultdict)) for v in reward_dict.values())
+    print(f'[AMDP] Using reward matrix: {self._use_reward_matrix} and Rmin: {rmin_for_death_node}')
 
     # TODO(ab): pass this from GoalSampler rather than recomputing it.
     self._idx2hash = {v: k for k, v in hash2idx.items()}
@@ -49,9 +55,11 @@ class AMDP:
         self._target_node = target_node
 
     self._hash2vstar = hash2vstar
-    self._reward_vector, self._discount_vector = self._abstract_reward_function(target_node)
+    self._reward_function, self._discount_vector = self._abstract_reward_function(target_node)
+
     self._vf, self._policy, self.max_bellman_errors = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
     print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states.')
+    print(f'[AMDP] Using sparse matrix: {self._use_sparse_matrix}')
 
   def get_policy(self) -> Dict:
     """Serialize the policy vector into a dictionary with goal_hash -> goal_hash."""
@@ -67,26 +75,94 @@ class AMDP:
     terminal_rewarding_nodes = [node for node in rewarding_nodes if self._discount_dict[node] == 0]
     if len(terminal_rewarding_nodes) > 0:
       return random.choice(terminal_rewarding_nodes)
-  
-  def _abstract_reward_function(self, target_node) -> Tuple[np.ndarray, np.ndarray]:
-    """Assign a reward and discount factor to each node in the AMDP."""
+
+  def _construct_extrinsic_reward_matrix(self):
+    """Construct the extrinsic reward matrix R(s, s') for the AMDP."""
+    # Assume that reward_dict is a nested dictionary of the form: {s: {s': r}}
+    reward_matrix = np.zeros((self._n_states, self._n_states), dtype=np.float32)
+    for src_node, src_idx in self._hash2idx.items():
+      if src_node in self._reward_dict:
+        assert isinstance(self._reward_dict[src_node], (dict, defaultdict)), self._reward_dict[src_node]
+      for dst_node, dst_idx in self._hash2idx.items():
+        reward = self._reward_dict.get(src_node, {}).get(dst_node, 0.)
+        reward_matrix[src_idx, dst_idx] = reward * (self._rmax_factor / 2)
+    return reward_matrix
+
+  def _construct_extrinsic_reward_vector(self):
+    """Construct the extrinsic reward vector for the AMDP."""
     reward_vector = np.zeros((self._n_states,), dtype=np.float32)
-    discount_vector = np.zeros((self._n_states,), dtype=np.float32)
-
     for node, idx in self._hash2idx.items():
-      is_goal_node = node == target_node
-      extrinsic_reward = (self._rmax_factor // 2) * self._reward_dict.get(node, 0.)
-      intrinsic_reward = self._rmax_factor * int(is_goal_node)
-      reward_vector[idx] = extrinsic_reward + intrinsic_reward
+      reward_vector[idx] = self._reward_dict.get(node, 0.)
+    return reward_vector
 
-      extrinsic_discount = self._discount_dict.get(node, 1.)
-      intrinsic_discount = int(not is_goal_node)
-      discount_vector[idx] = intrinsic_discount * extrinsic_discount * self._gamma
+  def _construct_intrinsic_reward_vector(self):
+    """Construct the intrinsic reward vector for the AMDP."""
+    intrinsic_reward_vector = np.zeros((self._n_states,), dtype=np.float32)
+    for node, idx in self._hash2idx.items():
+      is_goal_node = node == self._target_node
+      intrinsic_reward_vector[idx] = int(is_goal_node) * self._rmax_factor
+    return intrinsic_reward_vector
 
-      if discount_vector[idx] == 0 or reward_vector[idx] > 0:
-        print(f'[AMDP] State {node} has discount={discount_vector[idx]} & rew={reward_vector[idx]}')
+  def _construct_continuation_vector(self):
+    """Construct the discount vector for the AMDP."""
+    continuation_vector = np.zeros((self._n_states,), dtype=np.float32)
+    for node, idx in self._hash2idx.items():
+      is_goal_node = node == self._target_node
+      extrinsic_continuation = self._discount_dict.get(node, 1.)
+      intrinsic_continuation = int(not is_goal_node)
+      continuation_vector[idx] = intrinsic_continuation * extrinsic_continuation
+    return continuation_vector
+
+  def _abstract_reward_function(self, target_node) -> Tuple[np.ndarray, np.ndarray]:
+    discount = self._construct_continuation_vector() * self._gamma
+    assert discount.shape == (self._n_states,), discount.shape
     
-    return reward_vector, discount_vector
+    if self._use_reward_matrix:
+      extrinsic_reward_matrix = self._construct_extrinsic_reward_matrix()
+      intrinsic_reward_vector = self._construct_intrinsic_reward_vector()
+      assert extrinsic_reward_matrix.shape == (self._n_states, self._n_states), extrinsic_reward_matrix.shape
+      assert intrinsic_reward_vector.shape == (self._n_states,), intrinsic_reward_vector.shape
+      combined = extrinsic_reward_matrix + intrinsic_reward_vector[np.newaxis, :]
+      assert combined.shape == (self._n_states, self._n_states), combined.shape
+      return combined, discount
+
+    extrinsic_reward_vector = self._construct_extrinsic_reward_vector()
+    intrinsic_reward_vector = self._construct_intrinsic_reward_vector()
+    assert extrinsic_reward_vector.shape == intrinsic_reward_vector.shape == (self._n_states,), \
+      (extrinsic_reward_vector.shape, intrinsic_reward_vector.shape)
+    return extrinsic_reward_vector + intrinsic_reward_vector, discount
+
+  def _vector_case_q_update(self, prev_values):
+    """New VI update rule that takes advantage of the sparsity of the 
+    transition tensor. This allows us to only store (N, N) transition matrices
+    rather than (N+1, N, N+1) tranasition tensors."""
+    assert self._reward_function.shape == self._discount_vector.shape
+    assert self._reward_function.shape == prev_values.shape
+    target = self._reward_function + (self._discount_vector * prev_values)
+    assert target.shape == (self._n_states,), target.shape
+    if self._use_sparse_matrix:
+      return self._transition_matrix @ diags(target)
+    return self._transition_matrix @ np.diag(target)
+
+  def _matrix_case_q_update(self, prev_values):
+    """Update rule when the reward function is a matrix R(s, s')."""
+    assert prev_values.shape == (self._n_states,), prev_values.shape
+    assert self._reward_function.shape == (self._n_states, self._n_states)
+    assert self._discount_vector.shape == (self._n_states,), self._discount_vector.shape
+    
+    if self._use_sparse_matrix:
+      expected_reward = self._transition_matrix.multiply(self._reward_function)
+      expected_next_value = self._transition_matrix @ diags(prev_values)
+      if self._rmin_for_death_node != 0:
+        one_matrix = csr_matrix(np.ones((self._n_states, self._n_states), dtype=np.float32))
+        death_prob = one_matrix - self._transition_matrix
+        expected_reward = expected_reward + death_prob.multiply(self._rmin_for_death_node)
+        expected_next_value = expected_next_value + death_prob.multiply(self._rmin_for_death_node)
+      return expected_reward + expected_next_value.multiply(self._discount_vector)
+    
+    expected_reward = self._transition_matrix * self._reward_function
+    expected_next_value = self._transition_matrix @ np.diag(prev_values)
+    return expected_reward + (self._discount_vector * expected_next_value)
   
   def _solve_abstract_mdp(self, n_iterations, tol):
     max_bellman_errors = []
@@ -94,18 +170,11 @@ class AMDP:
 
     for i in range(n_iterations):
       prev_values = np.copy(values)
-      assert self._reward_vector.shape == self._discount_vector.shape
-      assert self._reward_vector.shape == prev_values.shape
-      target = self._reward_vector + (self._discount_vector * prev_values)
-      assert target.shape == (self._n_states,), target.shape
 
-      # New VI update rule that takes advantage of the sparsity of the 
-      # transition tensor. This allows us to only store (N, N) transition matrices
-      # rather than (N+1, N, N+1) tranasition tensors.
-      if self._use_sparse_matrix:
-        Q = self._transition_matrix @ diags(target)
+      if self._use_reward_matrix:
+        Q = self._matrix_case_q_update(prev_values)
       else:
-        Q = self._transition_matrix @ np.diag(target)
+        Q = self._vector_case_q_update(prev_values)
       
       assert Q.shape == (self._n_states, self._n_actions), Q.shape
       values = Q.max(axis=1)
