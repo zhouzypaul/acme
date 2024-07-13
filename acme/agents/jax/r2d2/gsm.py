@@ -128,6 +128,10 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._edge2successes = collections.defaultdict(list)
     self._edge2successes_lock = threading.Lock()
 
+    # Extrinsic return associated with each edge
+    self._edge2return = collections.defaultdict(lambda: collections.defaultdict(float))
+    self._edge2return_lock = threading.Lock()
+
     base_dir = get_save_directory()
     self._base_plotting_dir = os.path.join(base_dir, 'plots')
     self._gsm_iteration_times_dir = os.path.join(self._base_plotting_dir, 'gsm_iteration_times')
@@ -154,6 +158,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       should_switch_goal=self._should_switch_goal,
       max_vi_iterations=self._max_vi_iterations,
       hash2vstar=self._hash2vstar if self._warmstart_value_iteration else None,
+      edge2rewards=self._edge2return,
     )
     expansion_node = goal_sampler.begin_episode(current_node)
 
@@ -173,6 +178,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       exploration_goal_probability=0.,
       rmax_factor=self._rmax_factor,
       goal_space_size=self._goal_space_size,
+      edge2rewards=self._edge2return,
     ).get_descendants(current_node)
 
   def local_get_variables(self, names=()):
@@ -358,6 +364,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     hash2discount: Dict,
     expansion_node_new_node_hash_pairs: List[Tuple[Tuple, Tuple]],
     edge2success: Dict,
+    edge2return: Dict,
   ):
     """Update based on goals achieved by the different actors."""
     self._update_obs_dict(hash2obs)
@@ -367,6 +374,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._hash2discount.update(hash2discount)
     self._update_edges_set(expansion_node_new_node_hash_pairs)
     self._update_edge_success_dict(edge2success)
+    self._update_edge_return_dict(edge2return)
     
   def _update_count_dict(self, hash2count: Dict):
     with self._count_dict_lock:
@@ -393,6 +401,14 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       for key in edge2success:
         if self.exploration_hash not in key:
           self._edge2successes[key].append(edge2success[key])
+
+  def _update_edge_return_dict(self, edge2return: Dict):
+    with self._edge2return_lock:
+      for key in edge2return:
+        if self.exploration_hash not in key:
+          # exponential running average of the return
+          src, dest = key
+          self._edge2return[src][dest] = 0.9 * self._edge2return[src][dest] + 0.1 * edge2return[key]
 
   def _update_idx_dict(self, hash2obs: Dict):
     with self._idx_dict_lock:
@@ -751,6 +767,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     hash2bell = {k: list(v) for k, v in hash2bell.items()}
     reward_mean = self._exploration_params.reward_mean if not self._use_exploration_vf_for_expansion else 0.
     reward_var = self._exploration_params.reward_var if not self._use_exploration_vf_for_expansion else 0.
+    edge2return = self._default_dict_to_dict(self._edge2return)
     to_return = (*to_return,
                  self._off_policy_edges,
                  reward_mean,
@@ -759,15 +776,16 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
                  self._thread_safe_deepcopy(self._hash2vstar),
                  self._gsm_iteration_times,
                  self._edge2successes,
-                 self.has_seen_task_goal)
-    assert len(to_return) == 18, len(to_return)
+                 self.has_seen_task_goal,
+                 edge2return)
+    assert len(to_return) == 19, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
   def restore(self, state: Tuple[Dict]):
     t0 = time.time()
     print('About to start restoring GSM from checkpoint.')
-    assert len(state) == 18, len(state)
+    assert len(state) == 19, len(state)
     self._hash2obs = state[0]
     self._hash2counts = collections.defaultdict(int, state[1])
     self._hash2bonus = state[2]
@@ -786,9 +804,11 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._gsm_iteration_times = state[15]
     self._edge2successes = state[16]
     self.has_seen_task_goal = state[17]
+    self._edge2return = self._dict_to_default_dict(state[18], float)
     assert isinstance(self._edges, set), type(state[9])
     assert isinstance(self._off_policy_edges, set), type(state[10])
     assert isinstance(self.has_seen_task_goal, bool), type(state[17])
+    assert isinstance(self._edge2return, dict), type(state[18])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
 

@@ -23,7 +23,7 @@ class AMDP:
     should_switch_goal: bool = False,
     use_sparse_matrix: bool = True,
     hash2vstar: Dict = None,
-    rmin_for_death_node: float = 0.
+    rmin_for_death_node: float = -1.
   ):
     self._transition_matrix =  csr_matrix(transition_tensor) if \
       use_sparse_matrix and not isinstance(transition_tensor, csr_matrix) else transition_tensor

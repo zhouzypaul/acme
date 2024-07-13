@@ -40,6 +40,7 @@ class GoalSampler:
       goal_space_size: int = 100,
       should_switch_goal: bool = False,
       hash2vstar: Dict = {},
+      edge2rewards: Dict = {},
   ):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
@@ -51,6 +52,7 @@ class GoalSampler:
     self._task_goal_probability = task_goal_probability
     self._exploration_goal_probability = exploration_goal_probability
     self._hash2vstar = hash2vstar
+    self._edge2rewards = edge2rewards
 
     self.goal_dict = goal_dict
     self.count_dict = count_dict
@@ -88,14 +90,14 @@ class GoalSampler:
       self._amdp = AMDP(
         transition_tensor=self.transition_tensor,
         hash2idx=self.hash2idx,
-        reward_dict=self.reward_dict,
+        reward_dict=self.reward_dict if not self._edge2rewards else self._edge2rewards,
         discount_dict=self.discount_dict,
         count_dict=self.on_policy_edge_count_dict,
         target_node=target_node,
         rmax_factor=self.rmax_factor,
         max_vi_iterations=self.max_vi_iterations,
         should_switch_goal=self._should_switch_goal,
-        hash2vstar=self._hash2vstar
+        hash2vstar=self._hash2vstar,
       )
       print(f'[GoalSampler] Took {t1 - t0}s to select expansion node.')
       print(f'[GoalSampler] Took {time.time() - t1}s to create & solve AMDP.')

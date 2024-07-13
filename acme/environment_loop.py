@@ -367,7 +367,7 @@ class EnvironmentLoop(core.Worker):
     
     needs_reset = False
     expansion_node = None
-    overall_attempted_edges: List[Tuple[OARG, OARG, bool]] = []
+    overall_attempted_edges: List[Tuple[OARG, OARG, bool, float]] = []
     
     if self._goal_space_manager:
       self._update_dicts_from_gsm()
@@ -439,7 +439,7 @@ class EnvironmentLoop(core.Worker):
       if not needs_reset and reached_target and \
         random.random() < self._pure_exploration_probability:
         
-        overall_attempted_edges.append((timestep.observation, self.exploration_goal, True))
+        overall_attempted_edges.append((timestep.observation, self.exploration_goal, True, 0.))
         print(f'[EnvironmentLoop] Reached {expansion_node}; starting pure exploration rollout.')
         timestep, needs_reset, episode_logs = self.exploration_rollout(
           timestep, episode_logs, trajectory_key='exploration_trajectory')
@@ -488,7 +488,7 @@ class EnvironmentLoop(core.Worker):
       t0 = time.time()
       if self._goal_space_manager:
         self._update_dicts_from_gsm()
-      attempted_edges = [(timestep.observation, self.exploration_goal, True)]
+      attempted_edges = [(timestep.observation, self.exploration_goal, True, 0.)]
       _, _, episode_logs = self.exploration_rollout(timestep, episode_logs, 'episode_trajectory')
 
     # Extract new goals to add to the goal-space.
@@ -593,8 +593,8 @@ class EnvironmentLoop(core.Worker):
   ) -> Tuple[dm_env.TimeStep, bool, List[Tuple[OARG, OARG]], Dict]:
     """Pick in-graph subgoals to go from the current timestep to target_node."""
     
-    # Triple of (src, dest, success)
-    attempted_edges: List[Tuple[OARG, OARG, bool]] = []
+    # tuple of (src, dest, success, extrinsic_return)
+    attempted_edges: List[Tuple[OARG, OARG, bool, float]] = []
     needs_reset = False
 
     while not needs_reset and not termination_func(timestep, target_node):
@@ -602,7 +602,7 @@ class EnvironmentLoop(core.Worker):
 
       obs0 = copy.deepcopy(timestep.observation)
 
-      timestep, needs_reset, episode_logs, interrupted = self.gc_rollout(
+      timestep, needs_reset, episode_logs, interrupted, extrinsic_return = self.gc_rollout(
         timestep._replace(step_type=dm_env.StepType.FIRST),
         goal, episode_logs, use_random_actions=False
       )
@@ -610,7 +610,7 @@ class EnvironmentLoop(core.Worker):
       # assert timestep.last(), timestep
 
       # Log the attempted edge and whether it was successful.
-      attempted_edges.append((obs0, goal, timestep.reward > 0.))
+      attempted_edges.append((obs0, goal, timestep.reward > 0., float(extrinsic_return)))
 
       key = tuple(goal.goals)
       delta = timestep.reward - self._goal_achievement_rates[key]
@@ -654,7 +654,7 @@ class EnvironmentLoop(core.Worker):
         self.visualize_exploration_trajectory(episode_logs[trajectory_key], next(self._episode_iter))
     else:
       print(f'Could have been rolling out the RND policy... {self._exploration_actor}')
-      timestep, needs_reset, episode_logs, _ = self.gc_rollout(
+      timestep, needs_reset, episode_logs, *_ = self.gc_rollout(
         timestep=ts._replace(step_type=dm_env.StepType.FIRST),
         goal=self.exploration_goal,
         episode_logs=episode_logs,
@@ -939,6 +939,7 @@ class EnvironmentLoop(core.Worker):
     duration = 0
     should_interrupt_option = False
     trajectory: List[GoalBasedTransition] = []
+    extrinsic_return = 0.
 
     def should_interrupt(current_ts: dm_env.TimeStep, duration: int, goal: OARG) -> bool:
       """Interrupt the option if you are in a node and duration warrants timeout."""
@@ -981,6 +982,9 @@ class EnvironmentLoop(core.Worker):
       # Save terminal states for transmitting to GSM later.
       extrinsic_reward = next_timestep.reward.copy()
       extrinsic_discount = next_timestep.discount.copy()
+
+      _gamma = 0.99 ** (duration - 1)
+      extrinsic_return += (extrinsic_reward * _gamma).item()
       
       # Augment the ts with the current goal being pursued
       next_timestep = self.augment_ts_with_goal(next_timestep, goal, 'concat')
@@ -1039,9 +1043,9 @@ class EnvironmentLoop(core.Worker):
       
     episode_logs['episode_trajectory'].extend(trajectory)
     
-    print(f'Goal={goal.goals} Achieved={timestep.observation.goals} R={timestep.reward} T={duration}')
+    print(f'Goal={goal.goals} Achieved={timestep.observation.goals} r={timestep.reward} R={extrinsic_return:.3f} T={duration}')
 
-    return timestep, needs_reset, episode_logs, should_interrupt_option
+    return timestep, needs_reset, episode_logs, should_interrupt_option, extrinsic_return
 
   def filter_achieved_goals(
     self,
@@ -1060,7 +1064,7 @@ class EnvironmentLoop(core.Worker):
   def stream_achieved_goals_to_gsm(
     self,
     trajectory: List[GoalBasedTransition],
-    attempted_edges: List[Tuple[OARG, OARG, bool]],
+    attempted_edges: List[Tuple[OARG, OARG, bool, float]],
     expansion_node_new_node_pairs: List[Tuple[Tuple, Tuple]]
   ):
     """Send the goals achieved during the episode to the GSM."""
@@ -1080,11 +1084,17 @@ class EnvironmentLoop(core.Worker):
       return dict(collections.Counter(achieved_goals))
     
     def attempted2counts() -> Dict:
-      attempted_hashes = [(obs2key(x), obs2key(y)) for x, y, _ in attempted_edges]
+      attempted_hashes = [(obs2key(x), obs2key(y)) for x, y, *_ in attempted_edges]
       return dict(collections.Counter(attempted_hashes))
     
     def edge2success() -> Dict:
-      return {(obs2key(src), obs2key(dest)): bool(success) for src, dest, success in attempted_edges}
+      return {(obs2key(src), obs2key(dest)): bool(success) for src, dest, success, _ in attempted_edges}
+
+    def edge2extrinsic_return() -> Dict:
+      edge2rewards = collections.defaultdict(list)
+      for src, dest, _, extrinsic_return in attempted_edges:
+        edge2rewards[(obs2key(src), obs2key(dest))].append(extrinsic_return)
+      return {k: float(np.max(v)) for k, v in edge2rewards.items()}
     
     def extract_discounts() -> Dict:
       """Terminal states in the MDP have a discount of 0."""
@@ -1108,6 +1118,9 @@ class EnvironmentLoop(core.Worker):
     edge2count = attempted2counts()
     hash2discount = extract_discounts()
     edge2successes = edge2success()
+    edge2returns = edge2extrinsic_return()
+
+    print(f'[EnvironmentLoop] edge2returns: {edge2returns}')
 
     # Filter out pairs in which both nodes are the same.
     expansion_node_new_node_pairs = [
@@ -1127,7 +1140,8 @@ class EnvironmentLoop(core.Worker):
       edge2count,
       hash2discount,
       expansion_node_new_node_pairs,
-      edge2successes
+      edge2successes,
+      edge2return=edge2returns
     )
 
     print(f'[EnvironmentLoop] Took {time.time() - t0}s to update the GSM.')

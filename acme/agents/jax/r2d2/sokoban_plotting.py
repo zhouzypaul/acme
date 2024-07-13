@@ -117,6 +117,7 @@ class GSMPlotter:
       hash2vstar=state[14],
       gsm_iteration_times=state[15],
       edge2success=state[16],
+      edge2return=state[18]
     )
 
   def __call__(self, episode=0):
@@ -139,7 +140,7 @@ class GSMPlotter:
       self._reward_variances.append(vars['reward_var'])
       self._goal_space_sizes.append(len(vars['hash2obs']))
       self._plot_hash2bonus(vars['hash2bonus'], episode)
-      self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], episode)
+      self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], vars['edge2return'], episode)
       self._plot_bellman_errors(vars['hash2bellman'], episode)
       self._plot_spatial_vstar(vars['hash2vstar'], episode)
       self._plot_gsm_iteration_times(vars['gsm_iteration_times'])
@@ -283,16 +284,17 @@ class GSMPlotter:
     """
     nx.draw(graph, pos=positions, with_labels=True, node_size=700, node_color='skyblue')
     
-    # edge_labels = nx.get_edge_attributes(graph, 'weight')
-    nx.draw_networkx_edges(graph, pos=positions)  #, edge_labels=edge_labels)
+    edge_labels = nx.get_edge_attributes(graph, 'weight')
+    nx.draw_networkx_edges(graph, pos=positions)
+    nx.draw_networkx_edge_labels(graph, pos=positions, edge_labels=edge_labels)
     
     plt.title(title)
     plt.grid('on')
 
-  def _plot_skill_graph(self, edges, off_policy_edges, episode, include_off_policy_edges=True):
+  def _plot_skill_graph(self, edges, off_policy_edges, edge2return, episode, include_off_policy_edges=True):
     """Spatially plot the nodes and edges of the skill-graph."""
 
-    def create_graphs(transitions, n_boxes):
+    def create_graphs(transitions, n_boxes, edge2return):
       positions = {}
       graphs = [nx.DiGraph() for _ in range(n_boxes + 1)]
 
@@ -303,20 +305,24 @@ class GSMPlotter:
           # skip self loops
           if start_xy == end_xy:
             continue
-          graphs[i].add_edge(start_xy, end_xy)
+          if transition[0] in edge2return and transition[1] in edge2return[transition[0]]:
+            w = np.round(edge2return[transition[0]][transition[1]], 3)
+            graphs[i].add_edge(start_xy, end_xy, weight=w)
+          else:
+            graphs[i].add_edge(start_xy, end_xy)
           positions[start_xy] = start_xy
           positions[end_xy] = end_xy
       return graphs, positions
     
-    def plot_edges(edges):
+    def plot_edges(edges, rewards=None):
       edges = list(edges)
       n_boxes = (len(edges[0][0]) - 3) // 2
-      graphs, positions = create_graphs(edges, n_boxes)
+      graphs, positions = create_graphs(edges, n_boxes, edge2return)
       n_subplots = n_boxes + 1
       n_rows, n_cols = GSMPlotter.subplot_grid(n_subplots)
       default_figsize = plt.rcParams['figure.figsize']
       
-      plt.figure(figsize=(2 * default_figsize[0] * n_cols, default_figsize[1] * n_rows))
+      plt.figure(figsize=(3 * default_figsize[0] * n_cols, default_figsize[1] * n_rows * 2))
       
       for i, graph in enumerate(graphs):
         title = 'PlayerPos' if i == 0 else f'Box {i}'
