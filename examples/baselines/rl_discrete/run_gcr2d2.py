@@ -109,6 +109,22 @@ flags.DEFINE_float('reachability_novelty_combination_alpha', 0.5, 'Alpha value f
 FLAGS = flags.FLAGS
 
 
+def make_environment_factory(env_name, max_episode_steps, to_float):
+  
+  minigrid_factory = functools.partial(
+    helpers.make_minigrid_environment,
+    level_name=env_name, max_episode_len=max_episode_steps, to_float=to_float)
+  
+  sokoban_factory = functools.partial(
+    helpers.make_sokoban_environment, level_name=env_name, to_float=to_float)
+  
+  if 'MiniGrid' in env_name:
+    return minigrid_factory
+  elif 'sokoban' in env_name.lower():
+    return sokoban_factory
+  raise ValueError(f"Unknown environment name: {env_name}")
+
+
 def build_experiment_config():
   """Builds R2D2 experiment config which can be executed in different ways."""
   batch_size = 32
@@ -121,12 +137,8 @@ def build_experiment_config():
   use_learned_goal_classifiers = FLAGS.use_learned_goal_classifiers
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return helpers.make_minigrid_environment(
-      level_name=env_name,
-      max_episode_len=max_episode_steps,
-      to_float=False,
-      use_learned_goal_classifiers=use_learned_goal_classifiers,
-    )
+    return make_environment_factory(env_name, max_episode_steps, to_float=False)(
+      seed=seed, goal_conditioned=True, use_learned_goal_classifiers=use_learned_goal_classifiers)
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
   
@@ -224,14 +236,8 @@ def build_exploration_policy_experiment_config():
   target_update_period = FLAGS.cfn_target_update_period
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return helpers.make_minigrid_environment(
-      level_name=env_name,
-      max_episode_len=max_episode_steps,
-      goal_conditioned=False,  # This is the reason we have a different env_factory
-      seed=seed,
-      to_float=False,
-      use_learned_goal_classifiers=False,  # Save on computation time for CFN rollouts.
-    )
+    return make_environment_factory(env_name, max_episode_steps, to_float=False)(
+      seed=seed, goal_conditioned=False, use_learned_goal_classifiers=False)
   
   def rnd_network_factory(env_spec):
     from acme.agents.jax import rnd

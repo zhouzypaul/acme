@@ -252,7 +252,11 @@ class ModelFreeGSMPlotter:
   def run(self):
     for iteration in itertools.count():
       t0 = time.time()
-      self(episode=iteration)
+      try:
+        self(episode=iteration)
+      except Exception as e:
+        print(f'Error: {e}')
+        continue
       t1 = time.time()
       print(f'Plotted iteration {iteration} in {t1 - t0:.3f} seconds.')
       time.sleep(max(0, self._time_between_plots - (t1 - t0)))

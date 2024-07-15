@@ -33,6 +33,7 @@ import haiku as hk
 import jax.numpy as jnp
 
 from acme.domains.minigrid.minigrid import environment_builder
+from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
 
 
 FLAGS = flags.FLAGS
@@ -154,6 +155,23 @@ def make_minigrid_environment(
   env = wrappers.SinglePrecisionWrapper(env)
   return env
 
+def make_sokoban_environment(
+    level_name: str = 'Sokoban-v0',
+    seed: int = 42,
+    goal_conditioned: bool = True,
+    to_float: bool = False,
+    use_learned_goal_classifiers: bool = False,
+) -> dm_env.Environment:
+  """Loads the Sokoban environment."""
+  del seed  # For some reason, it is a jax array and not an int.
+  env = sokoban_environment_builder(
+    level_name,
+    seed=42,
+    goal_conditioned=goal_conditioned,
+    to_float=to_float,
+  )
+  env = wrappers.SinglePrecisionWrapper(env)
+  return env
 
 def make_dqn_atari_network(
     environment_spec: specs.EnvironmentSpec) -> dqn.DQNNetworks:
