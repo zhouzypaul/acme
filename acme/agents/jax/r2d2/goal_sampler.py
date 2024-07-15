@@ -95,6 +95,7 @@ class GoalSampler:
         rmax_factor=self.rmax_factor,
         max_vi_iterations=self.max_vi_iterations,
         should_switch_goal=self._should_switch_goal,
+        current_node=current_node,
       )
       print(f'[GoalSampler] Took {t1 - t0}s to select expansion node.')
       print(f'[GoalSampler] Took {time.time() - t1}s to create & solve AMDP.')

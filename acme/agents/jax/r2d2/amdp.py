@@ -1,3 +1,4 @@
+import time
 import random
 import numpy as np
 
@@ -18,10 +19,12 @@ class AMDP:
     rmax_factor: float = 2.,
     gamma: float = 0.99,
     max_vi_iterations: int = 10,
-    vi_tol: float = 1e-3,
+    vi_tol: float = 1e-4,
     verbose: bool = False,
     should_switch_goal: bool = False,
     use_sparse_matrix: bool = True,
+    current_node: Optional[Tuple] = None,
+    max_retries: int = 5
   ):
     self._transition_matrix =  csr_matrix(transition_tensor) if \
       use_sparse_matrix and not isinstance(transition_tensor, csr_matrix) else transition_tensor
@@ -35,6 +38,7 @@ class AMDP:
     self._rmax_factor = rmax_factor
     self._use_sparse_matrix = use_sparse_matrix
     self._hash2vstar = hash2vstar
+    self._current_node = current_node
 
     # TODO(ab): pass this from GoalSampler rather than recomputing it.
     self._idx2hash = {v: k for k, v in hash2idx.items()}
@@ -52,6 +56,11 @@ class AMDP:
     self._reward_vector, self._discount_vector = self._abstract_reward_function(target_node)
     self._vf, self._policy, self.max_bellman_errors = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
     print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states.')
+
+    found = target_node in self.get_goal_sequence(current_node, target_node, max_vi_iterations)
+
+    if not found and sum(target_node) != 1:
+      self._contingent_replanning(current_node, max_vi_iterations, vi_tol, max_retries)
 
   def get_policy(self) -> Dict:
     """Serialize the policy vector into a dictionary with goal_hash -> goal_hash."""
@@ -88,9 +97,9 @@ class AMDP:
     
     return reward_vector, discount_vector
   
-  def _solve_abstract_mdp(self, n_iterations, tol):
+  def _solve_abstract_mdp(self, n_iterations, tol, initial_values=None):
     max_bellman_errors = []
-    values = self.get_vinit(self._hash2vstar)
+    values = initial_values if initial_values is not None else self.get_vinit(self._hash2vstar)
 
     for i in range(n_iterations):
       prev_values = np.copy(values)
@@ -176,3 +185,25 @@ class AMDP:
         path.append(current)
         i += 1
     return path
+
+  def _contingent_replanning(self, current_node, max_vi_iterations, vi_tol, max_retries):
+    t0 = time.time()
+    target_node = self._target_node
+    print(f'[AMDP] Could not find a solution for {target_node} in {max_vi_iterations} iterations and tol {vi_tol}.')
+    num_retries = 0
+    found = False
+    self._verbose = True
+    while num_retries < max_retries and not found:
+
+      if len(self.max_bellman_errors) >= max_vi_iterations:
+        max_vi_iterations = min(max_vi_iterations * 10, 5000)
+      else:
+        vi_tol = max(vi_tol * 0.1, 1e-5)
+
+      num_retries += 1
+      print(f'[AMDP] Retrying for {target_node} with {max_vi_iterations} iters and tol {vi_tol}.')
+      previous_vf = self._vf.copy()
+      self._vf, self._policy, self.max_bellman_errors = self._solve_abstract_mdp(
+        max_vi_iterations, vi_tol, previous_vf)
+      found = target_node in self.get_goal_sequence(current_node, target_node, max_vi_iterations)
+    print(f'[AMDP] Found solution for {target_node} in {(time.time() - t0):.3f}s after {num_retries} retries.')
