@@ -147,6 +147,7 @@ def make_montezuma_environment(
     goal_conditioned: bool = True,
     action_repeat: int = 4,
     seed=0,
+    reset_to_laser_room=False,
 ) -> dm_env.Environment:
   assert oar_wrapper ^ oarg_wrapper, "Only one of oar_wrapper and oarg_wrapper can be True"
   env = montezuma_environment_builder(
@@ -160,6 +161,7 @@ def make_montezuma_environment(
     to_float=to_float,
     oarg_wrapper=oarg_wrapper,
     action_repeat=action_repeat,
+    reset_to_laser_room=reset_to_laser_room
   )
   
   if oar_wrapper:
