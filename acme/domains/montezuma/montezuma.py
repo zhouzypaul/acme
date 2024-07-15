@@ -152,11 +152,11 @@ class MontezumaInfoWrapper(Wrapper):
         return not locked
 
     def _reset_player_to_laser_room(self):
-        ram_location = "left_with_laser_numpy.pkl"
+        ram_location = "ale_state_in_room_0.pkl"
         with open(ram_location, 'rb') as f:
             state = pickle.load(f)
-        ram = state['ram']
-        new_obs, new_info = set_player_ram(self.env, ram)
+        self.env.restore_state(state)
+        new_obs, reward, done, new_info = self.env.step(0)
         return new_obs, new_info
 
 
@@ -239,23 +239,6 @@ class UVFAObsSpecWrapper(montezuma_wrapper.AtariWrapper):
             shape=new_shape, dtype=pixel_spec.dtype, name=pixel_spec.name)
         pixel_spec = self._frame_stacker.update_spec(pixel_spec)
         return pixel_spec
-
-
-def set_player_ram(env, ram_state):
-    """
-    completely override the ram with a saved ram state
-    """
-    raise NotImplementedError("This implementation doesnt work with the new ALE.")
-    
-    state_ref = env.unwrapped.ale.cloneState()
-    env.unwrapped.ale.deleteState(state_ref)
-    
-    new_state_ref = env.unwrapped.ale.decodeState(ram_state)
-    env.unwrapped.ale.restoreState(new_state_ref)
-    env.unwrapped.ale.deleteState(new_state_ref)
-    obs, _, _, info = env.step(0)  # NO-OP action to update the RAM state
-    
-    return obs, info
     
 
 def environment_builder(
@@ -270,11 +253,12 @@ def environment_builder(
     to_float=True,
     oarg_wrapper=True,
     action_repeat=4,
+    reset_to_laser_room=False,
 ):
     version = 'v0' if sticky_actions else 'v4'
     level_name = f'MontezumaRevengeNoFrameskip-{version}'
     env = gym.make(level_name, full_action_space=True)
-    env = MontezumaInfoWrapper(env)
+    env = MontezumaInfoWrapper(env, reset_to_laser_room=reset_to_laser_room)
     n_goal_dims = determine_n_goal_dims(env)
     env = GymnasiumWrapper(env)
     atari_wrapper = UVFAObsSpecWrapper if goal_conditioned else montezuma_wrapper.AtariWrapper

@@ -105,11 +105,12 @@ flags.DEFINE_bool('warmstart_vi', False, 'Whether to warmstart VI with the previ
 
 # Environment flags
 flags.DEFINE_integer('action_repeat', 4, 'Number of frames to repeat the action for.')
+flags.DEFINE_bool('reset_to_laser_room', False, 'Whether to reset Joe to the laser room at the start of the episode (for debugging).')
 
 FLAGS = flags.FLAGS
 
 
-def make_environment_factory(env_name, max_episode_steps, to_float, action_repeat):
+def make_environment_factory(env_name, max_episode_steps, to_float, action_repeat, reset_to_laser_room):
   
   minigrid_factory = functools.partial(
     helpers.make_minigrid_environment,
@@ -127,6 +128,7 @@ def make_environment_factory(env_name, max_episode_steps, to_float, action_repea
       scale_dims=(84, 84),
       max_episode_steps=max_episode_steps,
       action_repeat=action_repeat,
+      reset_to_laser_room=reset_to_laser_room
     )
   
   return minigrid_factory if 'MiniGrid' in env_name else montezuma_factory
@@ -141,13 +143,15 @@ def build_experiment_config():
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
   action_repeat = FLAGS.action_repeat
+  reset_to_laser_room = FLAGS.reset_to_laser_room
   
   def environment_factory(seed: int) -> dm_env.Environment:
     return make_environment_factory(
       env_name,
       max_episode_steps,
       to_float=False,
-      action_repeat=action_repeat
+      action_repeat=action_repeat,
+      reset_to_laser_room=reset_to_laser_room
     )(seed=seed, goal_conditioned=True)
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)\
@@ -248,6 +252,7 @@ def build_exploration_policy_experiment_config():
   max_episode_steps = FLAGS.max_episode_steps
   target_update_period = FLAGS.cfn_target_update_period
   action_repeat = FLAGS.action_repeat
+  reset_to_laser_room = FLAGS.reset_to_laser_room
   
   def environment_factory(seed: int) -> dm_env.Environment:
     return make_environment_factory(
@@ -255,6 +260,7 @@ def build_exploration_policy_experiment_config():
       max_episode_steps,
       to_float=False,
       action_repeat=action_repeat,
+      reset_to_laser_room=reset_to_laser_room
     )(seed=seed, goal_conditioned=False)
   
   def rnd_network_factory(env_spec):
