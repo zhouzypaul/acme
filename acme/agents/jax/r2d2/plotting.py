@@ -11,6 +11,7 @@ import collections
 import numpy as np
 import matplotlib.pyplot as plt
 
+from scipy.sparse import csr_matrix
 from typing import Tuple, Optional, Dict
 from acme.utils.paths import get_save_directory
 
@@ -47,6 +48,7 @@ class GSMPlotter:
     self._key_competence_plotting_dir = os.path.join(base_dir, 'plots', 'key_competence')
     self._door_competence_plotting_dir = os.path.join(base_dir, 'plots', 'door_competence')
     self._on_policy_count_plotting_dir = os.path.join(base_dir, 'plots', 'on_policy_counts')
+    self._transition_matrix_dir = os.path.join(base_dir, 'plots', 'transition_matrix')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -66,6 +68,7 @@ class GSMPlotter:
     os.makedirs(self._key_competence_plotting_dir, exist_ok=True)
     os.makedirs(self._door_competence_plotting_dir, exist_ok=True)
     os.makedirs(self._on_policy_count_plotting_dir, exist_ok=True)
+    os.makedirs(self._transition_matrix_dir, exist_ok=True)
 
   def get_gsm_variables(self):
     try:
@@ -103,6 +106,7 @@ class GSMPlotter:
 
     vars = self.get_gsm_variables()
     if vars:
+      self._visualize_transition_matrix(vars['transition_matrix'], episode)
       self.visualize_value_function(
         episode,
         vars['hash2idx'],
@@ -163,6 +167,20 @@ class GSMPlotter:
       
     except Exception as e:
       print(f'Error: {e}')
+
+  def _visualize_transition_matrix(self, transition_matrix, episode):
+    """Visualize the transition matrix."""
+    if isinstance(transition_matrix, np.ndarray):
+      plt.imshow(transition_matrix)
+    elif isinstance(transition_matrix, csr_matrix):
+      plt.imshow(transition_matrix.toarray())
+    else:
+      print(f'Unknown type for transition matrix: {type(transition_matrix)}')
+      return
+    plt.colorbar()
+    plt.title('Transition Matrix')
+    plt.savefig(os.path.join(self._transition_matrix_dir, f'transition_matrix_{episode}.png'))
+    plt.close()
 
   def visualize_value_function(
     self,
