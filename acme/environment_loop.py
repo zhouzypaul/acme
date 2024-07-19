@@ -89,7 +89,7 @@ class EnvironmentLoop(core.Worker):
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
       goal_space_manager: GoalSpaceManager = None,
       task_goal_probability: float = 0.1,
-      always_learn_about_task_goal: bool = True,
+      always_learn_about_task_goal: bool = False,
       always_learn_about_exploration_goal: bool = False,
       actor_id: int = 0,
       use_random_policy_for_exploration: bool = True,
@@ -405,7 +405,7 @@ class EnvironmentLoop(core.Worker):
       subgoal_sampler = SubgoalSampler(
         abstract_policy,
         self.goal_dict,
-        task_goal_probability=self._task_goal_probability if self._has_seen_task_goal else 0.,
+        task_goal_probability=0, # self._task_goal_probability if self._has_seen_task_goal else 0.,
         task_goal=self.task_goal,
         exploration_goal_probability=0.,
         exploration_goal=self.exploration_goal,
