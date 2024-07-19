@@ -39,7 +39,9 @@ class GoalSampler:
       rmax_factor: float = 2.,
       max_vi_iterations: int = 20,
       goal_space_size: int = 100,
-      should_switch_goal: bool = False,):
+      should_switch_goal: bool = False,
+      descendant_threshold: float = 0.,
+  ):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -49,6 +51,7 @@ class GoalSampler:
     self._exploration_goal = exploration_goal
     self._task_goal_probability = task_goal_probability
     self._exploration_goal_probability = exploration_goal_probability
+    self._descendant_threshold = descendant_threshold
 
     self.goal_dict = goal_dict
     self.count_dict = count_dict
@@ -233,8 +236,9 @@ class GoalSampler:
     print(f'[GoalSampler] Took {t3-t2}s to remove the special contexts from descendants.')
     return reachable_goals
   
-  def get_descendants(self, src_node: Tuple, threshold=0.) -> List[Tuple]:
+  def get_descendants(self, src_node: Tuple) -> List[Tuple]:
     row = self.hash2idx[src_node]
+    threshold = self._descendant_threshold
     if isinstance(self.transition_tensor, csr_matrix):
       adjacency = self.transition_tensor.copy()
       adjacency.data = (adjacency.data > threshold).astype(bool)
@@ -246,6 +250,7 @@ class GoalSampler:
     reachable_nodes = [self.idx2hash[idx] for idx in reachable_idx]
     if self._ignore_non_rewarding_terminal_nodes:
       reachable_nodes = [node for node in reachable_nodes if not self.is_death_node(node)]
+    print(f'[GoalSampler] Found {len(reachable_nodes)} with threshold {threshold}.')
     return reachable_nodes
 
   def _get_descendants(

@@ -92,6 +92,7 @@ flags.DEFINE_float("off_policy_edge_threshold", 0.75, "Threshold for off-policy 
 flags.DEFINE_integer("max_vi_iterations", 50, "Max number of VI iterations for AMDP")
 flags.DEFINE_float("novelty_threshold_for_goal_creation", -1., "Threshold for novelty for new goal/node creation")
 flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for target node sampling. -1 means sum_sampling.")
+flags.DEFINE_float("descendant_threshold", 0., "Threshold for enumerating descendant nodes for goal sampling.")
 
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
@@ -190,7 +191,8 @@ def build_experiment_config():
       use_exploration_vf_for_expansion=FLAGS.use_exploration_vf_for_expansion,
       use_decentralized_planner=FLAGS.use_decentralized_planner,
       use_gsm_var_client=FLAGS.use_gsm_var_client,
-      warmstart_vi=FLAGS.warmstart_vi
+      warmstart_vi=FLAGS.warmstart_vi,
+      descendant_threshold=FLAGS.descendant_threshold,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

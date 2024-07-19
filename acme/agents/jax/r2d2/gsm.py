@@ -55,6 +55,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       use_decentralized_planning: bool = False,
       maintain_sparse_transition_matrix: bool = True,
       warmstart_vi: bool = False,
+      descendant_threshold: float = 0.,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -70,6 +71,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._use_decentralized_planning = use_decentralized_planning
     self._maintain_sparse_transition_matrix = maintain_sparse_transition_matrix
     self._warmstart_vi = warmstart_vi
+    self._descendant_threshold = descendant_threshold
 
     def compute_uvfa_values(params, rng_key, batch_oarg, initial_lstm_state):
       # Perform the unroll operation of the network.
@@ -162,7 +164,8 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       rmax_factor=self._rmax_factor,
       goal_space_size=self._goal_space_size,
       should_switch_goal=self._should_switch_goal,
-      max_vi_iterations=self._max_vi_iterations
+      max_vi_iterations=self._max_vi_iterations,
+      descendant_threshold=self._descendant_threshold,
     )
     expansion_node = goal_sampler.begin_episode(current_node)
 
@@ -183,6 +186,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       exploration_goal_probability=0.,
       rmax_factor=self._rmax_factor,
       goal_space_size=self._goal_space_size,
+      descendant_threshold=self._descendant_threshold,
     ).get_descendants(current_node)
 
   def local_get_variables(self, names=()):
