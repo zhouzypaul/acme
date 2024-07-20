@@ -49,11 +49,14 @@ class ModelFreeGSMPlotter:
   def __call__(self, episode=0):
     vars = self.get_gsm_variables()
     if vars:
-      self._plot_hash2bonus(vars['hash2bonus'], vars['hash2proto'], episode)
-      self._plot_goal_learning_curves(vars['edge2successes'], vars['hash2proto'], episode)
       classifier2positives = self._convert_hash2obs_to_classifier2positives(vars['hash2obs'])
       self._plot_classifier_to_positives(classifier2positives)
       self._print_classifier_inferred_info(vars['classifier2inferredinfo'])
+      try:
+        self._plot_hash2bonus(vars['hash2bonus'], vars['hash2proto'], episode)
+        self._plot_goal_learning_curves(vars['edge2successes'], vars['hash2proto'], episode)
+      except Exception as e:
+        print(f'Error: {e}')
 
     self._log_memory_usage(episode)
 
