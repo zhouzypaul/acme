@@ -33,7 +33,8 @@ import haiku as hk
 import jax.numpy as jnp
 
 from acme.domains.minigrid.minigrid import environment_builder
-from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
+# from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
+from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
 
 
 FLAGS = flags.FLAGS
@@ -172,6 +173,27 @@ def make_sokoban_environment(
   )
   env = wrappers.SinglePrecisionWrapper(env)
   return env
+
+
+def make_taxi_environment(
+  max_steps,
+  goal_conditioned,
+  oarg_wrapper,
+  seed,
+  use_learned_goal_classifiers,
+  grid_size=5,
+):
+  del seed
+  env = taxi_environment_builder(
+    goal_conditioned=goal_conditioned,
+    max_steps=max_steps,
+    oarg_wrapper=oarg_wrapper,
+    use_learned_goal_classifiers=use_learned_goal_classifiers,
+    grid_size=grid_size,
+  )
+  env = wrappers.SinglePrecisionWrapper(env)
+  return env
+
 
 def make_dqn_atari_network(
     environment_spec: specs.EnvironmentSpec) -> dqn.DQNNetworks:
