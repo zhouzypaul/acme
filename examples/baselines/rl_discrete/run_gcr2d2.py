@@ -106,10 +106,15 @@ flags.DEFINE_bool('use_intermediate_difficulty', False, 'Whether to sample goals
 flags.DEFINE_bool('use_uvfa_reachability', False, 'Whether to use UVFA for reachability estimation')
 flags.DEFINE_string('reachability_novelty_combination_method', 'multiplication', 'Method for combining reachability and novelty scores')
 flags.DEFINE_float('reachability_novelty_combination_alpha', 0.5, 'Alpha value for combining reachability and novelty scores')
+flags.DEFINE_float('descendant_threshold', 0., 'Threshold for considering a node as being reachable from the current state.')
+
+# Task flags.
+flags.DEFINE_integer('taxi_grid_size', 5, 'Size of the taxi grid on each dim.')
+
 FLAGS = flags.FLAGS
 
 
-def make_environment_factory(env_name, max_episode_steps, to_float):
+def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_size=5):
   
   minigrid_factory = functools.partial(
     helpers.make_minigrid_environment,
@@ -117,11 +122,17 @@ def make_environment_factory(env_name, max_episode_steps, to_float):
   
   sokoban_factory = functools.partial(
     helpers.make_sokoban_environment, level_name=env_name, to_float=to_float)
+
+  taxi_factory = functools.partial(
+    helpers.make_taxi_environment, max_steps=max_episode_steps, oarg_wrapper=True,
+      grid_size=taxi_grid_size)
   
   if 'MiniGrid' in env_name:
     return minigrid_factory
   elif 'sokoban' in env_name.lower():
     return sokoban_factory
+  elif 'taxi' in env_name.lower():
+    return taxi_factory
   raise ValueError(f"Unknown environment name: {env_name}")
 
 
@@ -135,9 +146,10 @@ def build_experiment_config():
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
   use_learned_goal_classifiers = FLAGS.use_learned_goal_classifiers
+  taxi_grid_size = FLAGS.taxi_grid_size
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return make_environment_factory(env_name, max_episode_steps, to_float=False)(
+    return make_environment_factory(env_name, max_episode_steps, to_float=False, taxi_grid_size=taxi_grid_size)(
       seed=seed, goal_conditioned=True, use_learned_goal_classifiers=use_learned_goal_classifiers)
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
@@ -174,6 +186,7 @@ def build_experiment_config():
       num_goals_to_replay=FLAGS.num_goals_to_replay,
       reachability_novelty_combination_method=FLAGS.reachability_novelty_combination_method,
       reachability_novelty_combination_alpha=FLAGS.reachability_novelty_combination_alpha,
+      descendant_threshold=FLAGS.descendant_threshold,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
@@ -234,9 +247,10 @@ def build_exploration_policy_experiment_config():
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
   target_update_period = FLAGS.cfn_target_update_period
+  taxi_grid_size = FLAGS.taxi_grid_size
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return make_environment_factory(env_name, max_episode_steps, to_float=False)(
+    return make_environment_factory(env_name, max_episode_steps, to_float=False, taxi_grid_size=taxi_grid_size)(
       seed=seed, goal_conditioned=False, use_learned_goal_classifiers=False)
   
   def rnd_network_factory(env_spec):

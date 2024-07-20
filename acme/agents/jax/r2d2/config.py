@@ -81,3 +81,4 @@ class R2D2Config:
   num_goals_to_replay: int = 5
   reachability_novelty_combination_method: str = 'multiplication'
   reachability_novelty_combination_alpha: float = 0.5
+  descendant_threshold: float = 0.

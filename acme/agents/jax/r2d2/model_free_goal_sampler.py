@@ -23,7 +23,8 @@ class MFGoalSampler:
     uvfa_networks=None,
     use_uvfa_reachability: bool = False,
     reachability_method: str = 'multiplication',
-    reachability_novelty_combination_alpha: float = 0.5
+    reachability_novelty_combination_alpha: float = 0.5,
+    descendant_threshold: float = 0.1,
   ):
     self.proto_dict = proto_dict
     self.count_dict = count_dict
@@ -33,6 +34,7 @@ class MFGoalSampler:
     self.use_uvfa_reachability = use_uvfa_reachability
     self.reachability_method = reachability_method
     self.reachability_novelty_combination_alpha = reachability_novelty_combination_alpha
+    self.descendant_threshold = descendant_threshold
 
     def get_recurrent_state(batch_size=None):
       return uvfa_networks.init_recurrent_state(uvfa_rng_key, batch_size)
@@ -176,7 +178,7 @@ class MFGoalSampler:
     goal_set: Set[Tuple],
   ) -> Tuple[List[Tuple], np.ndarray]:
     
-    reachable_goals = goal_set  # TODO(ab/mm): Incorporate descendants
+    reachable_goals = self._get_descendants(current_oarg, goal_set)
 
     if reachable_goals:
       novelty_scores = self._get_expansion_scores(reachable_goals)
@@ -206,7 +208,7 @@ class MFGoalSampler:
           combined_scores = np.zeros_like(selected_scores)
           combined_scores[max_reachability_idx] = 1.
           selected_scores = combined_scores
-        else:
+        elif self.reachability_method != 'descendants':
           reachability_scores = self._get_reachability_scores(current_oarg, selected_goals)
           reachability_scores = np.asarray(reachability_scores)
           selected_scores = self._combine_reachability_and_novelty(
@@ -216,3 +218,11 @@ class MFGoalSampler:
       probs[non_zero_probs_idx] = scores2probabilities(selected_scores)
       
       return reachable_goals, probs
+
+  def _get_descendants(self, current_oarg: OARG, goal_set: List):
+    if self.use_uvfa_reachability and self.reachability_method == 'descendants':
+      scores = self._get_reachability_scores(current_oarg, goal_set)
+      descendants = [g for i, g in enumerate(goal_set) if scores[i] > self.descendant_threshold]
+      print(f'[GoalSampler] Found {len(descendants)} descendants with t={self.descendant_threshold}.')
+      return descendants if descendants else goal_set
+    return goal_set

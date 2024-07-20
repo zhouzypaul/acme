@@ -42,6 +42,7 @@ class GoalSpaceManager(Saveable):
       use_uvfa_reachability: bool = False,
       reachability_novelty_combination_method: str = 'multiplication',
       reachability_novelty_addition_alpha: float = 0.5,
+      descendant_threshold: float = 0.1,
     ):
     self._rng_key = rng_key
     self._hash2proto = {}
@@ -58,6 +59,7 @@ class GoalSpaceManager(Saveable):
     self._use_exploration_vf_for_expansion = use_exploration_vf_for_expansion
     self._use_intermediate_difficulty = use_intermediate_difficulty
     self._use_uvfa_reachability = use_uvfa_reachability
+    self._descendant_threshold = descendant_threshold
 
     self._networks = networks
     self._variable_client = variable_client
@@ -231,7 +233,8 @@ class GoalSpaceManager(Saveable):
       uvfa_networks=self._networks,
       use_uvfa_reachability=self._use_uvfa_reachability,
       reachability_method=self.reachability_novelty_combination_method,
-      reachability_novelty_combination_alpha=self.reachability_novelty_addition_alpha
+      reachability_novelty_combination_alpha=self.reachability_novelty_addition_alpha,
+      descendant_threshold=self._descendant_threshold,
     )
     expansion_node = goal_sampler.begin_episode(current_node)
     return expansion_node, {}
