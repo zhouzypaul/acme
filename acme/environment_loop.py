@@ -186,7 +186,7 @@ class EnvironmentLoop(core.Worker):
   @property
   def task_goal(self) -> OARG:
     obs = self._environment.observation_spec()
-    obs_shape = (84, 84, 3)  # TODO(ab)
+    obs_shape = obs.observation.shape
     return OARG(
       observation=np.zeros(obs_shape, dtype=obs.observation.dtype),
       action=np.zeros(obs.action.shape, dtype=obs.action.dtype),  # doesnt matter
@@ -197,7 +197,7 @@ class EnvironmentLoop(core.Worker):
   @property
   def exploration_goal(self) -> OARG:
     obs = self._environment.observation_spec()
-    obs_shape = (84, 84, 3)  # TODO(ab)
+    obs_shape = obs.observation.shape
     exploration_goal_feats = -1 * np.ones(
       self._environment.task_goal_features.shape, dtype=obs.goals.dtype)
     return OARG(
@@ -1306,7 +1306,7 @@ class EnvironmentLoop(core.Worker):
       self,
       num_episodes: Optional[int] = None,
       num_steps: Optional[int] = None,
-      n_warmup_episodes: int = 5
+      n_warmup_episodes: int = 20
   ) -> int:
     """Perform the run loop.
 

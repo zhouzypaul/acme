@@ -306,7 +306,6 @@ class CFN(acme.Learner):
 
     observation_tensor = oar.observation
     assert len(observation_tensor.shape) == 4, observation_tensor.shape
-    assert observation_tensor.shape[1:] == (84, 84, 3), observation_tensor.shape
 
     predicted_bonuses = compute_cfn_reward(
       state.params,
