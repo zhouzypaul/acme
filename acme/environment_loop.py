@@ -165,7 +165,7 @@ class EnvironmentLoop(core.Worker):
     self._decentralized_planner_kwargs = decentralized_planner_kwargs
 
     # For debugging and visualizations
-    self._start_ts = None
+    self._start_states = dict()
     self._episode_iter = itertools.count()
 
     base_dir = get_save_directory()
@@ -480,7 +480,7 @@ class EnvironmentLoop(core.Worker):
     env_reset_duration = time.time() - env_reset_start
     start_state = copy.deepcopy(timestep.observation)
     expansion_node = tuple(timestep.observation.goals)
-    self._start_ts = timestep
+    self._start_states[self._get_current_node(timestep)] = timestep.observation
     
     if not is_warmup_episode:
       episode_logs, attempted_edges, expansion_node = self.episodic_rollout(timestep, episode_logs)
@@ -813,14 +813,14 @@ class EnvironmentLoop(core.Worker):
           method='novelty_sampling'
         )
         
-        start_state_hash = tuple(self._start_ts.observation.goals)
+        for start_state_hash, start_obs in self._start_states.items():
 
-        if start_state_hash not in goal_space:
-          print(f'Adding start state {start_state_hash} to goal space.')
-          return {
-            **discovered_goals,
-            start_state_hash: self._start_ts.observation
-          }
+          if start_state_hash not in goal_space:
+            print(f'Adding start state {start_state_hash} to goal space.')
+            return {
+              **discovered_goals,
+              start_state_hash: start_obs
+            }
 
         return discovered_goals
 
@@ -1350,7 +1350,7 @@ class EnvironmentLoop(core.Worker):
 
   # TODO(ab): fix this function and move to the GSM.
   def visualize_goal_space(
-      self, ts0: dm_env.TimeStep, node2success: Dict, current_episode: int):
+      self, node2success: Dict, current_episode: int):
     node2rate = {}
     node2attempts = {}
     for node in node2success:
@@ -1369,7 +1369,7 @@ class EnvironmentLoop(core.Worker):
         num_attempts.append(node2attempts[node])
 
     # Visualize all graph nodes, not just descendants.
-    start_node = tuple([int(g) for g in ts0.observation.goals])
+    start_node = tuple([int(g) for g in random.choice(list(self._start_states.keys()))])
     hash2oarg = self.goal_dict
     
     if self._decentralized_planner_kwargs:
@@ -1486,7 +1486,7 @@ class EnvironmentLoop(core.Worker):
         self._logger.write(result)
 
         if self._actor_id == 1 and episode_count % 10 == 0:
-          self.visualize_goal_space(self._start_ts, self._node2successes, episode_count)
+          self.visualize_goal_space(self._node2successes, episode_count)
           self.visualize_n_planner_failures(episode_count)
 
     return step_count

@@ -236,6 +236,9 @@ class GoalSampler:
     return reachable_goals
   
   def get_descendants(self, src_node: Tuple, threshold=0.) -> List[Tuple]:
+    if src_node not in self.hash2idx:
+      return []
+      
     row = self.hash2idx[src_node]
     if isinstance(self.transition_tensor, csr_matrix):
       adjacency = self.transition_tensor.copy()

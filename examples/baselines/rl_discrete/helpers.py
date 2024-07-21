@@ -35,6 +35,7 @@ import jax.numpy as jnp
 from acme.domains.minigrid.minigrid import environment_builder
 from acme.domains.montezuma.montezuma import environment_builder as montezuma_environment_builder
 from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
+from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
 
 
 FLAGS = flags.FLAGS
@@ -201,6 +202,26 @@ def make_sokoban_environment(
     goal_conditioned=goal_conditioned,
     to_float=to_float,
   )
+  return env
+
+def make_taxi_environment(
+  max_steps,
+  goal_conditioned,
+  oarg_wrapper,
+  seed,
+  grid_size=5,
+  bonus_for_passenger_in_taxi=0.001,
+):
+  del seed
+  env = taxi_environment_builder(
+    goal_conditioned=goal_conditioned,
+    max_steps=max_steps,
+    oarg_wrapper=oarg_wrapper,
+    use_learned_goal_classifiers=False,
+    grid_size=grid_size,
+    bonus_for_passenger_in_taxi=bonus_for_passenger_in_taxi,
+  )
+  env = wrappers.SinglePrecisionWrapper(env)
   return env
 
 
