@@ -80,3 +80,5 @@ class R2D2Config:
   use_decentralized_planner: bool = False
   use_gsm_var_client: bool = False
   warmstart_value_iteration: bool = False
+
+  descendant_threshold: float = 0.

@@ -1,3 +1,4 @@
+import time
 import random
 import numpy as np
 
@@ -55,11 +56,19 @@ class AMDP:
         self._target_node = target_node
 
     self._hash2vstar = hash2vstar
+    t0 = time.time()
     self._reward_function, self._discount_vector = self._abstract_reward_function(target_node)
+    print(f'[AMDP] Constructed reward function in {time.time() - t0:.3f} seconds.')
+    t1 = time.time()
 
     self._vf, self._policy, self.max_bellman_errors = self._solve_abstract_mdp(max_vi_iterations, vi_tol)
-    print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states.')
+    print(f'[AMDP] Solved AMDP[R-Max={rmax_factor}] with {self._policy.shape} abstract states in {time.time() - t1:.3f}s.')
     print(f'[AMDP] Using sparse matrix: {self._use_sparse_matrix}')
+    
+    self.time_report = {
+      'reward_fn': t1 - t0,
+      'vi': time.time() - t1
+    }
 
   def get_policy(self) -> Dict:
     """Serialize the policy vector into a dictionary with goal_hash -> goal_hash."""
@@ -192,6 +201,8 @@ class AMDP:
 
       if self._verbose:
         print(f'[AMDP] VI {i + 1} iters and {error} error.')
+
+    print(f'[AMDP] VI {i + 1} iters and {error} error.')
     
     if (values == 0).all() or (values == 1).all():
       policy = np.random.randint(

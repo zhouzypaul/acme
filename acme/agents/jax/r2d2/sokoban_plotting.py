@@ -48,6 +48,7 @@ class GSMPlotter:
     self._key_competence_plotting_dir = os.path.join(base_dir, 'plots', 'key_competence')
     self._door_competence_plotting_dir = os.path.join(base_dir, 'plots', 'door_competence')
     self._on_policy_count_plotting_dir = os.path.join(base_dir, 'plots', 'on_policy_counts')
+    self._transition_matrix_plotting_dir = os.path.join(base_dir, 'plots', 'transition_reward_matrices')
 
     os.makedirs(self._spatial_plotting_dir, exist_ok=True)
     os.makedirs(self._scatter_plotting_dir, exist_ok=True)
@@ -67,6 +68,7 @@ class GSMPlotter:
     os.makedirs(self._key_competence_plotting_dir, exist_ok=True)
     os.makedirs(self._door_competence_plotting_dir, exist_ok=True)
     os.makedirs(self._on_policy_count_plotting_dir, exist_ok=True)
+    os.makedirs(self._transition_matrix_plotting_dir, exist_ok=True)
 
   @staticmethod
   def subplot_grid(N):
@@ -117,7 +119,8 @@ class GSMPlotter:
       hash2vstar=state[14],
       gsm_iteration_times=state[15],
       edge2success=state[16],
-      edge2return=state[18]
+      edge2return=state[18],
+      vi_times=state[19],
     )
 
   def __call__(self, episode=0):
@@ -149,6 +152,12 @@ class GSMPlotter:
       self._plot_reward_mean_and_variance(episode=-1)
       self._plot_on_policy_counts(vars['on_policy_counts'], episode)
       self._plot_task_goal_success_curve(vars['edge2success'])
+      self._plot_transition_and_reward_matrices(
+        vars['hash2idx'],
+        vars['transition_matrix'],
+        vars['edge2return'],
+        episode
+      )
 
       cfn_plotting.plot_average_bonus_for_each_hash_bit(
         vars['hash2bonus'],
@@ -158,7 +167,7 @@ class GSMPlotter:
         vars['hash2idx'], vars['transition_matrix'], episode)
       
       self._log_memory_usage(episode)
-      self._plot_goal_space_size()
+      self._plot_goal_space_size(self._goal_space_sizes, vars['vi_times'])
 
   def run(self):
     for iteration in itertools.count():
@@ -186,6 +195,34 @@ class GSMPlotter:
       
     except Exception as e:
       print(f'Error: {e}')
+
+  def _plot_transition_and_reward_matrices(self, hash2idx, transition_matrix, edge2return, episode):
+    if not isinstance(transition_matrix, np.ndarray):
+      transition_matrix = transition_matrix.toarray()
+
+    plt.subplot(121)
+    plt.imshow(transition_matrix)
+    plt.colorbar()
+    plt.title('Transition Matrix')
+
+    reward_matrix = np.zeros_like(transition_matrix)
+    
+    for src in edge2return:
+      for dest in edge2return[src]:
+        if src in hash2idx and dest in hash2idx:
+          src_idx = hash2idx[src]
+          dest_idx = hash2idx[dest]
+          reward_matrix[src_idx, dest_idx] = edge2return[src][dest]
+
+    plt.subplot(122)
+    plt.imshow(reward_matrix)
+    plt.colorbar()
+    plt.title('Reward Matrix')
+    plt.savefig(
+      os.path.join(self._transition_matrix_plotting_dir,
+      f'transition_reward_matrices_{episode}.png')
+    )
+    plt.close()
 
   def visualize_value_function(
     self,
@@ -234,10 +271,14 @@ class GSMPlotter:
         
         self._already_plotted_goals.add(goal_hash)
 
-  def _plot_goal_space_size(self):
+  def _plot_goal_space_size(self, goal_space_sizes, vi_times):
     """Plot the size of the goal space as a function of episode."""
-    plt.plot(self._goal_space_sizes)
+    plt.subplot(121)
+    plt.plot(goal_space_sizes)
     plt.title('Goal Space Size')
+    plt.subplot(122)
+    plt.plot(vi_times)
+    plt.title('Planning Time')
     plt.savefig(os.path.join(self._gsm_iteration_times_dir, 'goal_space_size.png'))
     plt.close()
 

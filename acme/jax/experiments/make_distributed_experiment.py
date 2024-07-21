@@ -512,7 +512,9 @@ def make_distributed_experiment(
                            should_switch_goal=experiment.builder._config.should_switch_goal,
                            use_exploration_vf_for_expansion=use_exploration_vf_for_expansion,
                            use_decentralized_planning=experiment.builder._config.use_decentralized_planner,
-                           warmstart_value_iteration=experiment.builder._config.warmstart_value_iteration)
+                           warmstart_value_iteration=experiment.builder._config.warmstart_value_iteration,
+                           descendant_threshold=experiment.builder._config.descendant_threshold,
+                           )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
       gsm = savers.CheckpointingRunner(

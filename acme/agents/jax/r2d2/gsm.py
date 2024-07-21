@@ -54,6 +54,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       use_decentralized_planning: bool = False,
       maintain_sparse_transition_matrix: bool = True,
       warmstart_value_iteration: bool = False,
+      descendant_threshold: float = 0.,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -69,6 +70,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._use_decentralized_planning = use_decentralized_planning
     self._maintain_sparse_transition_matrix = maintain_sparse_transition_matrix
     self._warmstart_value_iteration = warmstart_value_iteration
+    self._descendant_threshold = descendant_threshold
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -132,6 +134,8 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._edge2return = collections.defaultdict(lambda: collections.defaultdict(float))
     self._edge2return_lock = threading.Lock()
 
+    self._vi_times = []
+
     base_dir = get_save_directory()
     self._base_plotting_dir = os.path.join(base_dir, 'plots')
     self._gsm_iteration_times_dir = os.path.join(self._base_plotting_dir, 'gsm_iteration_times')
@@ -167,6 +171,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       max_bellman_errors = goal_sampler._amdp.max_bellman_errors
       self._hash2bellman[expansion_node].extend(max_bellman_errors)
       self._hash2vstar[expansion_node] = goal_sampler._amdp.get_values()
+      self._vi_times.append(goal_sampler._amdp.time_report['vi'])
       return expansion_node, abstract_policy
   
   def get_descendants(self, current_node: Tuple): 
@@ -179,7 +184,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       rmax_factor=self._rmax_factor,
       goal_space_size=self._goal_space_size,
       edge2rewards=self._edge2return,
-    ).get_descendants(current_node)
+    ).get_descendants(current_node, threshold=self._descendant_threshold)
 
   def local_get_variables(self, names=()):
     hash2idx = self._thread_safe_deepcopy(self._hash2idx)
@@ -777,15 +782,16 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
                  self._gsm_iteration_times,
                  self._edge2successes,
                  self.has_seen_task_goal,
-                 edge2return)
-    assert len(to_return) == 19, len(to_return)
+                 edge2return,
+                 self._vi_times)
+    assert len(to_return) == 20, len(to_return)
     print(f'[GSM] Checkpointing took {time.time() - t0}s.')
     return to_return
 
   def restore(self, state: Tuple[Dict]):
     t0 = time.time()
     print('About to start restoring GSM from checkpoint.')
-    assert len(state) == 19, len(state)
+    assert len(state) == 20, len(state)
     self._hash2obs = state[0]
     self._hash2counts = collections.defaultdict(int, state[1])
     self._hash2bonus = state[2]
@@ -805,6 +811,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._edge2successes = state[16]
     self.has_seen_task_goal = state[17]
     self._edge2return = self._dict_to_default_dict(state[18], float)
+    self._vi_times = state[19]
     assert isinstance(self._edges, set), type(state[9])
     assert isinstance(self._off_policy_edges, set), type(state[10])
     assert isinstance(self.has_seen_task_goal, bool), type(state[17])
