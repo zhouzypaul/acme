@@ -514,6 +514,7 @@ def make_distributed_experiment(
                            use_decentralized_planning=experiment.builder._config.use_decentralized_planner,
                            warmstart_value_iteration=experiment.builder._config.warmstart_value_iteration,
                            descendant_threshold=experiment.builder._config.descendant_threshold,
+                           use_reward_matrix=experiment.builder._config.use_reward_matrix
                            )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
