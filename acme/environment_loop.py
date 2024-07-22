@@ -89,7 +89,7 @@ class EnvironmentLoop(core.Worker):
       observers: Sequence[observers_lib.EnvLoopObserver] = (),
       goal_space_manager: GoalSpaceManager = None,
       task_goal_probability: float = 0.1,
-      always_learn_about_task_goal: bool = True,
+      always_learn_about_task_goal: bool = False,
       always_learn_about_exploration_goal: bool = False,
       actor_id: int = 0,
       use_random_policy_for_exploration: bool = True,
@@ -812,15 +812,6 @@ class EnvironmentLoop(core.Worker):
           novelty_scores,
           method='novelty_sampling'
         )
-        
-        for start_state_hash, start_obs in self._start_states.items():
-
-          if start_state_hash not in goal_space:
-            print(f'Adding start state {start_state_hash} to goal space.')
-            return {
-              **discovered_goals,
-              start_state_hash: start_obs
-            }
 
         return discovered_goals
 
@@ -1112,9 +1103,26 @@ class EnvironmentLoop(core.Worker):
         ) 
         for transition in trajectory
       }
+
+    def append_new_start_states_to_hash_to_obs():
+      new_dict = {}
+      
+      for start_state_hash, start_obs in self._start_states.items():
+
+          if start_state_hash not in self.goal_dict:
+            print(f'Adding start state {start_state_hash} to goal space.')
+            new_dict[goals2key(start_state_hash)] = (
+              jnp.asarray(start_obs.observation[:, :, :3]),
+              int(start_obs.action),
+              float(start_obs.reward)
+            )
+
+      print(f'Saw {len(new_dict)} new start states.')
+      return new_dict
     
     hash2count = extract_counts()
     hash2obs = extract_goal_to_obs()
+    new_start_states = append_new_start_states_to_hash_to_obs()
     edge2count = attempted2counts()
     hash2discount = extract_discounts()
     edge2successes = edge2success()
@@ -1135,7 +1143,7 @@ class EnvironmentLoop(core.Worker):
 
     # futures allows us to update() asynchronously
     self._goal_space_manager.update(
-      hash2obs,
+      {**hash2obs, **new_start_states},
       hash2count,
       edge2count,
       hash2discount,
