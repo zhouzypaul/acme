@@ -82,3 +82,4 @@ class R2D2Config:
   warmstart_value_iteration: bool = False
 
   descendant_threshold: float = 0.
+  use_reward_matrix: bool = False

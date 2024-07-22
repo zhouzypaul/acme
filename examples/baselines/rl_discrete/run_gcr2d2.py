@@ -95,6 +95,7 @@ flags.DEFINE_float("novelty_threshold_for_goal_creation", -1., "Threshold for no
 flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for target node sampling. -1 means sum_sampling.")
 flags.DEFINE_bool("warmstart_value_iteration", False, "Whether to warmstart value iteration with previous solution.")
 flags.DEFINE_float("descendant_threshold", 0., "Threshold for descendant selection")
+flags.DEFINE_bool("use_reward_matrix", False, "Whether to use reward matrix for planning or not")
 
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
@@ -106,11 +107,13 @@ flags.DEFINE_bool('use_decentralized_planner', False, 'In decentralized planning
 flags.DEFINE_bool('use_gsm_var_client', False, 'Whether to use the GSM variable client or not')
 
 flags.DEFINE_integer('taxi_grid_size', 5, 'Size of the taxi grid on each dim.')
+flags.DEFINE_float('bonus_for_passenger_in_taxi', 0.001, 'Bonus for passenger in taxi')
 
 FLAGS = flags.FLAGS
 
 
-def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_size=5):
+def make_environment_factory(env_name, max_episode_steps, to_float,
+  taxi_grid_size=5, bonus_for_passenger_in_taxi=0.001):
   
   minigrid_factory = functools.partial(
     helpers.make_minigrid_environment,
@@ -133,7 +136,7 @@ def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_si
 
   taxi_factory = functools.partial(
     helpers.make_taxi_environment, max_steps=max_episode_steps, oarg_wrapper=True,
-      grid_size=taxi_grid_size)
+      grid_size=taxi_grid_size, bonus_for_passenger_in_taxi=bonus_for_passenger_in_taxi)
   
   if 'MiniGrid' in env_name:
     return minigrid_factory
@@ -155,9 +158,11 @@ def build_experiment_config():
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
   taxi_grid_size = FLAGS.taxi_grid_size
+  bonus_for_passenger_in_taxi = FLAGS.bonus_for_passenger_in_taxi
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return make_environment_factory(env_name, max_episode_steps, to_float=False, taxi_grid_size=taxi_grid_size)(
+    return make_environment_factory(env_name, max_episode_steps, to_float=False,
+      taxi_grid_size=taxi_grid_size, bonus_for_passenger_in_taxi=bonus_for_passenger_in_taxi)(
       seed=seed, goal_conditioned=True)
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)\
@@ -198,7 +203,8 @@ def build_experiment_config():
       use_gsm_var_client=FLAGS.use_gsm_var_client,
       warmstart_value_iteration=FLAGS.warmstart_value_iteration,
       n_warmup_episodes=FLAGS.num_warmup_episodes,
-      descendant_threshold=FLAGS.descendant_threshold
+      descendant_threshold=FLAGS.descendant_threshold,
+      use_reward_matrix=FLAGS.use_reward_matrix
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
@@ -260,9 +266,11 @@ def build_exploration_policy_experiment_config():
   max_episode_steps = FLAGS.max_episode_steps
   target_update_period = FLAGS.cfn_target_update_period
   taxi_grid_size = FLAGS.taxi_grid_size
+  bonus_for_passenger_in_taxi = FLAGS.bonus_for_passenger_in_taxi
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return make_environment_factory(env_name, max_episode_steps, to_float=False, taxi_grid_size=taxi_grid_size)(
+    return make_environment_factory(env_name, max_episode_steps, to_float=False,
+      taxi_grid_size=taxi_grid_size, bonus_for_passenger_in_taxi=bonus_for_passenger_in_taxi)(
       seed=seed, goal_conditioned=False)
   
   def rnd_network_factory(env_spec):
