@@ -97,6 +97,7 @@ flags.DEFINE_integer('sequence_period', 20, 'How often to start a new sequence. 
 
 # MiniGrid Config
 flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
+flags.DEFINE_integer('taxi_grid_size', 5, 'Size of taxi grid')
 
 # Plotting config
 # Setting both to -1 disables plotting
@@ -170,6 +171,7 @@ def build_experiment_config():
   # experiments via Launchpad.
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
+  taxi_grid_size = FLAGS.taxi_grid_size
 
   if not FLAGS.use_stale_rewards:
     reason = 'because intrinsic learner does not have access to o_{t-1}'
@@ -197,6 +199,15 @@ def build_experiment_config():
 
   def visgrid_environment_factory(seed: int) -> dm_env.Environment:
     return helpers.make_visgrid_environment(oar_wrapper=True)
+
+  def taxi_environment_factory(seed: int) -> dm_env.Environment:
+    return helpers.make_taxi_environment(
+      max_steps=max_episode_steps,
+      seed=seed,
+      goal_conditioned=False,
+      oar_wrapper=True,
+      grid_size=taxi_grid_size,
+    )
 
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   tx = rlax.IDENTITY_PAIR if FLAGS.use_identity_tx else rlax.SIGNED_HYPERBOLIC_PAIR
@@ -259,6 +270,8 @@ def build_experiment_config():
     env_factory = minigrid_environment_factory
   elif 'visgrid' in env_name.lower():
     env_factory = visgrid_environment_factory
+  elif 'taxi' in env_name.lower():
+    env_factory = taxi_environment_factory
   else:
     env_factory = environment_factory
 

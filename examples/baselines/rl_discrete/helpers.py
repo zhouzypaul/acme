@@ -32,6 +32,8 @@ import gym
 import haiku as hk
 import jax.numpy as jnp
 
+from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
+
 
 FLAGS = flags.FLAGS
 
@@ -161,6 +163,25 @@ def make_visgrid_environment(
   if oar_wrapper:
      env = wrappers.ObservationActionRewardWrapper(env)
   return env 
+
+
+def make_taxi_environment(
+  max_steps,
+  goal_conditioned,
+  oar_wrapper,
+  seed,
+  grid_size=5,
+):
+  del seed
+  env = taxi_environment_builder(
+    goal_conditioned=goal_conditioned,
+    max_steps=max_steps,
+    oar_wrapper=oar_wrapper,
+    use_learned_goal_classifiers=False,
+    grid_size=grid_size,
+  )
+  env = wrappers.SinglePrecisionWrapper(env)
+  return env
 
 
 def make_dqn_atari_network(

@@ -65,8 +65,9 @@ class AtariTorso(hk.Module):
 class CFNAtariTorso(hk.Module):
   """Simple convolutional stack commonly used for Atari."""
 
-  def __init__(self, w_init=None):
+  def __init__(self, w_init=None, to_float=False):
     super().__init__(name='atari_torso')
+    self._to_float = to_float
     self._network = hk.Sequential([
         hk.Conv2D(32, [8, 8], 4, w_init=w_init), jax.nn.relu,
         hk.Conv2D(64, [4, 4], 2, w_init=w_init), jax.nn.relu,
@@ -78,6 +79,10 @@ class CFNAtariTorso(hk.Module):
     batched_inputs = inputs_rank == 4
     if inputs_rank < 3 or inputs_rank > 4:
       raise ValueError('Expected input BHWC or HWC. Got rank %d' % inputs_rank)
+
+    if self._to_float:
+      assert inputs.dtype == jnp.uint8, (inputs.max(), inputs.dtype)
+      inputs = inputs.astype(jnp.float32) / 255.
 
     outputs = self._network(inputs)
 
@@ -110,9 +115,12 @@ class DeepAtariTorso(hk.Module):
           resnet.DownsamplingStrategy.CONV_MAX,) * 3,
       hidden_sizes: Sequence[int] = (256,),
       use_layer_norm: bool = False,
-      name: str = 'deep_atari_torso'):
+      name: str = 'deep_atari_torso',
+      to_float: bool = False,
+    ):
     super().__init__(name=name)
     self._use_layer_norm = use_layer_norm
+    self._to_float = to_float
     self.resnet = resnet.ResNetTorso(
         channels_per_group=channels_per_group,
         blocks_per_group=blocks_per_group,
@@ -123,6 +131,9 @@ class DeepAtariTorso(hk.Module):
     self.mlp_head = hk.nets.MLP(output_sizes=hidden_sizes, activate_final=True)
 
   def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
+    if self._to_float:
+      assert x.dtype == jnp.uint8, (x.max(), x.dtype)
+      x = x.astype(jnp.float32) / 255.
     output = self.resnet(x)
     output = jax.nn.relu(output)
     output = hk.Flatten(preserve_dims=-3)(output)
@@ -173,10 +184,11 @@ class R2D2AtariNetwork(hk.RNNCore):
   See https://openreview.net/forum?id=r1lyTjAqYX for more information.
   """
 
-  def __init__(self, num_actions: int):
+  def __init__(self, num_actions: int, to_float: bool = False):
     super().__init__(name='r2d2_atari_network')
     self._embed = embedding.OAREmbedding(
-        DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True), num_actions)
+        DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True, to_float=to_float),
+      num_actions)
     self._core = hk.LSTM(512)
     self._duelling_head = duelling.DuellingMLP(num_actions, hidden_sizes=[512])
     self._num_actions = num_actions

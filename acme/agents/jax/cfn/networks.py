@@ -81,7 +81,7 @@ def make_networks(
       if use_orthogonal_initialization:
         w_init = hk.initializers.Orthogonal(scale=jnp.sqrt(2))
       self._network = hk.Sequential([
-        networks_lib.CFNAtariTorso(w_init=w_init),
+        networks_lib.CFNAtariTorso(w_init=w_init, to_float=True),
         # TODO(ab/sl): test if fc_hidden is a good idea
         # hk.Linear(256),
         # jax.nn.relu,
