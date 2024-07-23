@@ -27,6 +27,8 @@ class GSMPlotter:
     self._door_bit = door_bit
     self._goal_space_sizes = []
 
+    self._make_debug_version_of_skill_graph = False
+
     base_dir = get_save_directory()
     self._already_plotted_goals = set()
     self._spatial_plotting_dir = os.path.join(base_dir, 'plots', 'spatial_bonus')
@@ -122,7 +124,23 @@ class GSMPlotter:
       self._reward_variances.append(vars['reward_var'])
       self._goal_space_sizes.append(len(vars['hash2obs']))
       self._plot_hash2bonus(vars['hash2bonus'], episode)
-      self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], episode)
+
+      if self._make_debug_version_of_skill_graph:
+        self._old_plot_skill_graph(
+          vars['edges'],
+          vars['off_policy_edges'],
+          episode
+        )
+      else:
+        self._new_plot_skill_graph(
+          vars['edges'],
+          vars['off_policy_edges'],
+          vars['hash2bonus'],
+          vars['hash2vstar'],
+          vars['hash2obs'],
+          episode
+        )
+
       self._plot_bellman_errors(vars['hash2bellman'], episode)
       self._plot_spatial_vstar(vars['hash2vstar'], episode)
       self._plot_gsm_iteration_times(vars['gsm_iteration_times'])
@@ -288,7 +306,7 @@ class GSMPlotter:
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
     plt.close()
 
-  def _plot_skill_graph(self, edges, off_policy_edges, episode, include_off_policy_edges=True):
+  def _old_plot_skill_graph(self, edges, off_policy_edges, episode, include_off_policy_edges=True):
     """Spatially plot the nodes and edges of the skill-graph."""
 
     def split_edges(edges):
@@ -332,6 +350,108 @@ class GSMPlotter:
     split_then_plot(off_policy_edges, color='red')
     plt.savefig(os.path.join(self._off_policy_graph_plotting_dir, f'offline_skill_graph_{episode}.png'))
     plt.close()
+
+  def _new_plot_skill_graph(self, edges, off_policy_edges, hash2bonus, hash2vstar, hash2obs, episode, include_off_policy_edges=True):
+    """Spatially plot the nodes and edges of the skill-graph in a grid-based layout."""
+
+    def split_edges(edges):
+      # Split the edges based on room number
+      rooms2edges = collections.defaultdict(list)
+      for edge in edges:
+        src, dest = edge
+        if src[2] == dest[2]:
+          key = src[2], dest[2]
+          rooms2edges[key].append(edge)
+      return rooms2edges
+
+    def plot_edges(ax, e, color, node2val):
+      for edge in e:
+        x1, y1 = edge[0][0], edge[0][1]
+        x2, y2 = edge[1][0], edge[1][1]
+        val = (node2val[edge[0]] + node2val[edge[1]]) / 2
+        val = max(0.05, val / max(node2val.values()))
+        ax.plot([x1, x2], [y1, y2], color=color, alpha=val)
+        ax.scatter([x1, x2], [y1, y2], color=color, alpha=val)
+
+    def create_grid_structure(fig, rooms2edges):
+      n_plots = len(rooms2edges)
+      grid = plt.GridSpec(3, 7, figure=fig)
+      axes_structure = {
+        0: grid[0, 2], 1: grid[0, 3], 2: grid[0, 4],
+        3: grid[1, 1], 4: grid[1, 2], 5: grid[1, 3], 6: grid[1, 4], 7: grid[1, 5],
+        8: grid[2, 1], 9: grid[2, 2], 10: grid[2, 3], 11: grid[2, 4], 12: grid[2, 5], 13: grid[2, 6]
+      }
+      return axes_structure
+
+    def _node2val(hash2bonus, hash2vstar):
+      # Find the top 10 nodes with the highest bonus
+      top_nodes = sorted(hash2bonus, key=hash2bonus.get, reverse=True)[:10]
+
+      # hash2vstar is a nested dictionary
+      # first it takes a goal node and then it outputs a value function (map from node to val).
+      # for each of the top nodes, average together the value functions.
+
+      node2val = collections.defaultdict(float)
+      for node in top_nodes:
+        for n, v in hash2vstar[node].items():
+          node2val[n] += v
+
+      return node2val
+
+    def _get_background_images(hash2obs, hash2bonus):
+      # For each room, find the obs with the highest bonus
+      room2hashobs = collections.defaultdict(list)
+      
+      for hash, obs in hash2obs.items():
+        room = hash[2]
+        room2hashobs[room].append((hash, obs))
+
+      room_to_highest_bonus_obs = {}
+      
+      for room in room2hashobs:
+        hash_obs_pairs = room2hashobs[room]
+        bonuses = [hash2bonus.get(h, 0) for h, _ in hash_obs_pairs]
+        highest_bonus_idx = np.argmax(bonuses)
+        room_to_highest_bonus_obs[room] = hash_obs_pairs[highest_bonus_idx][1]
+
+      return room_to_highest_bonus_obs
+
+    def plot_skill_graphs(edges, node2val, room2background, color, save_path):
+      rooms2edges = split_edges(edges)
+      if not rooms2edges:
+        return
+
+      fig = plt.figure(figsize=(20, 12))
+      axes_structure = create_grid_structure(fig, rooms2edges)
+
+      for i, (rooms, edges) in enumerate(rooms2edges.items()):
+        if i >= 14:  # We only have space for 14 subplots in our structure
+          raise ValueError(f'Too many rooms to plot: {len(rooms2edges)}')
+        room = rooms[0]
+        ax = fig.add_subplot(axes_structure[room])
+        plot_edges(ax, edges, color=color, node2val=node2val)
+        ax.imshow(room2background[room].observation, alpha=0.3, extent=[0, 150, 125, 300])
+        ax.set_title(f'Room {rooms[0]}')
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+      plt.tight_layout()
+      plt.savefig(save_path)
+      plt.close()
+
+    # node2val = self._node2val(hash2bonus, hash2vstar)
+    node2val = _node2val(hash2bonus, hash2vstar)
+    room2background = _get_background_images(hash2obs, hash2bonus)
+
+    # Plot online skill graph
+    online_save_path = os.path.join(self._skill_graph_plotting_dir, f'online_skill_graph_{episode}.png')
+    plot_skill_graphs(edges, node2val, room2background, color='black', save_path=online_save_path)
+
+    # Plot offline skill graph if include_off_policy_edges is True
+    if include_off_policy_edges:
+      offline_save_path = os.path.join(self._off_policy_graph_plotting_dir, f'offline_skill_graph_{episode}.png')
+      plot_skill_graphs(off_policy_edges, node2val, room2background, color='red', save_path=offline_save_path)
+  
 
   def _plot_bellman_errors(self, hash2bellman: Dict, episode: int):
     """Randomly sample 4 nodes and plot their bellman errors as a function of iteration."""
