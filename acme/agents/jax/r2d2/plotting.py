@@ -10,6 +10,9 @@ import collections
 import numpy as np
 import matplotlib.pyplot as plt
 
+from matplotlib.colors import Normalize
+from matplotlib.colors import LinearSegmentedColormap
+
 from typing import Tuple, Optional, Dict
 from acme.utils.paths import get_save_directory
 
@@ -24,6 +27,7 @@ class GSMPlotter:
     self._key_bit = key_bit
     self._door_bit = door_bit
     self._goal_space_sizes = []
+    self._make_fancy_plot = True
 
     base_dir = get_save_directory()
     self._already_plotted_goals = set()
@@ -117,7 +121,11 @@ class GSMPlotter:
       self._reward_variances.append(vars['reward_var'])
       self._goal_space_sizes.append(len(vars['hash2obs']))
       self._plot_hash2bonus(vars['hash2bonus'], episode)
-      self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], episode)
+      
+      if self._make_fancy_plot:
+        self.enhanced_plot_skill_graph(vars['edges'], vars['hash2bonus'], episode)
+      else:
+        self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], episode)
       self._plot_bellman_errors(vars['hash2bellman'], episode)
       self._plot_spatial_vstar(vars['hash2vstar'], episode)
       self._plot_gsm_iteration_times(vars['gsm_iteration_times'])
@@ -287,6 +295,114 @@ class GSMPlotter:
     plt.scatter(xs, ys, c=bonuses, s=40, marker='s')
     plt.colorbar()
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
+    plt.close()
+
+  def enhanced_plot_skill_graph(self, edges, hash2bonus, episode, background_image=None):
+    """
+    Plot an enhanced version of the skill graph with node colors representing probabilities.
+    
+    Args:
+    - edges: List of edges in the graph.
+    - hash2bonus: Dict mapping node hashes to sampling scores.
+    - episode: Current episode number.
+    - background_image: Optional background image to overlay the graph on (shape: 84x84x3).
+    """
+    
+    def normalize_scores(scores):
+      """Normalize scores to probabilities, zeroing out all but top 10."""
+      top_10_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:10]
+      top_10_keys = set(item[0] for item in top_10_items)
+      normalized = {k: v if k in top_10_keys else 0 for k, v in scores.items()}
+      total = sum(normalized.values())
+      if total > 0:
+        normalized = {k: v / total for k, v in normalized.items()}
+      else:
+        print("Warning: All scores are zero!")
+        normalized = {k: 0 for k in normalized}
+      return normalized
+    
+    def plot_edges(ax, edges, scores, edge_color):
+      for edge in edges:
+        x1, y1 = edge[0][0], edge[0][1]
+        x2, y2 = edge[1][0], edge[1][1]
+        
+        # Plot edge
+        ax.plot([x1, x2], [y1, y2], color=edge_color, alpha=0.45, linewidth=1.0)
+
+    def plot_nodes(ax, nodes, scores):
+      for node in nodes:
+        x, y = node[0], node[1]
+        color = scores.get(node, 0)
+        ax.scatter(x, y, s=200, c=[color], cmap=cmap, norm=norm, edgecolors='black', linewidth=1) 
+    
+    def split_edges(edges):
+      """Split edges into no->no and yes->yes categories."""
+      no_no = []
+      yes_yes = []
+      for edge in edges:
+        if edge[0][2] == edge[1][2] == 0:
+          no_no.append(edge)
+        elif edge[0][2] == edge[1][2] == 1:
+          yes_yes.append(edge)
+      return no_no, yes_yes
+    
+    # Normalize scores
+    normalized_scores = normalize_scores(hash2bonus)
+    
+    # Create a white to black colormap
+    cmap = LinearSegmentedColormap.from_list("custom", ["#FFFFFF", "#000000"])
+    
+    # Create a normalize object for consistent color mapping
+    max_score = max(normalized_scores.values())
+    print("Max normalized score:", max_score)
+    norm = plt.Normalize(vmin=0, vmax=max_score)
+    
+    # Set up the plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+    
+    # If background image is provided, display it
+    if background_image is not None:
+      ax1.imshow(background_image, extent=[0, 1, 0, 1], alpha=0.5)
+      ax2.imshow(background_image, extent=[0, 1, 0, 1], alpha=0.5)
+    
+    # Split edges
+    no_no, yes_yes = split_edges(edges)
+
+    yes_yes_nodes = {edge[0] for edge in yes_yes} | {edge[1] for edge in yes_yes}
+    no_no_nodes = {edge[0] for edge in no_no} | {edge[1] for edge in no_no}
+    
+    # Plot on the first subplot
+    ax1.set_title('Without Key', fontsize=16)
+    plot_edges(ax1, no_no, normalized_scores, edge_color='#1f77b4')  # Blue edges for no->no
+    plot_nodes(ax1, no_no_nodes, normalized_scores)
+    ax1.set_xlabel('X location', fontsize=16)
+    ax1.set_ylabel('Y location', fontsize=16)
+    
+    # Plot on the second subplot
+    ax2.set_title('With Key', fontsize=16)
+    plot_edges(ax2, yes_yes, normalized_scores, edge_color='#2ca02c')  # Green edges for yes->yes
+    plot_nodes(ax2, yes_yes_nodes, normalized_scores)
+    ax2.set_xlabel('X location', fontsize=16)
+    
+    # Enhance overall plot appearance
+    plt.tight_layout()
+    
+    # Add a color bar to represent node probabilities
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=[ax1, ax2])
+    cbar.set_label('Node Sampling Probability', fontsize=12)
+
+    for ax in [ax1, ax2]:
+      ax.set_xlim(0, 12)
+      ax.set_ylim(0, 12)
+      ax.set_xticks([])
+      ax.set_yticks([])
+    
+    # Save the figure
+    plt.savefig(
+      os.path.join(self._skill_graph_plotting_dir, f'enhanced_skill_graph_{episode}.png'),
+      dpi=300, bbox_inches='tight')
     plt.close()
 
   def _plot_skill_graph(self, edges, off_policy_edges, episode, include_off_policy_edges=True):

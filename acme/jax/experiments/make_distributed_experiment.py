@@ -38,7 +38,8 @@ import launchpad as lp
 import reverb
 from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.cfn.cfn import CFN
-from acme.agents.jax.r2d2.sokoban_plotting import GSMPlotter
+# from acme.agents.jax.r2d2.sokoban_plotting import GSMPlotter
+from acme.agents.jax.r2d2.plotting import GSMPlotter
 
 ActorId = int
 InferenceServer = inference_server_lib.InferenceServer[
