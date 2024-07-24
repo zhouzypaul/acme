@@ -69,6 +69,10 @@ flags.DEFINE_string('acme_id', None, 'Experiment identifier to use for Acme.')
 flags.DEFINE_integer('max_episode_steps', 1_000, 'Episode timeout')
 flags.DEFINE_integer('num_warmup_episodes', 20, 'Number of episodes to warmup the replay buffer')
 
+# Policy learning flags.
+flags.DEFINE_integer('trace_length', 40, 'Length of the RNN trace')  # Trace and sequence_period need to be 10 for 128, 128, 3 images.
+flags.DEFINE_integer('sequence_period', 20, 'Chunking period for adding seqs to replay.')
+
 # Novelty search flags.
 flags.DEFINE_float('intrinsic_reward_coefficient', 0.001, 'weight given to intrinsic reward for RND')
 flags.DEFINE_float('extrinsic_reward_coefficient', 1.0, 'weight given to extrinsic reward for RND (default to 0, so only use intrinsic)')
@@ -175,8 +179,8 @@ def build_experiment_config():
   # Configure the agent.
   config = r2d2.R2D2Config(
       burn_in_length=0,  # NOTE(ab): got rid of burn_in
-      trace_length=40,
-      sequence_period=20,
+      trace_length=FLAGS.trace_length,
+      sequence_period=FLAGS.sequence_period,
       min_replay_size=1_000,
       batch_size=batch_size,
       prefetch_size=1,
@@ -292,8 +296,8 @@ def build_exploration_policy_experiment_config():
   # TODO(ab): pick hyperparameters that make sense for R2D2 + RND.
   config = r2d2.R2D2Config(
       burn_in_length=0,  # NOTE(ab): got rid of burn_in
-      trace_length=40,
-      sequence_period=20,
+      trace_length=FLAGS.trace_length,
+      sequence_period=FLAGS.sequence_period,
       min_replay_size=1_000,
       batch_size=batch_size,
       prefetch_size=1,
