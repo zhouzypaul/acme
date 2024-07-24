@@ -109,6 +109,8 @@ flags.DEFINE_bool('use_gsm_var_client', False, 'Whether to use the GSM variable 
 flags.DEFINE_integer('taxi_grid_size', 5, 'Size of the taxi grid on each dim.')
 flags.DEFINE_float('bonus_for_passenger_in_taxi', 0.001, 'Bonus for passenger in taxi')
 
+flags.DEFINE_float('background_extrinsic_reward_coefficient', 0.0, 'weight given to extrinsic reward for background RND')
+
 FLAGS = flags.FLAGS
 
 
@@ -204,7 +206,8 @@ def build_experiment_config():
       warmstart_value_iteration=FLAGS.warmstart_value_iteration,
       n_warmup_episodes=FLAGS.num_warmup_episodes,
       descendant_threshold=FLAGS.descendant_threshold,
-      use_reward_matrix=FLAGS.use_reward_matrix
+      use_reward_matrix=FLAGS.use_reward_matrix,
+      background_extrinsic_reward_coefficient=FLAGS.background_extrinsic_reward_coefficient
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

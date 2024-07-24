@@ -106,6 +106,7 @@ class EnvironmentLoop(core.Worker):
       decentralized_planner_kwargs: Dict = {},
       use_gsm_var_client: bool = False,
       n_warmup_episodes: int = 20,
+      background_extrinsic_reward_coefficient: float = 1e-2,
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -138,6 +139,7 @@ class EnvironmentLoop(core.Worker):
     self._max_option_duration = max_option_duration
     self._recompute_expansion_node_on_interruption = recompute_expansion_node_on_interruption
     self._n_warmup_episodes = n_warmup_episodes
+    self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -231,7 +233,7 @@ class EnvironmentLoop(core.Worker):
 
     return (current_hash[dims] == goal_hash[dims]).all()
     
-  def goal_reward_func(self, current: OARG, goal: OARG) -> Tuple[bool, float]:
+  def goal_reward_func(self, current: OARG, goal: OARG, method: str = 'concat'):
     """Is the goal achieved in the current state."""
 
     # Exploration mode
@@ -239,7 +241,12 @@ class EnvironmentLoop(core.Worker):
       return False, self._get_intrinsic_reward(current)
 
     reached = self._reached(current.goals, goal.goals)
-    return reached, float(reached)
+    reward = float(reached)
+
+    if method == 'concat':
+      reward += (self._background_extrinsic_reward_coefficient * current.reward)
+
+    return reached, reward
   
   def _get_intrinsic_reward(self, state: OARG) -> float:
     """Novelty-based intrinsic reward associated with `state`."""
@@ -276,7 +283,7 @@ class EnvironmentLoop(core.Worker):
   ) -> Tuple[OARG, bool, float]:
     new_obs = self.augment(
       obs.observation, goal.observation, method=method)
-    reached, reward = self.goal_reward_func(obs, goal)
+    reached, reward = self.goal_reward_func(obs, goal, method=method)
     return OARG(
       observation=new_obs,  # pursued goal
       action=obs.action,

@@ -56,6 +56,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       warmstart_value_iteration: bool = False,
       descendant_threshold: float = 0.,
       use_reward_matrix: bool = False,
+      background_extrinsic_reward_coefficient: float = 0.,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -73,6 +74,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._warmstart_value_iteration = warmstart_value_iteration
     self._descendant_threshold = descendant_threshold
     self._use_reward_matrix = use_reward_matrix
+    self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -308,6 +310,8 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     """Is the goal achieved in the current state."""
     dims = np.where(goal.goals >= 0)
     reached = (current.goals[dims] == goal.goals[dims]).all()
+    reward = float(reached) + (
+      self._background_extrinsic_reward_coefficient * current.reward)
     return reached, float(reached)
       
   def obs_augment_fn(
