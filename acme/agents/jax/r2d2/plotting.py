@@ -123,7 +123,12 @@ class GSMPlotter:
       self._plot_hash2bonus(vars['hash2bonus'], episode)
       
       if self._make_fancy_plot:
-        self.enhanced_plot_skill_graph(vars['edges'], vars['hash2bonus'], episode)
+        self.enhanced_plot_skill_graph(
+          vars['edges'],
+          vars['hash2bonus'],
+          vars['hash2vstar'],
+          episode
+        )
       else:
         self._plot_skill_graph(vars['edges'], vars['off_policy_edges'], episode)
       self._plot_bellman_errors(vars['hash2bellman'], episode)
@@ -297,7 +302,13 @@ class GSMPlotter:
     plt.savefig(os.path.join(self._node_expansion_prob_dir, f'expansion_probs_{episode}.png'))
     plt.close()
 
-  def enhanced_plot_skill_graph(self, edges, hash2bonus, episode, background_image=None):
+  def enhanced_plot_skill_graph(
+    self,
+    edges,
+    hash2bonus,
+    hash2vstar,
+    episode,
+    background_image=None):
     """
     Plot an enhanced version of the skill graph with node colors representing probabilities.
     
@@ -321,19 +332,24 @@ class GSMPlotter:
         normalized = {k: 0 for k in normalized}
       return normalized
     
-    def plot_edges(ax, edges, scores, edge_color):
+    def plot_edges(ax, edges, scores, edge_color, node2val):
       for edge in edges:
         x1, y1 = edge[0][0], edge[0][1]
         x2, y2 = edge[1][0], edge[1][1]
+
+        val = (node2val.get(edge[0], 0) + node2val.get(edge[1], 0)) / 2
+        val = max(0.05, val / max(node2val.values()))
         
         # Plot edge
-        ax.plot([x1, x2], [y1, y2], color=edge_color, alpha=0.45, linewidth=1.0)
+        ax.plot([x1, x2], [y1, y2], color=edge_color, alpha=val, linewidth=1.0)
 
-    def plot_nodes(ax, nodes, scores):
+    def plot_nodes(ax, nodes, scores, node2val):
       for node in nodes:
         x, y = node[0], node[1]
         color = scores.get(node, 0)
-        ax.scatter(x, y, s=200, c=[color], cmap=cmap, norm=norm, edgecolors='black', linewidth=1) 
+        val = node2val.get(node, 0)
+        alpha = max(0.05, val / max(node2val.values()))
+        ax.scatter(x, y, alpha=alpha, s=200, c=[color], cmap=cmap, norm=norm, edgecolors='black', linewidth=1) 
     
     def split_edges(edges):
       """Split edges into no->no and yes->yes categories."""
@@ -345,6 +361,23 @@ class GSMPlotter:
         elif edge[0][2] == edge[1][2] == 1:
           yes_yes.append(edge)
       return no_no, yes_yes
+
+    def _node2val(hash2bonus, hash2vstar):
+      # Find the top 10 nodes with the highest bonus
+      top_nodes = sorted(hash2bonus, key=hash2bonus.get, reverse=True)[:10]
+
+      # hash2vstar is a nested dictionary
+      # first it takes a goal node and then it outputs a value function (map from node to val).
+      # for each of the top nodes, average together the value functions.
+
+      node2val = collections.defaultdict(float)
+      for node in top_nodes:
+        for n, v in hash2vstar.get(node, {}).items():
+          node2val[n] += v
+
+      return node2val
+
+    node2val = _node2val(hash2bonus, hash2vstar)
     
     # Normalize scores
     normalized_scores = normalize_scores(hash2bonus)
@@ -373,15 +406,15 @@ class GSMPlotter:
     
     # Plot on the first subplot
     ax1.set_title('Without Key', fontsize=16)
-    plot_edges(ax1, no_no, normalized_scores, edge_color='#1f77b4')  # Blue edges for no->no
-    plot_nodes(ax1, no_no_nodes, normalized_scores)
+    plot_edges(ax1, no_no, normalized_scores, edge_color='#1f77b4', node2val=node2val)  # Blue edges for no->no
+    plot_nodes(ax1, no_no_nodes, normalized_scores, node2val)
     ax1.set_xlabel('X location', fontsize=16)
     ax1.set_ylabel('Y location', fontsize=16)
     
     # Plot on the second subplot
     ax2.set_title('With Key', fontsize=16)
-    plot_edges(ax2, yes_yes, normalized_scores, edge_color='#2ca02c')  # Green edges for yes->yes
-    plot_nodes(ax2, yes_yes_nodes, normalized_scores)
+    plot_edges(ax2, yes_yes, normalized_scores, edge_color='#2ca02c', node2val=node2val)  # Green edges for yes->yes
+    plot_nodes(ax2, yes_yes_nodes, normalized_scores, node2val)
     ax2.set_xlabel('X location', fontsize=16)
     
     # Enhance overall plot appearance
