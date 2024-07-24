@@ -352,13 +352,13 @@ class RNDLearner(acme.Learner):
 
     assert (obs_var >= 0).all(), obs_var[obs_var < 0]
     assert not (obs_var == 0).all(), obs_var
-    assert obs_mean.shape == obs_var.shape == (84, 84, 3), (obs_mean.shape, obs_var.shape)
+    assert obs_mean.shape == obs_var.shape, (obs_mean.shape, obs_var.shape)
     
     obs1 = transitions.observation[0, 0, 0, ...]
     obs2 = transitions.observation[-1, -1, -1, ...]
     
     assert transitions.observation.shape[0] == 1, ipdb.set_trace()
-    assert obs1.shape == obs2.shape == (84, 84, 3), ipdb.set_trace()
+    assert obs1.shape == obs2.shape, ipdb.set_trace()
     
     plt.figure(figsize=(16, 8))
     plt.subplot(221)
