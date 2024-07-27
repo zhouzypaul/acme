@@ -103,6 +103,7 @@ flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exp
 flags.DEFINE_bool('use_decentralized_planner', False, 'In decentralized planning, each actor computes its own plan.')
 flags.DEFINE_bool('use_gsm_var_client', False, 'Whether to use the GSM variable client or not')
 flags.DEFINE_bool('warmstart_vi', False, 'Whether to warmstart VI with the previous soln of VI.')
+flags.DEFINE_float('background_extrinsic_reward_coefficient', 0.0, 'weight given to extrinsic reward for option rf.')
 
 # Environment flags
 flags.DEFINE_integer('action_repeat', 4, 'Number of frames to repeat the action for.')
@@ -193,6 +194,7 @@ def build_experiment_config():
       use_gsm_var_client=FLAGS.use_gsm_var_client,
       warmstart_vi=FLAGS.warmstart_vi,
       descendant_threshold=FLAGS.descendant_threshold,
+      background_extrinsic_reward_coefficient=FLAGS.background_extrinsic_reward_coefficient,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

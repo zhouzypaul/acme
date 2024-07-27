@@ -369,7 +369,8 @@ class GSMPlotter:
         x1, y1 = edge[0][0], edge[0][1]
         x2, y2 = edge[1][0], edge[1][1]
         val = (node2val[edge[0]] + node2val[edge[1]]) / 2
-        val = max(0.05, val / max(node2val.values()))
+        denom = max(node2val.values()) if max(node2val.values()) != 0 else 1
+        val = max(0.05, val / denom)
         ax.plot([x1, x2], [y1, y2], color=color, alpha=val)
         ax.scatter([x1, x2], [y1, y2], color=color, alpha=val)
 
@@ -393,7 +394,7 @@ class GSMPlotter:
 
       node2val = collections.defaultdict(float)
       for node in top_nodes:
-        for n, v in hash2vstar[node].items():
+        for n, v in hash2vstar.get(node, {}).items():
           node2val[n] += v
 
       return node2val

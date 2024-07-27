@@ -81,3 +81,4 @@ class R2D2Config:
   warmstart_vi: bool = False
 
   descendant_threshold: float = 0.
+  background_extrinsic_reward_coefficient: float = 0.

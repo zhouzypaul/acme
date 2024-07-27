@@ -455,6 +455,7 @@ def make_distributed_experiment(
     novelty_thresh = experiment.builder._config.novelty_threshold_for_goal_creation
     task_goal_prob = experiment.builder._config.task_goal_probability
     default_behavior = experiment.builder._config.subgoal_sampler_default_behavior
+    background_reward_coeff = experiment.builder._config.background_extrinsic_reward_coefficient
 
     # Create the loop to connect environment and agent.
     return environment_loop.EnvironmentLoop(
@@ -474,6 +475,7 @@ def make_distributed_experiment(
           should_switch_goal=experiment.builder._config.should_switch_goal,
         ) if experiment.builder._config.use_decentralized_planner else None,
         use_gsm_var_client=experiment.builder._config.use_gsm_var_client,
+        background_extrinsic_reward_coefficient=background_reward_coeff,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -498,6 +500,7 @@ def make_distributed_experiment(
     vi_iterations = experiment.builder._config.max_vi_iterations
     goal_space_size = experiment.builder._config.goal_space_size
     use_exploration_vf_for_expansion = experiment.builder._config.use_exploration_vf_for_expansion
+    background_reward_coeff = experiment.builder._config.background_extrinsic_reward_coefficient
     gsm = GoalSpaceManager(env, rng_num, networks,
                            variable_client,
                            exploration_networks,
@@ -513,6 +516,7 @@ def make_distributed_experiment(
                            use_decentralized_planning=experiment.builder._config.use_decentralized_planner,
                            warmstart_vi=experiment.builder._config.warmstart_vi,
                            descendant_threshold=experiment.builder._config.descendant_threshold,
+                           background_extrinsic_reward_coefficient=background_reward_coeff,
                            )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing

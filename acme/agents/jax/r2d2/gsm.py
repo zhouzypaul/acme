@@ -56,6 +56,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       maintain_sparse_transition_matrix: bool = True,
       warmstart_vi: bool = False,
       descendant_threshold: float = 0.,
+      background_extrinsic_reward_coefficient: float = 0.,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -72,6 +73,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._maintain_sparse_transition_matrix = maintain_sparse_transition_matrix
     self._warmstart_vi = warmstart_vi
     self._descendant_threshold = descendant_threshold
+    self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
 
     def compute_uvfa_values(params, rng_key, batch_oarg, initial_lstm_state):
       # Perform the unroll operation of the network.
@@ -308,7 +310,9 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     """Is the goal achieved in the current state."""
     dims = np.where(goal.goals >= 0)
     reached = (current.goals[dims] == goal.goals[dims]).all()
-    return reached, float(reached)
+    reward = float(reached) + (
+      self._background_extrinsic_reward_coefficient * current.reward)
+    return reached, reward
       
   def obs_augment_fn(
     self, obs: OARG, goal: OARG, method: str
