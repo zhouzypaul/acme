@@ -1005,7 +1005,7 @@ class EnvironmentLoop(core.Worker):
 
       should_interrupt_option = should_interrupt(next_timestep, duration, goal)
 
-      if should_interrupt_option and next_timestep.reward < 1:
+      if should_interrupt_option:
         next_timestep = truncation(next_timestep)
 
       # Have the agent and observers observe the timestep.
@@ -1482,7 +1482,10 @@ class EnvironmentLoop(core.Worker):
         self._logger.write(result)
 
         if self._actor_id == 1 and episode_count % 10 == 0:
-          self.visualize_goal_space(self._start_ts, self._node2successes, episode_count)
+          try:
+            self.visualize_goal_space(self._start_ts, self._node2successes, episode_count)
+          except Exception as e:
+            print(f'Failed to visualize goal space: {e}')
           self.visualize_n_planner_failures(episode_count)
 
     return step_count
