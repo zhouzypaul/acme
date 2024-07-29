@@ -153,7 +153,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
           f'Use pessimistic graph for planning {self._use_pessimistic_graph_for_planning}',
           f'Max VI iterations {max_vi_iterations}, warmstart VI {warmstart_vi}',)
 
-  def begin_episode(self, current_node: Tuple, task_goal_probability: float = 0.1) -> Tuple[Tuple, Dict]:
+  def begin_episode(self, current_node: Tuple, task_goal_probability: float = 0.01) -> Tuple[Tuple, Dict]:
     """Create and solve the AMDP. Then return the abstract policy."""
     print(f'[GSM] Time since last GSM iteration: {time.time() - self._gsm_loop_last_timestamp}s')
     goal_sampler = GoalSampler(
