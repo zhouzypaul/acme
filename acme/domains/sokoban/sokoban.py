@@ -11,18 +11,30 @@ from acme.wrappers.oar_goal import ObservationActionRewardGoalWrapper
 
 
 class SokobanInfoWrapper(Wrapper):
-  def __init__(self, env, seed: int, use_sparse_rewards: bool = False):
+  def __init__(
+    self,
+    env,
+    seed: int,
+    use_sparse_rewards: bool = False,
+    include_step_penalty: bool = False
+  ):
     super(SokobanInfoWrapper, self).__init__(env)
     self._timestep = 0   
     self._seed = seed
     self._set_seed(seed)
     self._use_sparse_rewards = use_sparse_rewards
+    self._include_step_penalty = include_step_penalty
 
   def step(self, action):
     obs, reward, done, info = self.env.step(int(action))
     terminated = self.env.unwrapped._check_if_all_boxes_on_target()
     truncated = done and not terminated
     info['reward'] = reward
+
+    # Hack to undo the step penalty.
+    if not self._include_step_penalty:
+      reward -= self.env.unwrapped.penalty_for_step
+
     info = self._modify_info_dict(info, terminated, truncated)
     self._timestep += 1
     rew = float(terminated) if self._use_sparse_rewards else float(reward) / 10.
