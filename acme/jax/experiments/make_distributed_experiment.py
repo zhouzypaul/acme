@@ -38,8 +38,8 @@ import launchpad as lp
 import reverb
 from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.cfn.cfn import CFN
-# from acme.agents.jax.r2d2.sokoban_plotting import GSMPlotter
-from acme.agents.jax.r2d2.plotting import GSMPlotter
+from acme.agents.jax.r2d2.sokoban_plotting import GSMPlotter
+# from acme.agents.jax.r2d2.plotting import GSMPlotter
 
 ActorId = int
 InferenceServer = inference_server_lib.InferenceServer[
@@ -664,7 +664,7 @@ def make_distributed_experiment(
       variable_sources[0],
       explore_var_src,
       # TODO(ab): How to set the number of threads for the GSM?
-      courier_kwargs={'thread_pool_size': 64}
+      courier_kwargs={'thread_pool_size': 128}
       )
     gsm = gsm_node.create_handle()
     program.add_node(gsm_node, label='gsm')
