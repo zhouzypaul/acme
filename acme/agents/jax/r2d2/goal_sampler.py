@@ -79,34 +79,36 @@ class GoalSampler:
 
     print(f'Created GoalSampler with GS size {goal_space_size} and method {method}.')
 
-  def begin_episode(self, current_node: Tuple) -> Tuple:
+  def get_target_node(self, current_node: Tuple) -> Tuple:
     goal_dict = self.get_candidate_goals(current_node)
     if len(goal_dict) > 0:
       t0 = time.time()
       target_node = self._select_expansion_node(
         current_node, goal_dict, method='novelty')
       print(f'[GoalSampler] Target Node = {target_node}')
-      t1 = time.time()
-      self._amdp = AMDP(
-        transition_tensor=self.transition_tensor,
-        hash2idx=self.hash2idx,
-        reward_dict=self.reward_dict if not self._edge2rewards else self._edge2rewards,
-        discount_dict=self.discount_dict,
-        count_dict=self.on_policy_edge_count_dict,
-        target_node=target_node,
-        rmax_factor=self.rmax_factor,
-        max_vi_iterations=self.max_vi_iterations,
-        should_switch_goal=self._should_switch_goal,
-        hash2vstar=self._hash2vstar,
-      )
-      print(f'[GoalSampler] Took {t1 - t0}s to select expansion node.')
-      print(f'[GoalSampler] Took {time.time() - t1}s to create & solve AMDP.')
-      goal_sequence = self._amdp.get_goal_sequence(
-        start_node=current_node,
-        goal_node=target_node
-      )
-      print(f'[GoalSampler] Goal Sequence: {goal_sequence}')
+      print(f'[GoalSampler] Took {time.time() - t0}s to select expansion node.')
       return target_node
+
+  def compute_abstract_policy(self, current_node: Tuple, target_node: Tuple):
+    t0 = time.time()
+    self._amdp = AMDP(
+      transition_tensor=self.transition_tensor,
+      hash2idx=self.hash2idx,
+      reward_dict=self.reward_dict if not self._edge2rewards else self._edge2rewards,
+      discount_dict=self.discount_dict,
+      count_dict=self.on_policy_edge_count_dict,
+      target_node=target_node,
+      rmax_factor=self.rmax_factor,
+      max_vi_iterations=self.max_vi_iterations,
+      should_switch_goal=self._should_switch_goal,
+      hash2vstar=self._hash2vstar,
+    )
+    print(f'[GoalSampler] Took {time.time() - t0}s to create & solve AMDP.')
+    goal_sequence = self._amdp.get_goal_sequence(
+      start_node=current_node,
+      goal_node=target_node
+    )
+    print(f'[GoalSampler] Goal Sequence: {goal_sequence}')
 
   def is_death_node(self, g):
     try:
