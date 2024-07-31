@@ -99,7 +99,7 @@ def get_local_resources(launch_type):
       "gsm": make_process_dict("1", pin_to=cpu_dict.get('gsm')),
       "cfn_replay": make_process_dict(pin_to=cpu_dict.get('cfn_replay')),
       "exploration_replay": make_process_dict(pin_to=cpu_dict.get('exploration_replay')),
-      "exploration_learner": make_process_dict("0", pin_to=cpu_dict.get('exploration_learner')),
+      "exploration_learner": make_process_dict("1", pin_to=cpu_dict.get('exploration_learner')),
       "plotter": make_process_dict(pin_to=cpu_dict.get('plotter')),
       "actor": make_process_dict(pin_to=cpu_dict.get('actor')),
     }
