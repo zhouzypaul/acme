@@ -142,7 +142,7 @@ class SubgoalSampler:
   def _sample_rewarding_node(self):
     """If the target node is the task goal, then switch it out for a rewarding node."""
     rewarding_nodes = [node for node, rew in self._reward_dict.items() if rew > 0]
-    terminal_rewarding_nodes = [node for node in rewarding_nodes if self._discount_dict[node] == 0]
+    terminal_rewarding_nodes = [node for node in rewarding_nodes if self._discount_dict.get(node, 1) == 0]
     if len(terminal_rewarding_nodes) > 0:
       return random.choice(terminal_rewarding_nodes)
 
