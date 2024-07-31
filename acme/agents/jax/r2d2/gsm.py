@@ -12,7 +12,7 @@ import numpy as np
 import jax.numpy as jnp
 
 from scipy.sparse import csr_matrix
-from typing import Dict, Optional, Tuple, Union, List
+from typing import Dict, Optional, Tuple, Union, List, Set
 
 import acme
 from acme.wrappers.oar_goal import OARG
@@ -57,6 +57,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       descendant_threshold: float = 0.,
       use_reward_matrix: bool = False,
       background_extrinsic_reward_coefficient: float = 0.,
+      use_policy_cache: bool = True,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -75,6 +76,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._descendant_threshold = descendant_threshold
     self._use_reward_matrix = use_reward_matrix
     self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
+    self._use_policy_cache = use_policy_cache
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -139,6 +141,8 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._edge2return_lock = threading.Lock()
 
     self._vi_times = []
+    self._amdp_policy_cache = {}
+    self._amdp_policy_cache_lock = threading.Lock()
 
     base_dir = get_save_directory()
     self._base_plotting_dir = os.path.join(base_dir, 'plots')
@@ -168,15 +172,24 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       hash2vstar=self._hash2vstar if self._warmstart_value_iteration else None,
       edge2rewards=self._edge2return if self._use_reward_matrix else None,
     )
-    expansion_node = goal_sampler.begin_episode(current_node)
-
-    if goal_sampler._amdp:
-      abstract_policy = goal_sampler._amdp.get_policy()
-      max_bellman_errors = goal_sampler._amdp.max_bellman_errors
-      self._hash2bellman[expansion_node].extend(max_bellman_errors)
-      self._hash2vstar[expansion_node] = goal_sampler._amdp.get_values()
-      self._vi_times.append(goal_sampler._amdp.time_report['vi'])
-      return expansion_node, abstract_policy
+    expansion_node = goal_sampler.get_target_node(current_node)
+    
+    with self._amdp_policy_cache_lock:
+      if expansion_node and expansion_node in self._amdp_policy_cache:
+        print(f'[GSM] Cache hit - Using cached abstract policy for {expansion_node}')
+        abstract_policy = self._amdp_policy_cache[expansion_node]
+        return expansion_node, abstract_policy
+      elif expansion_node:
+        print(f'[GSM] Cache miss - Computing abstract policy for {expansion_node}')
+        goal_sampler.compute_abstract_policy(current_node, expansion_node)
+        abstract_policy = goal_sampler._amdp.get_policy()
+        if self._use_policy_cache:
+          self._amdp_policy_cache[expansion_node] = abstract_policy
+        max_bellman_errors = goal_sampler._amdp.max_bellman_errors
+        self._hash2bellman[expansion_node].extend(max_bellman_errors)
+        self._hash2vstar[expansion_node] = goal_sampler._amdp.get_values()
+        self._vi_times.append(goal_sampler._amdp.time_report['vi'])
+        return expansion_node, abstract_policy
   
   def get_descendants(self, current_node: Tuple): 
     return GoalSampler(
@@ -357,7 +370,9 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     with self._on_policy_count_dict_lock:
       return self._default_dict_to_dict(self._on_policy_counts)
   
-  def get_goal_dict(self):
+  def get_goal_dict(self, exclude_keys: Optional[Set] = None) -> Dict:
+    if exclude_keys:
+      return self._thread_safe_deepcopy_with_exclusion(self._hash2obs, exclude_keys)
     return self._thread_safe_deepcopy(self._hash2obs)
   
   def get_on_policy_edges(self):
@@ -737,11 +752,23 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     keys = list(d.keys())
     return {k: d[k] for k in keys}
 
+  @staticmethod
+  def _thread_safe_deepcopy_with_exclusion(d: Dict, exclude_keys: Optional[Set] = None):
+    exclude_keys = exclude_keys or set()
+    keys = list(d.keys())
+    return {k: d[k] for k in keys if k not in exclude_keys}
+
+  def _clear_policy_cache(self):
+    with self._amdp_policy_cache_lock:
+      print(f'[GSM] Clearing policy cache with {len(self._amdp_policy_cache)} target nodes.')
+      self._amdp_policy_cache = {}
+
   def step(self):
     iteration: int = next(self._iteration_iterator)
 
     if len(self._hash2obs) > 2:
       print(f'[GSM-RunLoop] Time since last iter: {time.time() - self._gsm_loop_last_timestamp}s')
+      self._clear_policy_cache()
       self._update_on_policy_edge_probabilities()
       self._update_existing_off_policy_edge_probabilities()
       self._update_off_policy_edge_probabilities()
