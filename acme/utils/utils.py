@@ -1,10 +1,11 @@
 import os
+import sys
 import dm_env
 import dataclasses
 import numpy as np
 import matplotlib.pyplot as plt
 
-from typing import Tuple, List
+from typing import Tuple, List, Any
 from collections import defaultdict
 
 from acme.wrappers.oar_goal import OARG
@@ -108,6 +109,45 @@ def debug_visualize_trajectory(
   for i, transition in enumerate(trajectory):
     obs = transition.next_ts.observation
     dump_oarg(f'state_{i}', obs, transition.pursued_goal)
+
+def get_size_mb(obj: Any) -> float:
+  """Recursively calculate the size of an object and its contents in megabytes."""
+  seen = set()  # To keep track of already counted objects
+
+  def inner(obj):
+    obj_id = id(obj)
+    if obj_id in seen:
+      return 0
+    seen.add(obj_id)
+    
+    if isinstance(obj, np.ndarray):
+      return obj.nbytes
+    
+    size = sys.getsizeof(obj)
+    
+    if isinstance(obj, (str, bytes, int, float)):
+      pass  # These are simple objects, no need to look inside them
+    elif isinstance(obj, (tuple, list, set, frozenset)):
+      size += sum(inner(item) for item in obj)
+    elif isinstance(obj, dict):
+      size += sum(inner(key) + inner(value) for key, value in obj.items())
+    elif hasattr(obj, '__dict__'):
+      size += inner(obj.__dict__)
+    
+    return size
+
+  return inner(obj) / (1024 * 1024)  # Convert bytes to MB
+
+
+def print_data_structure_sizes(**kwargs):
+  """Print the sizes of multiple data structures."""
+  total_size = 0
+  for name, obj in kwargs.items():
+      size = get_size_mb(obj)
+      total_size += size
+      print(f"Size of {name}: {size:.2f} MB")
+  print(f"Total size of all structures: {total_size:.2f} MB")
+
 
 if __name__ == '__main__':
   dictionary = {1: {1: 2, 2: 3}, 2: {1: 1}}
