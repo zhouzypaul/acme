@@ -477,7 +477,8 @@ def make_distributed_experiment(
         ) if experiment.builder._config.use_decentralized_planner else None,
         use_gsm_var_client=experiment.builder._config.use_gsm_var_client,
         n_warmup_episodes=experiment.builder._config.n_warmup_episodes,
-        background_extrinsic_reward_coefficient=background_reward_coeff
+        background_extrinsic_reward_coefficient=background_reward_coeff,
+        use_goal_space_caching=experiment.builder._config.use_policy_cache,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -519,7 +520,8 @@ def make_distributed_experiment(
                            warmstart_value_iteration=experiment.builder._config.warmstart_value_iteration,
                            descendant_threshold=experiment.builder._config.descendant_threshold,
                            use_reward_matrix=experiment.builder._config.use_reward_matrix,
-                           background_extrinsic_reward_coefficient=background_reward_coeff
+                           background_extrinsic_reward_coefficient=background_reward_coeff,
+                           use_policy_cache=experiment.builder._config.use_policy_cache
                            )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing

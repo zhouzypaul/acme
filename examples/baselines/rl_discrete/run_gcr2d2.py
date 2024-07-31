@@ -100,6 +100,7 @@ flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for targe
 flags.DEFINE_bool("warmstart_value_iteration", False, "Whether to warmstart value iteration with previous solution.")
 flags.DEFINE_float("descendant_threshold", 0., "Threshold for descendant selection")
 flags.DEFINE_bool("use_reward_matrix", False, "Whether to use reward matrix for planning or not")
+flags.DEFINE_bool("use_policy_cache", True, "Whether to cache abstract policies and goal dictionaries for lower comp & bandwidth comms.")
 
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
@@ -211,7 +212,8 @@ def build_experiment_config():
       n_warmup_episodes=FLAGS.num_warmup_episodes,
       descendant_threshold=FLAGS.descendant_threshold,
       use_reward_matrix=FLAGS.use_reward_matrix,
-      background_extrinsic_reward_coefficient=FLAGS.background_extrinsic_reward_coefficient
+      background_extrinsic_reward_coefficient=FLAGS.background_extrinsic_reward_coefficient,
+      use_policy_cache=FLAGS.use_policy_cache
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

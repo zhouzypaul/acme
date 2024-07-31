@@ -85,3 +85,4 @@ class R2D2Config:
   use_reward_matrix: bool = False
 
   background_extrinsic_reward_coefficient: float = 0.
+  use_policy_cache: bool = True
