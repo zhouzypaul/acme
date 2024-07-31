@@ -33,6 +33,7 @@ from acme.agents.jax.r2d2.subgoal_sampler import SubgoalSampler
 from acme.utils.utils import GoalBasedTransition
 from acme.utils.utils import termination, truncation, continuation
 from acme.utils.utils import scores2probabilities, remove_duplicates_keep_last
+from acme.utils.utils import print_data_structure_sizes
 from acme import specs as env_specs
 from acme.utils.paths import get_save_directory
 from acme.agents.jax.cfn.cfn import CFN
@@ -50,6 +51,7 @@ import random
 import copy
 import collections
 import ipdb
+import sys
 import jax.numpy as jnp
 
 
@@ -107,6 +109,7 @@ class EnvironmentLoop(core.Worker):
       use_gsm_var_client: bool = False,
       n_warmup_episodes: int = 20,
       background_extrinsic_reward_coefficient: float = 1e-2,
+      use_goal_space_caching: bool = True,
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -140,6 +143,7 @@ class EnvironmentLoop(core.Worker):
     self._recompute_expansion_node_on_interruption = recompute_expansion_node_on_interruption
     self._n_warmup_episodes = n_warmup_episodes
     self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
+    self._use_goal_space_caching = use_goal_space_caching
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -338,8 +342,12 @@ class EnvironmentLoop(core.Worker):
         print(f'[EnvironmentLoop] Has seen task goal.')
     
     def _courier_version():
+      existing_goals = set(self.goal_dict.keys())
       self.count_dict = self._goal_space_manager.get_count_dict()
-      self.goal_dict = self._goal_space_manager.get_goal_dict()
+      self.goal_dict.update(
+        self._goal_space_manager.get_goal_dict(
+          exclude_keys=existing_goals if self._use_goal_space_caching else None
+      ))
       self._has_seen_task_goal = self._goal_space_manager.get_has_seen_task_goal()
       self._edges = self._goal_space_manager.get_on_policy_edges()
       self._reward_dict, self._discount_dict = self._goal_space_manager.get_extrinsic_reward_dicts()
@@ -566,6 +574,7 @@ class EnvironmentLoop(core.Worker):
       
       self.stream_achieved_goals_to_gsm(
         filtered_trajectory,
+        new_hash2goals,
         attempted_edges,
         expansion_node_new_node_pairs
       )
@@ -761,6 +770,20 @@ class EnvironmentLoop(core.Worker):
         )
 
       raise NotImplementedError(method)
+
+    def extract_rewarding_nodes(
+      visited_states: Dict,
+      unseen_goal_hashes: List[Tuple],
+      rewards: List[float],
+      reward_threshold: float = 0.99
+    ):
+      """Extract unseen goals that correspond to sparse rewards."""
+      new_goals = {}
+      for goal_hash, reward in zip(unseen_goal_hashes, rewards):
+        if reward >= reward_threshold:
+          print(f'Adding extrinsically rewarding node {goal_hash} to goal space.')
+          new_goals[goal_hash] = visited_states[goal_hash]
+      return new_goals
     
     def should_create_new_goals(novelty_scores: List[float]) -> bool:
       """Should we create new goals from the trajectory?"""
@@ -810,6 +833,19 @@ class EnvironmentLoop(core.Worker):
       # novelty_scores: List[float] = [self._get_intrinsic_reward(visited_states[g]) \
       #                                for g in new_goal_hashes]
       novelty_scores: List[float] = [hash2int[g] for g in new_goal_hashes]
+
+      hash2ext = {
+        tuple(trans.next_ts.observation.goals): trans.reward
+        for trans in trajectory
+      }
+
+      extrinsic_rewards: List[float] = [hash2ext[g] for g in new_goal_hashes]
+
+      new_extrinsic_reward_goals = extract_rewarding_nodes(
+        visited_states,
+        new_goal_hashes,
+        extrinsic_rewards,
+      )
       
       if should_create_new_goals(novelty_scores):
 
@@ -820,7 +856,9 @@ class EnvironmentLoop(core.Worker):
           method='novelty_sampling'
         )
 
-        return discovered_goals
+        return {**discovered_goals, **new_extrinsic_reward_goals}
+      
+      return new_extrinsic_reward_goals
 
     return {}
 
@@ -1062,6 +1100,7 @@ class EnvironmentLoop(core.Worker):
   def stream_achieved_goals_to_gsm(
     self,
     trajectory: List[GoalBasedTransition],
+    new_hash2goals: Dict,
     attempted_edges: List[Tuple[OARG, OARG, bool, float]],
     expansion_node_new_node_pairs: List[Tuple[Tuple, Tuple]]
   ):
@@ -1146,11 +1185,16 @@ class EnvironmentLoop(core.Worker):
 
     print(f'[EnvironmentLoop] expansion_node_new_node_pairs: {expansion_node_new_node_pairs}')
 
+    # Filter hash2obs so we only send back new goals.
+    filtered_hash_to_obs = {k: v for k, v in hash2obs.items() if k in new_hash2goals}
+
     t0 = time.time()
+
+    obs_dict = {**filtered_hash_to_obs, **new_start_states} if self._use_goal_space_caching else {**hash2obs, **new_start_states}
 
     # futures allows us to update() asynchronously
     self._goal_space_manager.update(
-      {**hash2obs, **new_start_states},
+      obs_dict,
       hash2count,
       edge2count,
       hash2discount,
@@ -1160,6 +1204,17 @@ class EnvironmentLoop(core.Worker):
     )
 
     print(f'[EnvironmentLoop] Took {time.time() - t0}s to update the GSM.')
+
+    # Log memory usage in MB
+    print_data_structure_sizes(
+      hash2obs={**filtered_hash_to_obs, **new_start_states},
+      hash2count=hash2count,
+      edge2count=edge2count,
+      hash2discount=hash2discount,
+      expansion_node_new_node_pairs=expansion_node_new_node_pairs,
+      edge2successes=edge2successes,
+      edge2returns=edge2returns
+    )
   
   def replay_trajectory_with_new_goal(
     self,
