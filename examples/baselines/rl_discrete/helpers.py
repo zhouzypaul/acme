@@ -33,6 +33,7 @@ import haiku as hk
 import jax.numpy as jnp
 
 from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
+from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
 
 
 FLAGS = flags.FLAGS
@@ -181,6 +182,23 @@ def make_taxi_environment(
     grid_size=grid_size,
   )
   env = wrappers.SinglePrecisionWrapper(env)
+  return env
+
+
+def make_sokoban_environment(
+    level_name: str = 'Sokoban-v0',
+    seed: int = 42,
+    goal_conditioned: bool = False,
+    to_float: bool = False,
+) -> dm_env.Environment:
+  """Loads the Sokoban environment."""
+  del seed  # For some reason, it is a jax array and not an int.
+  env = sokoban_environment_builder(
+    level_name,
+    seed=42,
+    goal_conditioned=goal_conditioned,
+    to_float=to_float,
+  )
   return env
 
 

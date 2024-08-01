@@ -209,6 +209,14 @@ def build_experiment_config():
       grid_size=taxi_grid_size,
     )
 
+  def sokoban_environment_factory(seed: int) -> dm_env.Environment:
+    return helpers.make_sokoban_environment(
+      level_name=env_name,
+      seed=seed,
+      goal_conditioned=False,
+      to_float=False,
+    )
+
   actor_backend = "cpu" if FLAGS.actor_gpu_ids == ["-1"] else "gpu"
   tx = rlax.IDENTITY_PAIR if FLAGS.use_identity_tx else rlax.SIGNED_HYPERBOLIC_PAIR
   config = r2d2.R2D2Config(
@@ -272,6 +280,8 @@ def build_experiment_config():
     env_factory = visgrid_environment_factory
   elif 'taxi' in env_name.lower():
     env_factory = taxi_environment_factory
+  elif 'sokoban' in env_name.lower():
+    env_factory = sokoban_environment_factory
   else:
     env_factory = environment_factory
 
