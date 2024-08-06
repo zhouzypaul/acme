@@ -100,7 +100,7 @@ flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for targe
 flags.DEFINE_bool("warmstart_value_iteration", False, "Whether to warmstart value iteration with previous solution.")
 flags.DEFINE_float("descendant_threshold", 0., "Threshold for descendant selection")
 flags.DEFINE_bool("use_reward_matrix", False, "Whether to use reward matrix for planning or not")
-flags.DEFINE_bool("use_policy_cache", True, "Whether to cache abstract policies and goal dictionaries for lower comp & bandwidth comms.")
+flags.DEFINE_bool("use_policy_cache", False, "Whether to cache abstract policies and goal dictionaries for lower comp & bandwidth comms.")
 
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
@@ -188,7 +188,7 @@ def build_experiment_config():
       samples_per_insert=FLAGS.spi,
       evaluation_epsilon=1e-3,
       learning_rate=1e-4,
-      target_update_period=1200,
+      target_update_period=600,
       variable_update_period=100,
       # The default hyperbolic transform makes the vf preds small (~0.4 max)
       tx_pair=rlax.IDENTITY_PAIR,
