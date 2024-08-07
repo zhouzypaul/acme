@@ -82,3 +82,4 @@ class R2D2Config:
 
   descendant_threshold: float = 0.
   background_extrinsic_reward_coefficient: float = 0.
+  expansion_augmentation_constant: float = 0.

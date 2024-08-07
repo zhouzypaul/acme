@@ -93,6 +93,7 @@ flags.DEFINE_integer("max_vi_iterations", 50, "Max number of VI iterations for A
 flags.DEFINE_float("novelty_threshold_for_goal_creation", -1., "Threshold for novelty for new goal/node creation")
 flags.DEFINE_integer("goal_space_size", -1, "Number of candidate goals for target node sampling. -1 means sum_sampling.")
 flags.DEFINE_float("descendant_threshold", 0., "Threshold for enumerating descendant nodes for goal sampling.")
+flags.DEFINE_float("expansion_augmentation_constant", 0., "Augmentation constant for node expansion score.")
 
 flags.DEFINE_float("task_goal_probability", 0., "Probability of sampling a task goal for behavior generation (0 vector).")
 flags.DEFINE_bool("switch_task_expansion_node", False, "Whether to switch the expansion node if it is the task goal.")
@@ -195,6 +196,7 @@ def build_experiment_config():
       warmstart_vi=FLAGS.warmstart_vi,
       descendant_threshold=FLAGS.descendant_threshold,
       background_extrinsic_reward_coefficient=FLAGS.background_extrinsic_reward_coefficient,
+      expansion_augmentation_constant=FLAGS.expansion_augmentation_constant
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

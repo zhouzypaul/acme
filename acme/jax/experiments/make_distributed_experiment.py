@@ -517,6 +517,7 @@ def make_distributed_experiment(
                            warmstart_vi=experiment.builder._config.warmstart_vi,
                            descendant_threshold=experiment.builder._config.descendant_threshold,
                            background_extrinsic_reward_coefficient=background_reward_coeff,
+                           expansion_augmentation_constant=experiment.builder._config.expansion_augmentation_constant
                            )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing

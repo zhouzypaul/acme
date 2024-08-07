@@ -57,6 +57,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       warmstart_vi: bool = False,
       descendant_threshold: float = 0.,
       background_extrinsic_reward_coefficient: float = 0.,
+      expansion_augmentation_constant: float = 0.,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -74,6 +75,10 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._warmstart_vi = warmstart_vi
     self._descendant_threshold = descendant_threshold
     self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
+    self._expansion_augmentation_constant = expansion_augmentation_constant
+
+    if expansion_augmentation_constant:
+      assert use_exploration_vf_for_expansion, 'We augment CFN Value because it doesnt bake it in immediately.'
 
     def compute_uvfa_values(params, rng_key, batch_oarg, initial_lstm_state):
       # Perform the unroll operation of the network.
@@ -533,7 +538,10 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
   def _update_bonuses(self, src_hashes, bonuses):
     assert len(src_hashes) == len(bonuses)
     for key, value in zip(src_hashes, bonuses):
-      self._hash2bonus[key] = value
+      # TODO(ab): try different exponents like in OPIQ (for e.g, 1/n rather than 1/sqrt(n)).
+      bonus = self._expansion_augmentation_constant / np.sqrt(self._hash2counts[key] + 1)
+      augmented_value = value + bonus
+      self._hash2bonus[key] = augmented_value
 
   def _edges2oarg(self, edges: List[Tuple]) -> OARG:
     """Convert the edges to an OARG object."""
