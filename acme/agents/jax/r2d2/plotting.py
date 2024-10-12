@@ -376,11 +376,12 @@ class GSMPlotter:
 
     def create_grid_structure(fig, rooms2edges):
       n_plots = len(rooms2edges)
-      grid = plt.GridSpec(3, 7, figure=fig)
+      grid = plt.GridSpec(4, 9, figure=fig)
       axes_structure = {
-        0: grid[0, 2], 1: grid[0, 3], 2: grid[0, 4],
-        3: grid[1, 1], 4: grid[1, 2], 5: grid[1, 3], 6: grid[1, 4], 7: grid[1, 5],
-        8: grid[2, 1], 9: grid[2, 2], 10: grid[2, 3], 11: grid[2, 4], 12: grid[2, 5], 13: grid[2, 6]
+                  0: grid[0, 3], 1: grid[0, 4], 2: grid[0, 5],
+            3: grid[1, 2], 4: grid[1, 3], 5: grid[1, 4], 6: grid[1, 5], 7: grid[1, 6],
+          8: grid[2, 1], 9: grid[2, 2], 10: grid[2, 3], 11: grid[2, 4], 12: grid[2, 5], 13: grid[2, 6], 14: grid[2, 7],
+        15: grid[3, 0], 16: grid[3, 1], 17: grid[3, 2], 18: grid[3, 3], 19: grid[3, 4], 20: grid[3, 5], 21: grid[3, 6], 22: grid[3, 7], 23: grid[3, 8]
       }
       return axes_structure
 
@@ -426,12 +427,11 @@ class GSMPlotter:
       axes_structure = create_grid_structure(fig, rooms2edges)
 
       for i, (rooms, edges) in enumerate(rooms2edges.items()):
-        if i >= 14:  # We only have space for 14 subplots in our structure
-          raise ValueError(f'Too many rooms to plot: {len(rooms2edges)}')
         room = rooms[0]
         ax = fig.add_subplot(axes_structure[room])
         plot_edges(ax, edges, color=color, node2val=node2val)
-        ax.imshow(room2background[room].observation, alpha=0.3, extent=[0, 150, 125, 300])
+        if room in room2background:
+          ax.imshow(room2background[room].observation, alpha=0.3, extent=[0, 150, 125, 300])
         ax.set_title(f'Room {rooms[0]}')
         ax.set_xticks([])
         ax.set_yticks([])
