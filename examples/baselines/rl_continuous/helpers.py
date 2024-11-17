@@ -19,7 +19,7 @@ import dm_env
 import gym
 
 
-_VALID_TASK_SUITES = ('gym', 'control')
+_VALID_TASK_SUITES = ('gym', 'control', 'custom')
 
 
 def make_environment(suite: str, task: str) -> dm_env.Environment:
@@ -49,6 +49,10 @@ def make_environment(suite: str, task: str) -> dm_env.Environment:
     domain_name, task_name = task.split(':')
     env = dm_suite.load(domain_name, task_name)
     env = wrappers.ConcatObservationWrapper(env)
+
+  elif suite == 'custom':
+    from acme.domains.pusher.pusher import environment_builder
+    env = environment_builder()
 
   # Wrap the environment so the expected continuous action spec is [-1, 1].
   # Note: this is a no-op on 'control' tasks.

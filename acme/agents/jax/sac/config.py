@@ -53,6 +53,29 @@ class SACConfig(normalization.InputNormalizerConfig):
 
   input_normalization: Optional[normalization.NormalizationConfig] = None
 
+  # GSM Flags
+  n_sigmas_threshold_for_goal_creation: int = 0
+
+  # When this is <= 0, we use mean + n * std as the novelty threshold.
+  novelty_threshold_for_goal_creation: float = -1.
+
+  # When this is -1, it means that we use sum_sampling in GoalSampler.
+  goal_space_size: int = 100
+
+  task_goal_probability: float = 0.
+  
+  use_planning_in_evaluator: bool = False
+  should_switch_goal: bool = False
+  option_timeout: int = 400
+
+  use_exploration_vf_for_expansion: bool = True
+  use_intermediate_difficulty: bool = False
+  use_uvfa_reachability: bool = False
+  num_goals_to_replay: int = 5
+  reachability_novelty_combination_method: str = 'multiplication'
+  reachability_novelty_combination_alpha: float = 0.5
+  descendant_threshold: float = 0.
+
 
 def target_entropy_from_env_spec(
     spec: specs.EnvironmentSpec,

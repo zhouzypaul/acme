@@ -59,9 +59,15 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
   def get_info_vector(self):
     return self._info2goals(self._environment.get_info())
 
+  def _hash_observation(self, obs: np.ndarray):
+    is_image_type = len(obs.shape) == 3
+    if is_image_type:
+      return hashlib.sha256(obs.tobytes()).hexdigest()
+    return np.floor(obs).astype(int).tostring()
+
   def get_learned_goal_classifier_vector(self, ts: dm_env.TimeStep):
     goals = np.zeros((self._n_goal_dims), dtype=bool)
-    obs_hash = hashlib.sha256(ts.observation.tobytes()).hexdigest()
+    obs_hash = self._hash_observation(ts.observation)
     for classifier in self.classifiers:
       if (classifier['classifier_id'], obs_hash) in self.cache:
         decision = self.cache[(classifier['classifier_id'], obs_hash)]
