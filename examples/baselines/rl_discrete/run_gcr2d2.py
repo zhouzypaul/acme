@@ -126,6 +126,19 @@ def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_si
   taxi_factory = functools.partial(
     helpers.make_taxi_environment, max_steps=max_episode_steps, oarg_wrapper=True,
       grid_size=taxi_grid_size)
+
+  montezuma_factory = functools.partial(
+    helpers.make_montezuma_environment,
+      sticky_actions=False,
+      oar_wrapper=False,
+      oarg_wrapper=True,
+      num_stacked_frames=1,
+      flatten_frame_stack=True,
+      grayscaling=False,
+      to_float=to_float,
+      scale_dims=(84, 84),
+      max_episode_steps=max_episode_steps,
+  )
   
   if 'MiniGrid' in env_name:
     return minigrid_factory
@@ -133,6 +146,8 @@ def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_si
     return sokoban_factory
   elif 'taxi' in env_name.lower():
     return taxi_factory
+  elif 'montezuma' in env_name.lower():
+    return montezuma_factory
   raise ValueError(f"Unknown environment name: {env_name}")
 
 

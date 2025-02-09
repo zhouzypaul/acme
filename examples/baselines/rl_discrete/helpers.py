@@ -34,7 +34,6 @@ import jax.numpy as jnp
 
 from acme.domains.minigrid.minigrid import environment_builder
 # from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
-from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
 
 
 FLAGS = flags.FLAGS
@@ -134,6 +133,43 @@ def make_atari_environment(
 
   return wrappers.wrap_all(env, wrapper_list)
 
+def make_montezuma_environment(
+    sticky_actions: bool = False,
+    oar_wrapper: bool = False,
+    oarg_wrapper: bool = True,
+    num_stacked_frames: int = 1,
+    flatten_frame_stack: bool = True,
+    grayscaling: bool = False,
+    to_float: bool = True,
+    scale_dims: Tuple[int, int] = (84, 84),
+    max_episode_steps: int = 4500,
+    goal_conditioned: bool = True,
+    action_repeat: int = 4,
+    seed=0,
+    reset_to_laser_room=False,
+    use_learned_goal_classifiers=False,
+) -> dm_env.Environment:
+  from acme.domains.montezuma.montezuma import environment_builder as montezuma_environment_builder
+  assert oar_wrapper ^ oarg_wrapper, "Only one of oar_wrapper and oarg_wrapper can be True"
+  env = montezuma_environment_builder(
+    max_episode_steps=max_episode_steps,
+    sticky_actions=sticky_actions,
+    goal_conditioned=goal_conditioned,
+    num_stacked_frames=num_stacked_frames,
+    flatten_frame_stack=flatten_frame_stack,
+    grayscaling=grayscaling,
+    scale_dims=scale_dims,
+    to_float=to_float,
+    oarg_wrapper=oarg_wrapper,
+    action_repeat=action_repeat,
+    reset_to_laser_room=reset_to_laser_room
+  )
+  
+  if oar_wrapper:
+    env = wrappers.ObservationActionRewardWrapper(env)
+
+  return env
+
 def make_minigrid_environment(
     level_name: str = 'MiniGrid-Empty-16x16',
     max_episode_len: int = 1000,
@@ -183,6 +219,7 @@ def make_taxi_environment(
   use_learned_goal_classifiers,
   grid_size=5,
 ):
+  from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
   del seed
   env = taxi_environment_builder(
     goal_conditioned=goal_conditioned,

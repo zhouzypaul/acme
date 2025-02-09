@@ -159,6 +159,68 @@ class MontezumaInfoWrapper(Wrapper):
         new_obs, reward, done, new_info = self.env.step(0)
         return new_obs, new_info
 
+    def binary2info(self, binary_vector, sparse_info: bool = False):
+        """
+        Convert a binary vector back into an info dictionary for Montezuma's Revenge.
+
+        Args:
+            binary_vector (np.ndarray): Binary vector representation of the info dict.
+            sparse_info (bool): If True, omits fields not present in the binary vector.
+
+        Returns:
+            dict: Reconstructed info dictionary.
+        """
+        # Define the inventory mapping
+        inventory_items = ['torch', 'sword', 'sword', 'key', 'key', 'key', 'key', 'hammer']
+
+        # Initialize the info dictionary
+        info = {}
+
+        # Decode player_x (first 206 indices)
+        player_x_index = np.where(binary_vector[:206] == 1)[0]
+        if len(player_x_index) > 0 or not sparse_info:
+            info["player_x"] = player_x_index[0] if len(player_x_index) > 0 else -1
+
+        # Decode player_y (indices 206 to 341, normalized to 120-255)
+        player_y_index = np.where(binary_vector[206:342] == 1)[0]
+        if len(player_y_index) > 0 or not sparse_info:
+            info["player_y"] = player_y_index[0] + 120 if len(player_y_index) > 0 else -1
+
+        # Decode room number (indices 342 to 373)
+        room_number_index = np.where(binary_vector[342:374] == 1)[0]
+        if len(room_number_index) > 0 or not sparse_info:
+            info["room_number"] = room_number_index[0] if len(room_number_index) > 0 else -1
+
+        # Decode player state flags
+        if not sparse_info or binary_vector[374]:
+            info["jumping"] = bool(binary_vector[374])
+        if not sparse_info or binary_vector[375]:
+            info["dead"] = bool(binary_vector[375])
+        if not sparse_info or binary_vector[376]:
+            info["falling"] = bool(binary_vector[376])
+        if not sparse_info or binary_vector[377]:
+            info["uncontrollable"] = bool(binary_vector[377])
+
+        # Decode door states
+        if not sparse_info or binary_vector[378]:
+            info["left_door_open"] = bool(binary_vector[378])
+        if not sparse_info or binary_vector[379]:
+            info["right_door_open"] = bool(binary_vector[379])
+
+        # Decode inventory (binary string starting from index 380)
+        inventory_binary = binary_vector[380:380 + len(inventory_items)]
+        decoded_inventory = [
+            item for bit, item in zip(inventory_binary, inventory_items) if bit
+        ]
+        if len(decoded_inventory) > 0 or not sparse_info:
+            info["inventory"] = decoded_inventory
+
+        # Decode task goal flag (last bit)
+        if not sparse_info or binary_vector[-1]:
+            info["task_goal"] = bool(binary_vector[-1])
+
+        return info
+
 
 class TransposeObsWrapper(gym.ObservationWrapper):
     def __init__(self, env: gym.Env):
@@ -210,16 +272,59 @@ def goals2info(goals: np.ndarray):
 
 def determine_n_goal_dims(env):
     _, info = env.reset()
-    return len(info2goals(info))
+    return len(info2binary(info))
 
 
 def determine_task_goal_features(env):
     env.reset()
     info = env.get_current_info(info={})
-    goal_vector = info2goals(info)
+    goal_vector = info2binary(info)
     task_goal = np.zeros_like(goal_vector)
     task_goal[-1] = 1
     return task_goal
+
+
+def info2binary(info):
+    """
+    Convert the info dict from Montezuma's Revenge into a binary vector.
+
+    Args:
+        info (dict): Dictionary containing environment info.
+
+    Returns:
+        np.ndarray: Binary vector representation of the info dict.
+    """
+    # Determine vector size based on necessary fields
+    binary_vector_size = 128 + (256 - 120) + 206  # Adjust as necessary
+    binary_vector = np.zeros(binary_vector_size, dtype=bool)
+
+    # Encode player_x (0 to 205)
+    binary_vector[info["player_x"]] = 1  # Direct mapping for x-coordinates
+
+    # Encode player_y (120 to 255, normalized to 0-135 for vector index)
+    binary_vector[206 + (info["player_y"] - 120)] = 1
+
+    # Encode room number (assuming a maximum of 32 rooms for simplicity)
+    binary_vector[342 + info["room_number"]] = 1
+
+    # Encode player state flags
+    binary_vector[374] = info["jumping"]
+    binary_vector[375] = info["dead"]
+    binary_vector[376] = info["falling"]
+    binary_vector[377] = info["uncontrollable"]
+
+    # Encode door states
+    binary_vector[378] = info["left_door_open"]
+    binary_vector[379] = info["right_door_open"]
+
+    # Encode inventory as a binary string
+    for i, item in enumerate(info["inventory"]):
+        binary_vector[380 + i] = int(item)
+
+    # Encode task goal flag
+    binary_vector[-1] = info.get("task_goal", False)
+
+    return binary_vector
 
 
 class UVFAObsSpecWrapper(montezuma_wrapper.AtariWrapper):
@@ -233,7 +338,7 @@ class UVFAObsSpecWrapper(montezuma_wrapper.AtariWrapper):
         if self._grayscaling:
             new_shape = (old_shape[0], old_shape[1], 2)
         else:
-            new_shape = (old_shape[0], old_shape[1], old_shape[2] * 2)
+            new_shape = (old_shape[0], old_shape[1], old_shape[2] + 1)
         print(f'Creating goal-conditioned wrapper with shape {new_shape}')
         pixel_spec = specs.Array(
             shape=new_shape, dtype=pixel_spec.dtype, name=pixel_spec.name)
@@ -277,6 +382,6 @@ def environment_builder(
         )  # TODO(ab): reward clipping
     
     if oarg_wrapper:
-        env = ObservationActionRewardGoalWrapper(env, info2goals=info2goals, n_goal_dims=n_goal_dims)
+        env = ObservationActionRewardGoalWrapper(env, info2goals=info2binary, n_goal_dims=n_goal_dims)
     env = wrappers.SinglePrecisionWrapper(env)
     return env

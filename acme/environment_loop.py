@@ -167,7 +167,7 @@ class EnvironmentLoop(core.Worker):
             infos.append((i, info))
       return infos
 
-    self._binary2info = binary2info
+    # self._binary2info = binary2info
 
     base_dir = get_save_directory()
     self._exploration_traj_dir = os.path.join(base_dir, 'plots', 'exploration_trajectories')
