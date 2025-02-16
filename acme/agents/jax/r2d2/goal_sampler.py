@@ -41,6 +41,7 @@ class GoalSampler:
       should_switch_goal: bool = False,
       hash2vstar: Dict = {},
       edge2rewards: Dict = {},
+      target_random_nodes_for_evaluation: bool = False,
   ):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
@@ -67,6 +68,7 @@ class GoalSampler:
     self.max_vi_iterations = max_vi_iterations
     self._goal_space_size = goal_space_size
     self._should_switch_goal = should_switch_goal
+    self._target_random_nodes_for_evaluation = target_random_nodes_for_evaluation
     
     self._n_courier_errors = 0
     
@@ -84,8 +86,8 @@ class GoalSampler:
     if len(goal_dict) > 0:
       t0 = time.time()
       target_node = self._select_expansion_node(
-        current_node, goal_dict, method='novelty')
-      print(f'[GoalSampler] Target Node = {target_node}')
+        current_node, goal_dict, method='novelty' if not self._target_random_nodes_for_evaluation else 'random')
+      print(f'[GoalSampler] Target Node = {target_node} (eval={self._target_random_nodes_for_evaluation})')
       print(f'[GoalSampler] Took {time.time() - t0}s to select expansion node.')
       return target_node
 

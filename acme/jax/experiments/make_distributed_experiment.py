@@ -38,8 +38,9 @@ import launchpad as lp
 import reverb
 from acme.agents.jax.r2d2 import GoalSpaceManager
 from acme.agents.jax.cfn.cfn import CFN
-from acme.agents.jax.r2d2.sokoban_plotting import GSMPlotter
+# from acme.agents.jax.r2d2.sokoban_plotting import GSMPlotter
 # from acme.agents.jax.r2d2.plotting import GSMPlotter
+from acme.agents.jax.r2d2.pinball_plotting import GSMPlotter
 
 ActorId = int
 InferenceServer = inference_server_lib.InferenceServer[
@@ -479,6 +480,7 @@ def make_distributed_experiment(
         n_warmup_episodes=experiment.builder._config.n_warmup_episodes,
         background_extrinsic_reward_coefficient=background_reward_coeff,
         use_goal_space_caching=experiment.builder._config.use_policy_cache,
+        target_random_nodes_for_evaluation=experiment.builder._config.target_random_nodes_for_evaluation,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -521,7 +523,8 @@ def make_distributed_experiment(
                            descendant_threshold=experiment.builder._config.descendant_threshold,
                            use_reward_matrix=experiment.builder._config.use_reward_matrix,
                            background_extrinsic_reward_coefficient=background_reward_coeff,
-                           use_policy_cache=experiment.builder._config.use_policy_cache
+                           use_policy_cache=experiment.builder._config.use_policy_cache,
+                           target_random_nodes_for_evaluation=experiment.builder._config.target_random_nodes_for_evaluation,
                            )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing

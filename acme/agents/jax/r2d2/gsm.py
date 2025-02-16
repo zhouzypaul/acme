@@ -58,6 +58,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       use_reward_matrix: bool = False,
       background_extrinsic_reward_coefficient: float = 0.,
       use_policy_cache: bool = True,
+      target_random_nodes_for_evaluation: bool = False,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -77,6 +78,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._use_reward_matrix = use_reward_matrix
     self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
     self._use_policy_cache = use_policy_cache
+    self._target_random_nodes_for_evaluation = target_random_nodes_for_evaluation
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -171,6 +173,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       max_vi_iterations=self._max_vi_iterations,
       hash2vstar=self._hash2vstar if self._warmstart_value_iteration else None,
       edge2rewards=self._edge2return if self._use_reward_matrix else None,
+      target_random_nodes_for_evaluation=self._target_random_nodes_for_evaluation,
     )
     expansion_node = goal_sampler.get_target_node(current_node)
     
@@ -778,6 +781,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
         self._compute_and_update_novelty_bonuses()
       self.dump_plotting_vars()
       self.update_params(wait=False)
+      self._remove_edges_starting_from_terminal_node()
 
       dt = time.time() - self._gsm_loop_last_timestamp
       print(f'Iteration {iteration} Goal Space Size {len(self._hash2obs)} dt={dt}')
@@ -879,3 +883,16 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
         prob = self._transition_matrix[self._hash2idx[edge[0]], self._hash2idx[dest]]
         edges.add((edge, prob))
     return edges
+
+  def _remove_edges_starting_from_terminal_node(self):
+    """Make sure that there are no edges starting from terminal abstract states."""
+    
+    nodes = [node for node, discount in self._hash2discount.items() if discount == 0.]
+    for node in nodes:
+      for edge in self.get_all_edges_with(src=node):
+        print(f'Removing {edge} from on policy edge list')
+        if edge in self._edges:
+          self._edges.remove(edge)
+        if edge in self._off_policy_edges:
+          print(f'Removing {edge} from off policy edge list')
+          self._off_policy_edges.remove(edge)

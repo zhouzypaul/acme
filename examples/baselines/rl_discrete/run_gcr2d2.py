@@ -47,6 +47,7 @@ from helpers import save_command_used
 from helpers import is_under_git_control, save_git_information
 from local_resources import get_local_resources
 from acme.utils.experiment_utils import make_experiment_logger
+from acme.domains.pinball.pinball_gym import environment_builder as pinball_environment_builder
 
 
 start_time = datetime.now()
@@ -116,6 +117,8 @@ flags.DEFINE_float('bonus_for_passenger_in_taxi', 0.001, 'Bonus for passenger in
 
 flags.DEFINE_float('background_extrinsic_reward_coefficient', 0.0, 'weight given to extrinsic reward for background RND')
 
+flags.DEFINE_bool("target_random_nodes_for_evaluation", False, "Eval mode for pinball: sample a random node and try to reach it.")
+
 FLAGS = flags.FLAGS
 
 
@@ -144,6 +147,12 @@ def make_environment_factory(env_name, max_episode_steps, to_float,
   taxi_factory = functools.partial(
     helpers.make_taxi_environment, max_steps=max_episode_steps, oarg_wrapper=True,
       grid_size=taxi_grid_size, bonus_for_passenger_in_taxi=bonus_for_passenger_in_taxi)
+
+  pinball_factory = functools.partial(
+    pinball_environment_builder,
+    config_filename=os.path.expanduser('~/git-repos/acme/acme/domains/pinball/configs/pinball_hard_single.cfg'),
+    episode_length=max_episode_steps,
+  )
   
   if 'MiniGrid' in env_name:
     return minigrid_factory
@@ -153,6 +162,8 @@ def make_environment_factory(env_name, max_episode_steps, to_float,
     return sokoban_factory
   elif 'taxi' in env_name.lower():
     return taxi_factory
+  elif 'pinball' in env_name.lower():
+    return pinball_factory
   raise ValueError(f"Unknown environment name: {env_name}")
 
 def build_experiment_config():
@@ -213,7 +224,8 @@ def build_experiment_config():
       descendant_threshold=FLAGS.descendant_threshold,
       use_reward_matrix=FLAGS.use_reward_matrix,
       background_extrinsic_reward_coefficient=FLAGS.background_extrinsic_reward_coefficient,
-      use_policy_cache=FLAGS.use_policy_cache
+      use_policy_cache=FLAGS.use_policy_cache,
+      target_random_nodes_for_evaluation=FLAGS.target_random_nodes_for_evaluation,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(

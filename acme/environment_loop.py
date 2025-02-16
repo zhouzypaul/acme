@@ -110,6 +110,7 @@ class EnvironmentLoop(core.Worker):
       n_warmup_episodes: int = 20,
       background_extrinsic_reward_coefficient: float = 1e-2,
       use_goal_space_caching: bool = True,
+      target_random_nodes_for_evaluation: bool = False,
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -144,6 +145,7 @@ class EnvironmentLoop(core.Worker):
     self._n_warmup_episodes = n_warmup_episodes
     self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
     self._use_goal_space_caching = use_goal_space_caching
+    self._target_random_nodes_for_evaluation = target_random_nodes_for_evaluation
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -620,7 +622,9 @@ class EnvironmentLoop(core.Worker):
 
       timestep, needs_reset, episode_logs, interrupted, extrinsic_return = self.gc_rollout(
         timestep._replace(step_type=dm_env.StepType.FIRST),
-        goal, episode_logs, use_random_actions=False
+        goal, episode_logs, use_random_actions=False,
+        target_node=target_node,
+        termination_func=termination_func
       )
       
       # assert timestep.last(), timestep
@@ -954,7 +958,9 @@ class EnvironmentLoop(core.Worker):
 
   def gc_rollout(
     self, timestep: dm_env.TimeStep, goal: OARG, episode_logs: dict,
-    use_random_actions: bool = False
+    use_random_actions: bool = False,
+    target_node: Tuple = None,
+    termination_func: Callable[[dm_env.TimeStep, Tuple], bool] = lambda ts, node: False
     ) -> Tuple[dm_env.TimeStep, bool, dict, bool]:
     """Rollout goal-conditioned policy.
 
@@ -1024,6 +1030,17 @@ class EnvironmentLoop(core.Worker):
       
       # Augment the ts with the current goal being pursued
       next_timestep = self.augment_ts_with_goal(next_timestep, goal, 'concat')
+
+      if (
+        self._target_random_nodes_for_evaluation and
+        target_node is not None and
+        termination_func(next_timestep, target_node)
+      ):
+        next_timestep = termination(next_timestep)
+        extrinsic_reward = np.array(1.0, dtype=np.float32)
+        extrinsic_discount = np.array(0.0, dtype=np.float32)
+        needs_reset = True
+        print(f'[EnvironmentLoop] Terminated at test-time goal: {next_timestep.observation.goals}.')
       
       trajectory.append(
         GoalBasedTransition(

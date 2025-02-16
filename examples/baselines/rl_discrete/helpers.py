@@ -35,7 +35,6 @@ import jax.numpy as jnp
 from acme.domains.minigrid.minigrid import environment_builder
 from acme.domains.montezuma.montezuma import environment_builder as montezuma_environment_builder
 from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
-from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
 
 
 FLAGS = flags.FLAGS
@@ -212,6 +211,7 @@ def make_taxi_environment(
   grid_size=5,
   bonus_for_passenger_in_taxi=0.001,
 ):
+  from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
   del seed
   env = taxi_environment_builder(
     goal_conditioned=goal_conditioned,
