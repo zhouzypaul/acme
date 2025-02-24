@@ -59,6 +59,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       background_extrinsic_reward_coefficient: float = 0.,
       use_policy_cache: bool = True,
       target_random_nodes_for_evaluation: bool = False,
+      disable_planning: bool = False,
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -79,6 +80,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
     self._use_policy_cache = use_policy_cache
     self._target_random_nodes_for_evaluation = target_random_nodes_for_evaluation
+    self._disable_planning = disable_planning
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -176,6 +178,10 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       target_random_nodes_for_evaluation=self._target_random_nodes_for_evaluation,
     )
     expansion_node = goal_sampler.get_target_node(current_node)
+
+    if self._disable_planning:
+      abstract_policy = {n: expansion_node for n in self._hash2obs}
+      return expansion_node, abstract_policy
     
     with self._amdp_policy_cache_lock:
       if expansion_node and expansion_node in self._amdp_policy_cache:

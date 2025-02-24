@@ -3,6 +3,7 @@ import copy
 import random
 import numpy as np
 import networkx as nx
+import collections
 
 from typing import Dict, Tuple, List, Set
 
@@ -24,6 +25,7 @@ class SubgoalSampler:
       discount_dict: Dict,
       sampling_method: str = 'amdp',
       default_behavior: str = 'graph_search',
+      fallback_to_expansion_node: bool = True,
   ):
     """
     Args:
@@ -39,6 +41,8 @@ class SubgoalSampler:
       discount_dict (dict): map node -> extrinsic discount.
       sampling_method (str): AMDP/exploration/task.
       default_behavior (str): graph_search/task.
+      fallback_to_expansion_node (bool): if the input state is not in the abstract policy,
+        output the expansion node.
     """
     assert sampling_method in ('amdp', 'task'), sampling_method
     assert default_behavior in ('graph_search', 'task'), default_behavior
@@ -50,6 +54,10 @@ class SubgoalSampler:
     self._exploration_goal_probability = exploration_goal_probability
     self._exploration_goal = exploration_goal
     self._sampling_method = sampling_method
+    self._fallback_to_expansion_node = fallback_to_expansion_node
+
+    if fallback_to_expansion_node:
+      self._abstract_policy = collections.defaultdict(lambda: expansion_node, self._abstract_policy)
 
     self._task_goal_hash = tuple(task_goal.goals)
     self._exploration_goal_hash = tuple(exploration_goal.goals)

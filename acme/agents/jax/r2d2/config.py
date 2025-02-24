@@ -88,3 +88,5 @@ class R2D2Config:
   use_policy_cache: bool = True
 
   target_random_nodes_for_evaluation: bool = False
+  pure_hindsight_experiment: bool = False
+  disable_planning: bool = False

@@ -481,6 +481,7 @@ def make_distributed_experiment(
         background_extrinsic_reward_coefficient=background_reward_coeff,
         use_goal_space_caching=experiment.builder._config.use_policy_cache,
         target_random_nodes_for_evaluation=experiment.builder._config.target_random_nodes_for_evaluation,
+        pure_hindsight_experiment=experiment.builder._config.pure_hindsight_experiment,
     )
     
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -524,7 +525,10 @@ def make_distributed_experiment(
                            use_reward_matrix=experiment.builder._config.use_reward_matrix,
                            background_extrinsic_reward_coefficient=background_reward_coeff,
                            use_policy_cache=experiment.builder._config.use_policy_cache,
-                           target_random_nodes_for_evaluation=experiment.builder._config.target_random_nodes_for_evaluation,
+                           target_random_nodes_for_evaluation=(
+                            experiment.builder._config.target_random_nodes_for_evaluation or
+                            experiment.builder._config.pure_hindsight_experiment),
+                           disable_planning=experiment.builder._config.disable_planning,
                            )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing

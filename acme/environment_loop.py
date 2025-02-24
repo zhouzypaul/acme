@@ -111,6 +111,7 @@ class EnvironmentLoop(core.Worker):
       background_extrinsic_reward_coefficient: float = 1e-2,
       use_goal_space_caching: bool = True,
       target_random_nodes_for_evaluation: bool = False,
+      pure_hindsight_experiment: bool = False,
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -146,6 +147,7 @@ class EnvironmentLoop(core.Worker):
     self._background_extrinsic_reward_coefficient = background_extrinsic_reward_coefficient
     self._use_goal_space_caching = use_goal_space_caching
     self._target_random_nodes_for_evaluation = target_random_nodes_for_evaluation
+    self._pure_hindsight_experiment = pure_hindsight_experiment
 
     self.goal_dict = {}
     self.count_dict = {}
@@ -454,7 +456,8 @@ class EnvironmentLoop(core.Worker):
       overall_attempted_edges.extend(attempted_edges)
 
       if not needs_reset and reached_target and \
-        random.random() < self._pure_exploration_probability:
+        random.random() < self._pure_exploration_probability and \
+          not self._pure_hindsight_experiment:
         
         overall_attempted_edges.append((timestep.observation, self.exploration_goal, True, 0.))
         print(f'[EnvironmentLoop] Reached {expansion_node}; starting pure exploration rollout.')
@@ -1203,7 +1206,10 @@ class EnvironmentLoop(core.Worker):
     print(f'[EnvironmentLoop] expansion_node_new_node_pairs: {expansion_node_new_node_pairs}')
 
     # Filter hash2obs so we only send back new goals.
-    filtered_hash_to_obs = {k: v for k, v in hash2obs.items() if k in new_hash2goals}
+    filtered_hash_to_obs = hash2obs
+    
+    if not self._pure_hindsight_experiment:
+      filtered_hash_to_obs = {k: v for k, v in hash2obs.items() if k in new_hash2goals}
 
     t0 = time.time()
 
@@ -1301,10 +1307,16 @@ class EnvironmentLoop(core.Worker):
       num_goals_to_replay: int = 5,
       use_tabular_counts: bool = True
     ) -> List[OARG]:
-      achieved_goals = {
-        tuple(trans.next_ts.observation.goals): trans.next_ts.observation
-        for trans in traj if tuple(trans.next_ts.observation.goals) in self.goal_dict
-      }
+      if self._pure_hindsight_experiment:
+        achieved_goals = {
+          tuple(trans.next_ts.observation.goals): trans.next_ts.observation
+          for trans in traj
+        }
+      else:
+        achieved_goals = {
+          tuple(trans.next_ts.observation.goals): trans.next_ts.observation
+          for trans in traj if tuple(trans.next_ts.observation.goals) in self.goal_dict
+        }
       goal_hashes = list(achieved_goals.keys())
 
       # TODO(ab): When the number of goal_hashes is <= num_goals_to_replay and sampling_by_replacement is False,
@@ -1335,7 +1347,8 @@ class EnvironmentLoop(core.Worker):
         counts = [self.count_dict[g] for g in goal_hashes]
         scores = np.asarray([1. / (1 + count) for count in counts])
         
-      probs = scores2probabilities(scores)
+      probs = scores2probabilities(scores) if not self._pure_hindsight_experiment else (
+        np.ones(len(goal_hashes)) / len(goal_hashes))
       selected_indices = np.random.choice(
         range(len(goal_hashes)),
         p=probs,

@@ -118,6 +118,8 @@ flags.DEFINE_float('bonus_for_passenger_in_taxi', 0.001, 'Bonus for passenger in
 flags.DEFINE_float('background_extrinsic_reward_coefficient', 0.0, 'weight given to extrinsic reward for background RND')
 
 flags.DEFINE_bool("target_random_nodes_for_evaluation", False, "Eval mode for pinball: sample a random node and try to reach it.")
+flags.DEFINE_bool("pure_hindsight_experiment", False, "Pure HER baseline: GS == SS and no planning.")
+flags.DEFINE_bool("disable_planning", False, "Disable planning and use the abstract policy directly.")
 
 FLAGS = flags.FLAGS
 
@@ -226,6 +228,8 @@ def build_experiment_config():
       background_extrinsic_reward_coefficient=FLAGS.background_extrinsic_reward_coefficient,
       use_policy_cache=FLAGS.use_policy_cache,
       target_random_nodes_for_evaluation=FLAGS.target_random_nodes_for_evaluation,
+      pure_hindsight_experiment=FLAGS.pure_hindsight_experiment,
+      disable_planning=FLAGS.disable_planning
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
