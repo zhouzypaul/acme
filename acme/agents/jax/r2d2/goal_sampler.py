@@ -3,6 +3,7 @@
 import time
 import ipdb
 import random
+import pickle
 import numpy as np
 import jax.numpy as jnp
 import networkx as nx
@@ -42,6 +43,7 @@ class GoalSampler:
       hash2vstar: Dict = {},
       edge2rewards: Dict = {},
       target_random_nodes_for_evaluation: bool = False,
+      path_to_offline_graph: str = "",  # eg: imdsg_pinball_hash2obs_graph.pkl
   ):
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
@@ -69,6 +71,7 @@ class GoalSampler:
     self._goal_space_size = goal_space_size
     self._should_switch_goal = should_switch_goal
     self._target_random_nodes_for_evaluation = target_random_nodes_for_evaluation
+    self._path_to_offline_graph = path_to_offline_graph
     
     self._n_courier_errors = 0
     
@@ -131,8 +134,13 @@ class GoalSampler:
     at_goal = lambda g: all([g1 == g2 for g1, g2 in zip(current_node, g) if g2 >= 0])
     not_special_context = lambda g: g != self._exploration_goal_hash and g != self._task_goal_hash
     is_death = lambda g: self._ignore_non_rewarding_terminal_nodes and self.is_death_node(g)
+    goal_dict = self.goal_dict
+    if self._path_to_offline_graph:
+      print(f'[GoalSampler] Loading offline graph from {self._path_to_offline_graph}.')
+      with open(self._path_to_offline_graph, 'rb') as f:
+        goal_dict = pickle.load(f)
     return {
-      goal: oar for (goal, oar) in self.goal_dict.items()
+      goal: oar for (goal, oar) in goal_dict.items()
         if not at_goal(goal) and not_special_context(goal) and not is_death(goal)
     }
   
