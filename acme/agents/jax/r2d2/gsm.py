@@ -60,6 +60,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
       use_policy_cache: bool = True,
       target_random_nodes_for_evaluation: bool = False,
       disable_planning: bool = False,
+      path_to_offline_graph: str = "",  # imdsg_pinball_hash2obs_graph.pkl
     ):
     self._environment = environment
     self._exploration_algorithm_is_cfn = exploration_algorithm_is_cfn
@@ -81,6 +82,7 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._use_policy_cache = use_policy_cache
     self._target_random_nodes_for_evaluation = target_random_nodes_for_evaluation
     self._disable_planning = disable_planning
+    self._path_to_offline_graph = path_to_offline_graph
 
     if exploration_algorithm_is_cfn:
       assert isinstance(exploration_networks, CFNNetworks), type(exploration_networks)
@@ -88,6 +90,10 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     self._hash2obs = {}  # map goal hash to obs
     self._hash2counts = collections.defaultdict(int)
     self._count_dict_lock = threading.Lock()
+
+    if path_to_offline_graph:
+      with open(path_to_offline_graph, 'rb') as f:
+        self._hash2obs = pickle.load(f)
     
     # Map src node -> dest node -> on policy attempt count
     self._on_policy_counts = collections.defaultdict(
@@ -861,6 +867,11 @@ class GoalSpaceManager(Saveable, acme.core.VariableSource):
     assert isinstance(self._edge2return, dict), type(state[18])
     print(f'[GSM] Restored transition tensor {self._transition_matrix.shape}')
     print(f'[GSM] Took {time.time() - t0}s to restore from checkpoint.')
+
+    if self._path_to_offline_graph:
+      with open(self._path_to_offline_graph, 'rb') as f:
+        self._hash2obs = pickle.load(f)
+      print(f'[GSM] Loaded offline graph with {len(self._hash2obs)} nodes.')
 
     # _edges = self.get_all_edges_with(src=(8, 11, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0))
     # print(f'Edges from (8, 11, 1, 1, 0, 1, 1, 0, 1, 0, 0, 0): {_edges}')

@@ -21,6 +21,7 @@ import math
 import itertools
 from typing import List, Optional, Sequence, Tuple, Dict, Callable
 import matplotlib.pyplot as plt
+import pickle
 
 from acme import core
 from acme.utils import counting
@@ -112,6 +113,7 @@ class EnvironmentLoop(core.Worker):
       use_goal_space_caching: bool = True,
       target_random_nodes_for_evaluation: bool = False,
       pure_hindsight_experiment: bool = False,
+      path_to_offline_graph: str = "",  # "imdsg_pinball_hash2obs_graph.pkl"
   ):
     # Internalize agent and environment.
     self._environment = environment
@@ -162,6 +164,13 @@ class EnvironmentLoop(core.Worker):
     self._hash2idx = {}
     self._transition_matrix = np.zeros((1, 1))
     self._idx2hash = {}
+    self._path_to_offline_graph = path_to_offline_graph
+
+    if (self._pure_hindsight_experiment and
+      target_random_nodes_for_evaluation and path_to_offline_graph):
+      with open(path_to_offline_graph, 'rb') as f:
+        self.goal_dict = pickle.load(f)
+      print(f'[EnvironmentLoop] Loaded goal dict with {len(self.goal_dict)} entries.')
 
     self._goal_achievement_rates = collections.defaultdict(float)
     self._goal_pursual_counts = collections.defaultdict(int)
@@ -619,7 +628,8 @@ class EnvironmentLoop(core.Worker):
     needs_reset = False
 
     while not needs_reset and not termination_func(timestep, target_node):
-      goal = subgoal_sampler(self._get_current_node(timestep))
+      goal = subgoal_sampler(self._get_current_node(timestep)) if (not self._pure_hindsight_experiment) else (
+        self.goal_dict[target_node] if target_node in self.goal_dict else self.task_goal)
 
       obs0 = copy.deepcopy(timestep.observation)
 
