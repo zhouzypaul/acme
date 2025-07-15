@@ -37,7 +37,7 @@ def classify(classifier: Dict, obs: np.ndarray) -> bool:
         return False
     
     # salient patches are in BGR so we need to convert obs to BGR as well.
-    obs = patch_lib.np2cv(obs)
+    # obs = patch_lib.np2cv(obs)  # TODO(ab): doing this for grayscale, make this automatic
 
     # TODO(ab): do we need to subtract the background from the obs?
     

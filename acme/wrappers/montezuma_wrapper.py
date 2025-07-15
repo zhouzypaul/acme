@@ -143,7 +143,7 @@ class BaseAtariWrapper(abc.ABC, base.EnvironmentWrapper):
       pixels_dtype = np.uint8
 
     if self._grayscaling:
-      pixels_spec_shape = (self._height, self._width)
+      pixels_spec_shape = (self._height, self._width, 1)
       pixels_spec_name = "grayscale"
     else:
       pixels_spec_shape = (self._height, self._width, NUM_COLOR_CHANNELS)

@@ -215,7 +215,11 @@ def extract_patch(image, bbox):
 
 
 def is_similar(patch1, patch2):
-    res = cv2.matchTemplate(patch1, patch2, cv2.TM_CCOEFF_NORMED)
+    res = cv2.matchTemplate(
+        patch1.astype(np.uint8),
+        patch2.astype(np.uint8),
+        cv2.TM_CCOEFF_NORMED
+    )
     _, val, _, _ = cv2.minMaxLoc(res)
     return val > TEMPLATE_MATCHING_THRESHOLD
 

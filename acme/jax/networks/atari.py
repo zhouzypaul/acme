@@ -221,7 +221,7 @@ class R2D2AtariNetwork(hk.RNNCore):
   ) -> Tuple[base.QValues, hk.LSTMState]:
 
     # Split the input into obs and goal, only _embed obs.
-    assert inputs.observation.shape[-1] == 4, inputs.observation.shape
+    # assert inputs.observation.shape[-1] == 4, inputs.observation.shape
     obs_img = inputs.observation[..., :3]
 
     # import ipdb; ipdb.set_trace()
