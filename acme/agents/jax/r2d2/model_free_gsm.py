@@ -43,6 +43,7 @@ class GoalSpaceManager(Saveable):
       reachability_novelty_combination_method: str = 'multiplication',
       reachability_novelty_addition_alpha: float = 0.5,
       descendant_threshold: float = 0.1,
+      subsampled_classifiers_dir: Optional[str] = "classifiers0_calcThresh_low_subsampled1",
     ):
     self._rng_key = rng_key
     self._hash2proto = {}
@@ -89,6 +90,77 @@ class GoalSpaceManager(Saveable):
     print('Created model-free GSM.')
     print(f'[GSM] use_intermediate_difficulty: {use_intermediate_difficulty} ',
           f'use_uvfa_reachability: {use_uvfa_reachability}')
+
+    if subsampled_classifiers_dir:
+      self._initialize_goal_space_from_classifiers(subsampled_classifiers_dir)
+
+  def _initialize_goal_space_from_classifiers(self, subsampled_classifiers_dir: str):
+    """Load classifiers from the given directory, sort them, reassign classifier IDs contiguously,
+    and save a mapping from new IDs to old IDs in the same directory.
+    
+    For each classifier, the prototype_image is used to compute a multi-hot goal vector:
+    For every classifier (including itself) that returns True when applied to the prototype_image,
+    the corresponding bit is set to True. This goal vector is wrapped in an OARG (with default action 0 and reward 0.0)
+    and stored in _hash2obs.
+    """
+    print(f"Initializing goal-space from subsampled classifiers in {subsampled_classifiers_dir}")
+    new_classifiers = []
+    new_to_old_mapping = {}
+    # Get a sorted list of classifier files.
+    files = sorted([f for f in os.listdir(subsampled_classifiers_dir) if ('classifier' in f 
+      and f.endswith('.pkl'))])
+    total_classifiers = len(files)
+    new_id = 0
+
+    # First pass: load classifiers and reassign new contiguous IDs.
+    for filename in files:
+        filepath = os.path.join(subsampled_classifiers_dir, filename)
+        with open(filepath, 'rb') as f:
+            clf = pickle.load(f)
+        old_id = clf.get("classifier_id", None)
+        # Reassign classifier_id to a new contiguous value.
+        clf = classifier_lib.assign_id(clf, new_id)
+        new_classifiers.append(clf)
+        new_to_old_mapping[new_id] = old_id
+        key = clf["classifier_id"]
+        self._hash2proto[key] = np.asarray(clf["prototype_info_vector"])
+        self._hash2counts[key] = 0
+        # _hash2infos will be updated later.
+        self._hash2infos[key] = set()
+        new_id += 1
+
+    # Second pass: for each classifier, compute its goal vector.
+    # The goal vector is a boolean array of length total_classifiers.
+    # For every classifier in the set that returns True on the current classifier's prototype_image,
+    # the corresponding bit is set to True.
+    for clf in new_classifiers:
+        key = clf["classifier_id"]
+        prototype_image = clf['prototype_image']
+        goal_vector = np.zeros((total_classifiers,), dtype=bool)
+        # Loop over all classifiers and update the goal vector.
+        for other in new_classifiers:
+            # Use the classify function to determine if the 'other' classifier fires on prototype_image.
+            if classifier_lib.classify(other, prototype_image):
+                goal_vector[other["classifier_id"]] = True
+        # Wrap the prototype_image and the computed goal vector in an OARG.
+        default_oarg = self._construct_oarg(
+            obs=prototype_image,
+            action=0,
+            reward=0.0,
+            goal_features=goal_vector
+        )
+        self._hash2obs[key] = collections.deque([default_oarg], maxlen=10)
+
+    self.classifiers = new_classifiers
+    print(f"Initialized goal-space with {len(self.classifiers)} classifiers.")
+
+    # Save the new-to-old ID mapping to the same directory.
+    mapping_filepath = os.path.join(subsampled_classifiers_dir, "id_mapping.pkl")
+    
+    with open(mapping_filepath, "wb") as f:
+        pickle.dump(new_to_old_mapping, f)
+    
+    print(f"Saved new-to-old id mapping to {mapping_filepath}")
 
   def get_goal_dict(self) -> Dict:
     keys = list(self._hash2proto.keys())
@@ -248,7 +320,8 @@ class GoalSpaceManager(Saveable):
     for key in nodes:
       oarg = nodes[key]
       keys.append(key)
-      observations.append(oarg.observation)
+      observations.append(
+        oarg.observation if oarg.observation.shape == (84, 84, 1) else oarg.observation[..., None])
       actions.append(oarg.action)
       rewards.append(oarg.reward)
       goals.append(oarg.goals)
@@ -272,10 +345,14 @@ class GoalSpaceManager(Saveable):
     key2idx = {key: random.choice(range(length)) for key, length in key2lens.items()}
     nodes = {key: self._hash2obs[key][key2idx[key]] for key in keys}
     node_hashes, oarg = self._nodes2oarg(nodes)
+    # oarg.observation has shape (B, 84, 84)
     cfn_oar = oarg._replace(
-        observation=oarg.observation[..., :3])
+        observation=oarg.observation)  #[..., :3])
     cfn_oar = cfn_oar._replace(
-      observation=cfn_oar.observation[None, ...])
+      observation=cfn_oar.observation[None, ...])  # (T, B, 84, 84)
+    cfn_oar = oarg._replace(
+      observation=jnp.asarray(cfn_oar.observation).transpose(1, 0, 2, 3, 4).astype('uint8')
+    )
     q_values, _ = self._exploration_networks.direct_rl_networks.unroll(
       self._exploration_params,
       self._rng_key,
