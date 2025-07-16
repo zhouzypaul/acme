@@ -126,7 +126,7 @@ class GoalSpaceManager(Saveable):
         self._hash2proto[key] = np.asarray(clf["prototype_info_vector"])
         self._hash2counts[key] = 0
         # _hash2infos will be updated later.
-        self._hash2infos[key] = set()
+        self._hash2infos[(key,)] = set()
         new_id += 1
 
     # Second pass: for each classifier, compute its goal vector.
@@ -449,6 +449,8 @@ class GoalSpaceManager(Saveable):
     with self._hash2infos_lock:
       for classifier_id, info_set in self._hash2infos.items():
         # Compute the logical And of all the info vectors
+        if len(info_set) == 0:
+          continue
         inferred_info = np.ones_like(list(info_set)[0])
         for info in info_set:
           inferred_info = np.logical_and(inferred_info, info)
