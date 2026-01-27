@@ -33,6 +33,11 @@ def create_classifier(
 
 def classify(classifier: Dict, obs: np.ndarray) -> bool:
     assert classifier["classifier_id"] is not None, 'Assign ID before use.'
+    
+    if classifier.get("use_pixel_baseline", False):
+        # Pixel-wise strict check on the entire image
+        return np.array_equal(obs, classifier["prototype_image"])
+
     if len(classifier["salient_patches"]) == 0:
         return False
     

@@ -82,3 +82,4 @@ class R2D2Config:
   reachability_novelty_combination_method: str = 'multiplication'
   reachability_novelty_combination_alpha: float = 0.5
   descendant_threshold: float = 0.
+  classifier_load_dir: str = None

@@ -220,9 +220,12 @@ class R2D2AtariNetwork(hk.RNNCore):
       state: hk.LSTMState  # [B, ...]
   ) -> Tuple[base.QValues, hk.LSTMState]:
 
+    assert inputs.observation.shape in ((84,84,2),)
+
     # Split the input into obs and goal, only _embed obs.
     # assert inputs.observation.shape[-1] == 4, inputs.observation.shape
-    obs_img = inputs.observation[..., :3]
+    obs_img = inputs.observation[..., :1]
+    # obs_img = inputs.observation[..., :3]
 
     # import ipdb; ipdb.set_trace()
     n_goal_dims = inputs.goals.shape[0]
@@ -258,11 +261,9 @@ class R2D2AtariNetwork(hk.RNNCore):
       state: hk.LSTMState  # [T, ...]
   ) -> Tuple[base.QValues, hk.LSTMState]:
     """Efficient unroll that applies torso, core, and duelling mlp in one pass."""
-    obs_tensor = inputs.observation[..., :3]
-    embeddings = hk.BatchApply(self._embed)(
-      inputs._replace(observation=obs_tensor))  # [T, B, D+A+1]
-    core_outputs, new_states = hk.static_unroll(self._core, embeddings, state)
-
+    obs_tensor = inputs.observation[..., :1]
+    # obs_tensor = inputs.observation[..., :3]
+    
     # import ipdb; ipdb.set_trace()
     n_goal_dims = inputs.goals.shape[-1]     # (T, B, 130) -> 130
     goal_vec = inputs.observation[..., -1]  # (T, B, 84, 84)
@@ -270,6 +271,12 @@ class R2D2AtariNetwork(hk.RNNCore):
     goal_vec = goal_vec.reshape(goal_vec.shape[0], goal_vec.shape[1], -1)  # Reshape to (T, B, 84*84=7056)
     goal_vec = goal_vec[:,:,:n_goal_dims]    # (T, B, 130)
     # print("unroll", goal_vec.shape)
+    
+    
+    embeddings = hk.BatchApply(self._embed)(
+      inputs._replace(observation=obs_tensor))  # [T, B, D+A+1]
+    core_outputs, new_states = hk.static_unroll(self._core, embeddings, state)
+
 
     goal_embeddings = hk.BatchApply(self._goal_embed)(goal_vec.astype(jnp.float32))
 

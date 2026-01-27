@@ -372,6 +372,7 @@ def environment_builder(
     action_repeat=4,
     reset_to_laser_room=False,
     use_learned_goal_classifiers=True,
+    classifier_trigger_dir=None,
 ):
     version = 'v0' if sticky_actions else 'v4'
     level_name = f'MontezumaRevengeNoFrameskip-{version}'
@@ -379,8 +380,9 @@ def environment_builder(
     env = MontezumaInfoWrapper(env, reset_to_laser_room=reset_to_laser_room)
     n_goal_dims = determine_n_goal_dims(env)
     env = GymnasiumWrapper(env)
-    atari_wrapper = UVFAObsSpecWrapper if goal_conditioned else montezuma_wrapper.AtariWrapper
-    env = atari_wrapper(
+    
+    if goal_conditioned:
+        env = UVFAObsSpecWrapper(
             env,
             scale_dims=scale_dims,
             to_float=to_float,
@@ -392,13 +394,27 @@ def environment_builder(
             action_repeats=action_repeat,
             pooled_frames=1 if action_repeat == 1 else 2,
         )  # TODO(ab): reward clipping
+    else:
+        env = montezuma_wrapper.AtariWrapper(
+            env,
+            scale_dims=scale_dims,
+            to_float=to_float,
+            max_episode_len=max_episode_steps,
+            num_stacked_frames=num_stacked_frames,
+            flatten_frame_stack=flatten_frame_stack,
+            grayscaling=True,
+            max_abs_reward=1.0,
+            action_repeats=action_repeat,
+            pooled_frames=1 if action_repeat == 1 else 2,
+        ) # TODO(ab): reward clipping
     
     if oarg_wrapper:
         env = ObservationActionRewardGoalWrapper(
             env,
             info2goals=info2binary,
             n_goal_dims=n_goal_dims,
-            use_learned_goal_classifiers=use_learned_goal_classifiers
+            use_learned_goal_classifiers=use_learned_goal_classifiers,
+            classifier_trigger_dir=classifier_trigger_dir,
         )
     env = wrappers.SinglePrecisionWrapper(env)
     return env

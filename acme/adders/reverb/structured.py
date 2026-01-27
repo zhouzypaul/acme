@@ -129,6 +129,8 @@ class StructuredAdder(adders_base.Adder):
 
   def add_first(self, timestep: dm_env.TimeStep):
     """Record the first observation of an episode."""
+    assert timestep.observation.observation.shape in ((84,84,1),(84,84,2))
+    # import ipdb; ipdb.set_trace()
     if not timestep.first():
       raise ValueError(
           'adder.add_first called with a timestep that was not the first of its'
@@ -152,7 +154,8 @@ class StructuredAdder(adders_base.Adder):
           next_timestep: dm_env.TimeStep,
           extras: types.NestedArray = ()):
     """Record an action and the following timestep."""
-
+    # import ipdb; ipdb.set_trace()
+    assert next_timestep.observation.observation.shape in ((84,84,1),(84,84,2))
     if not self._writer.step_is_open:
       raise ValueError('adder.add_first must be called before adder.add.')
 

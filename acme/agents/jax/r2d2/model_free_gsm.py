@@ -43,11 +43,15 @@ class GoalSpaceManager(Saveable):
       reachability_novelty_combination_method: str = 'multiplication',
       reachability_novelty_addition_alpha: float = 0.5,
       descendant_threshold: float = 0.1,
-      subsampled_classifiers_dir: Optional[str] = "classifiers0_calcThresh_low_subsampled1",
+      subsampled_classifiers_dir: Optional[str] = None,
+      use_pixel_baseline: bool = False,
     ):
+    self._use_pixel_baseline = use_pixel_baseline
     self._rng_key = rng_key
     self._hash2proto = {}
     self._hash2counts = collections.defaultdict(int)
+    self._hash2avg_reward = collections.defaultdict(float)
+    self._selection_history = collections.deque(maxlen=20000)
     self._tabular_bonus = use_tabular_bonuses
     self._goal_space_size = goal_space_size
     self._count_dict_lock = threading.Lock()
@@ -79,6 +83,9 @@ class GoalSpaceManager(Saveable):
     # Learning curve for each goal
     self._edge2successes = collections.defaultdict(list)
     self._edge2successes_lock = threading.Lock()
+    
+    # Counter for unique states per classifier
+    self._hash2unique_state_count = collections.defaultdict(int)
 
     base_dir = get_save_directory()
     self._gsm_loop_last_timestamp = time.time()
@@ -95,39 +102,68 @@ class GoalSpaceManager(Saveable):
       self._initialize_goal_space_from_classifiers(subsampled_classifiers_dir)
 
   def _initialize_goal_space_from_classifiers(self, subsampled_classifiers_dir: str):
-    """Load classifiers from the given directory, sort them, reassign classifier IDs contiguously,
-    and save a mapping from new IDs to old IDs in the same directory.
+    """Load classifiers from the given directory (or directories), sort them, reassign classifier IDs contiguously,
+    and save a mapping from new IDs to old IDs in the first directory.
     
-    For each classifier, the prototype_image is used to compute a multi-hot goal vector:
-    For every classifier (including itself) that returns True when applied to the prototype_image,
-    the corresponding bit is set to True. This goal vector is wrapped in an OARG (with default action 0 and reward 0.0)
-    and stored in _hash2obs.
+    Args:
+        subsampled_classifiers_dir: A single directory path or a comma-separated list of paths.
     """
-    print(f"Initializing goal-space from subsampled classifiers in {subsampled_classifiers_dir}")
+    # Handle multiple directories
+    directories = [d.strip() for d in subsampled_classifiers_dir.split(',')]
+    print(f"Initializing goal-space from subsampled classifiers in: {directories}")
+    
+    combined_files = [] # List of (filepath, directory_index)
+    
+    for i, directory in enumerate(directories):
+        if not os.path.exists(directory):
+            print(f"Warning: Classifier directory not found: {directory}")
+            continue
+            
+        files = sorted([f for f in os.listdir(directory) if ('classifier' in f and f.endswith('.pkl'))])
+        for f in files:
+            combined_files.append(os.path.join(directory, f))
+            
+    print(f"Total classifiers found across {len(directories)} directories: {len(combined_files)}")
+
     new_classifiers = []
     new_to_old_mapping = {}
-    # Get a sorted list of classifier files.
-    files = sorted([f for f in os.listdir(subsampled_classifiers_dir) if ('classifier' in f 
-      and f.endswith('.pkl'))])
-    total_classifiers = len(files)
+    total_classifiers = len(combined_files)
     new_id = 0
 
     # First pass: load classifiers and reassign new contiguous IDs.
-    for filename in files:
-        filepath = os.path.join(subsampled_classifiers_dir, filename)
+    for filepath in combined_files:
         with open(filepath, 'rb') as f:
             clf = pickle.load(f)
         old_id = clf.get("classifier_id", None)
+        
         # Reassign classifier_id to a new contiguous value.
         clf = classifier_lib.assign_id(clf, new_id)
+        if self._use_pixel_baseline:
+            clf['use_pixel_baseline'] = True
         new_classifiers.append(clf)
-        new_to_old_mapping[new_id] = old_id
+        
+        # Store origin path and old ID to resolve ambiguity
+        new_to_old_mapping[new_id] = {'old_id': old_id, 'source_path': filepath}
+        
         key = clf["classifier_id"]
-        self._hash2proto[key] = np.asarray(clf["prototype_info_vector"])
+        # ram state
+        # make this a one hot using the key value so dic should have
+        # one hot vectors for each classifier
+        protovector = np.zeros((total_classifiers,), dtype=bool)
+        protovector[key] = True
+        self._hash2proto[key] = protovector
+        # set break and double check hash2proto
         self._hash2counts[key] = 0
         # _hash2infos will be updated later.
         self._hash2infos[(key,)] = set()
         new_id += 1
+        
+    # Save the combined mapping to the PRIMARY (first) directory
+    if directories and os.path.exists(directories[0]):
+        mapping_path = os.path.join(directories[0], "id_mapping_combined.pkl")
+        with open(mapping_path, 'wb') as f:
+            pickle.dump(new_to_old_mapping, f)
+        print(f"Saved combined ID mapping to {mapping_path}")
 
     # Second pass: for each classifier, compute its goal vector.
     # The goal vector is a boolean array of length total_classifiers.
@@ -154,14 +190,6 @@ class GoalSpaceManager(Saveable):
     self.classifiers = new_classifiers
     print(f"Initialized goal-space with {len(self.classifiers)} classifiers.")
 
-    # Save the new-to-old ID mapping to the same directory.
-    mapping_filepath = os.path.join(subsampled_classifiers_dir, "id_mapping.pkl")
-    
-    with open(mapping_filepath, "wb") as f:
-        pickle.dump(new_to_old_mapping, f)
-    
-    print(f"Saved new-to-old id mapping to {mapping_filepath}")
-
   def get_goal_dict(self) -> Dict:
     keys = list(self._hash2proto.keys())
     return {k: self._hash2proto[k] for k in keys}
@@ -172,6 +200,9 @@ class GoalSpaceManager(Saveable):
 
   def get_inferred_info_dict(self) -> Dict:
     return self._classifier2inferredinfo
+
+  def get_unique_state_count_dict(self) -> Dict:
+    return dict(self._hash2unique_state_count)
   
   @property
   def _params(self):
@@ -191,6 +222,7 @@ class GoalSpaceManager(Saveable):
     edge2success: Dict,
     hash2obs: Dict,
     hash2infos: Dict,
+    discovered_goals: set = None,  # All discovered goals (including HER)
   ):
     for hash, proto in hash2proto.items():
       self._hash2proto[hash] = np.asarray(proto)
@@ -198,8 +230,29 @@ class GoalSpaceManager(Saveable):
     with self._count_dict_lock:
       for hash, count in hash2count.items():
         self._hash2counts[hash] += count
+        
+        # Update average reward if observations are available
+        if hash in hash2obs:
+            # hash2obs[hash] is a SINGLE tuple (obs, action, reward, goal)
+            # reward is at index 2
+            reward = hash2obs[hash][2]
+            sum_rewards = reward
+            n_new = 1
+            
+            # Incremental average update
+            # Note: _hash2counts was just incremented by 'count' which should roughly match n_new
+            # But strictly: NewAvg = (OldAvg * OldCount + SumNew) / NewCount
+            # We treat _hash2counts as the TotalCount. (OldCount = Total - n_new)
+            total_count = self._hash2counts[hash]
+            old_count = max(0, total_count - n_new)
+            old_avg = self._hash2avg_reward[hash]
+            
+            self._hash2avg_reward[hash] = (old_avg * old_count + sum_rewards) / max(1, total_count)
+
         if self._tabular_bonus:
-          self._hash2bonus[hash] = 1. / np.sqrt(self._hash2counts[hash] + 1)
+          # Use average reward to weight the novelty bonus: (AvgReward + 1) / sqrt(Count)
+          # Adding 1 ensures we still explore 0-reward goals based on pure novelty
+          self._hash2bonus[hash] = (self._hash2avg_reward[hash] + 1.0) / np.sqrt(self._hash2counts[hash] + 1)
 
     self._update_edge_success_dict(edge2success)
 
@@ -208,6 +261,10 @@ class GoalSpaceManager(Saveable):
 
     with self._hash2infos_lock:
       self._update_info_dict(hash2infos)
+    
+    # Store discovered goals for filtering
+    if discovered_goals is not None:
+      self._discovered_goals = discovered_goals
 
   def _update_edge_success_dict(self, edge2success: Dict):
     with self._edge2successes_lock:
@@ -217,7 +274,9 @@ class GoalSpaceManager(Saveable):
   def _update_info_dict(self, hash2infos: Dict):
     for clf_id_tuple, info_set in hash2infos.items():
       for info in info_set:
-        self._hash2infos[clf_id_tuple].add(info)
+        if info not in self._hash2infos[clf_id_tuple]:
+          self._hash2infos[clf_id_tuple].add(info)
+          self._hash2unique_state_count[clf_id_tuple] += 1
 
   def _update_obs_dict(self, hash2obs: Dict):
     for goal in hash2obs:
@@ -255,10 +314,12 @@ class GoalSpaceManager(Saveable):
       hash2obs,
       self._classifier2inferredinfo,
       self._hash2infos,
+      self._selection_history,
+      self._hash2unique_state_count,
     )
 
   def restore(self, state):
-    assert len(state) == 8, len(state)
+    assert len(state) >= 8, len(state)
     self._hash2counts = state[0]
     self._hash2proto = state[1]
     self._hash2bonus = state[2]
@@ -267,6 +328,15 @@ class GoalSpaceManager(Saveable):
     self._hash2obs = {k: collections.deque(v, maxlen=10) for k, v in state[5].items()}
     self._classifier2inferredinfo = state[6]
     self._hash2infos = state[7]
+    self._selection_history = state[8] if len(state) > 8 else collections.deque(maxlen=20000)
+    
+    if len(state) > 9:
+        self._hash2unique_state_count = state[9]
+    else:
+        # Backward compatibility: populate count from existing sets
+        self._hash2unique_state_count = collections.defaultdict(int)
+        for k, v in self._hash2infos.items():
+            self._hash2unique_state_count[k] = len(v)
 
   def step(self):
     if self._use_exploration_vf_for_expansion and self._hash2obs:
@@ -307,8 +377,14 @@ class GoalSpaceManager(Saveable):
       reachability_method=self.reachability_novelty_combination_method,
       reachability_novelty_combination_alpha=self.reachability_novelty_addition_alpha,
       descendant_threshold=self._descendant_threshold,
+      discovered_goals=getattr(self, '_discovered_goals', set()),  # Pass discovered goals for filtering
     )
     expansion_node = goal_sampler.begin_episode(current_node)
+    
+    # Track the difficulty (bonus) of the selected node
+    if expansion_node in self._hash2bonus:
+        self._selection_history.append((time.time(), self._hash2bonus[expansion_node]))
+        
     return expansion_node, {}
   
   def _nodes2oarg(self, nodes: Dict) -> OARG:
@@ -320,16 +396,40 @@ class GoalSpaceManager(Saveable):
     for key in nodes:
       oarg = nodes[key]
       keys.append(key)
-      observations.append(
-        oarg.observation if oarg.observation.shape == (84, 84, 1) else oarg.observation[..., None])
+      obs = oarg.observation
+      if obs.ndim == 2:  # (84, 84)
+          obs = obs[..., None]
+      elif obs.ndim == 3 and obs.shape[2] != 1: # (84, 84, ?) -> (84, 84, 1)
+          # Assuming we want the first channel if there are multiple? Or maybe it's (1, 84, 84)?
+          # Let's assume (84, 84, C) and we want grayscale so we take mean or first logic from visualizer?
+          # Actually, likely it is (1, 84, 84).
+          if obs.shape[0] == 1:
+              obs = obs.squeeze(0)[..., None]
+          elif obs.shape[-1] > 1:
+               # Just take first channel to match typical behavior
+               obs = obs[..., 0:1]
+      
+      observations.append(obs)
       actions.append(oarg.action)
       rewards.append(oarg.reward)
       goals.append(oarg.goals)
+    
+    # Handle inhomogeneous goal shapes (if goal space size changed)
+    max_len = max([len(g) for g in goals]) if goals else 0
+    padded_goals = []
+    for g in goals:
+        if len(g) < max_len:
+            # Pad with False (zeros)
+            padding = np.zeros((max_len - len(g),), dtype=g.dtype)
+            padded_goals.append(np.concatenate([g, padding]))
+        else:
+            padded_goals.append(g)
+
     return keys, OARG(
       observation=jnp.asarray(observations),
       action=jnp.asarray(actions)[jnp.newaxis, ...],
       reward=jnp.asarray(rewards)[jnp.newaxis, ...],
-      goals=jnp.asarray(goals)[jnp.newaxis, ...]
+      goals=jnp.asarray(padded_goals)[jnp.newaxis, ...]
     )
 
   def _compute_and_update_novelty_values(self, n_nodes: int = 50):
@@ -345,13 +445,14 @@ class GoalSpaceManager(Saveable):
     key2idx = {key: random.choice(range(length)) for key, length in key2lens.items()}
     nodes = {key: self._hash2obs[key][key2idx[key]] for key in keys}
     node_hashes, oarg = self._nodes2oarg(nodes)
-    # oarg.observation has shape (B, 84, 84)
+    # oarg.observation has shape (B, 84, 84, 1)
+    # oarg.action/reward have shape (1, B, ...)
+    
+    # We need observation to match (1, B, ...) for unroll
+    observation = oarg.observation[None, ...] # (1, B, 84, 84, 1)
+    
     cfn_oar = oarg._replace(
-        observation=oarg.observation)  #[..., :3])
-    cfn_oar = cfn_oar._replace(
-      observation=cfn_oar.observation[None, ...])  # (T, B, 84, 84)
-    cfn_oar = oarg._replace(
-      observation=jnp.asarray(cfn_oar.observation).transpose(1, 0, 2, 3, 4).astype('uint8')
+      observation=jnp.asarray(observation).astype('uint8')
     )
     q_values, _ = self._exploration_networks.direct_rl_networks.unroll(
       self._exploration_params,
@@ -389,6 +490,11 @@ class GoalSpaceManager(Saveable):
         curr = self._hash2bonus.get(key, 0)
         error = value - curr
         self._hash2bonus[key] = curr + (error / self._bonus_counts[key])
+
+      # If using exploration VF, multiply by count-based bonus to get both signals
+      if self._use_exploration_vf_for_expansion:
+         count_bonus = 1. / np.sqrt(self._hash2counts[key] + 1)
+         self._hash2bonus[key] *= count_bonus
 
   def potentially_register_new_classifier(
     self,

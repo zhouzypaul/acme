@@ -129,17 +129,38 @@ class GoalSpaceManager(Saveable):
           f'Max VI iterations {max_vi_iterations}')
 
   def begin_episode(self, current_node: Tuple, task_goal_probability: float = 0.1) -> Tuple[Tuple, Dict]:
-    """Create and solve the AMDP. Then return the abstract policy."""
+    """Selects a goal to pursue for the episode.
+    
+    Args:
+      current_node: Current state
+      task_goal_probability: Probability of selecting task goal
+      success_rate_dict: Dictionary mapping goals to their success rates
+    
+    Returns:
+      Selected goal and metadata
+    """
+#     # Sync the goal space manager's data structures with the goal sampler.
+#     self.update_goal_sampler()
+    
     goal_sampler = GoalSampler(
-      *self.get_variables(),
+      goal_dict=self.get_goal_dict(),
+      count_dict=self.get_count_dict(),
+      bonus_dict=self.get_bonus_dict(),
+      on_policy_edge_count_dict=self.get_on_policy_count_dict(),
+      reward_dict=self.get_extrinsic_reward_dicts()[0],
+      discount_dict=self.get_extrinsic_reward_dicts()[1],
+      hash2idx=self._thread_safe_deepcopy(self._hash2idx),
+      idx2hash=self._thread_safe_deepcopy(self._idx2hash),
+      transition_tensor=self.get_transition_tensor(min(self._transition_matrix.shape[1], len(self._hash2idx))),
       task_goal_probability=task_goal_probability,
       task_goal=self.task_goal,
       exploration_goal=self.exploration_goal,
-      exploration_goal_probability=0.,
+      method=self.method,
       rmax_factor=self._rmax_factor,
+      max_vi_iterations=self._max_vi_iterations,
       goal_space_size=self._goal_space_size,
-      should_switch_goal=self._should_switch_goal,
-      max_vi_iterations=self._max_vi_iterations
+      success_rate_dict=getattr(self, '_hash2success_rate', {}),  # Use success rates from update()
+      discovered_goals=getattr(self, '_discovered_goals', set())  # Use discovered goals from update()
     )
     expansion_node = goal_sampler.begin_episode(current_node)
 
@@ -301,6 +322,8 @@ class GoalSpaceManager(Saveable):
     hash2discount: Dict,
     expansion_node_new_node_hash_pairs: List[Tuple[Tuple, Tuple]],
     edge2success: Dict,
+    hash2success_rate: Dict = None,  # Success rates for goal selection
+    discovered_goals: set = None,  # All discovered goals (including HER)
   ):
     """Update based on goals achieved by the different actors."""
     self._update_obs_dict(hash2obs)
@@ -309,6 +332,12 @@ class GoalSpaceManager(Saveable):
     self._update_idx_dict(hash2obs)
     self._hash2discount.update(hash2discount)
     self._update_edges_set(expansion_node_new_node_hash_pairs)
+    
+    # Store success rates and discovered goals for goal selection
+    if hash2success_rate is not None:
+      self._hash2success_rate = hash2success_rate
+    if discovered_goals is not None:
+      self._discovered_goals = discovered_goals
     self._update_edge_success_dict(edge2success)
     
   def _update_count_dict(self, hash2count: Dict):

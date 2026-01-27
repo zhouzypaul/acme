@@ -65,7 +65,10 @@ def make_distributed_experiment(
     ] = None,
     name: str = 'agent',
     program: Optional[lp.Program] = None,
-    create_goal_space_manager: bool = False
+    create_goal_space_manager: bool = False,
+    use_learned_goal_classifiers: bool = False,
+    track_state_visitation: bool = False,
+    use_pixel_baseline: bool = False,
 ) -> lp.Program:
   """Builds a Launchpad program for running the experiment.
 
@@ -388,6 +391,8 @@ def make_distributed_experiment(
       gsm: Optional[GoalSpaceManager],
       cfn_variable_source: Optional[core.VariableSource] = None,
       cfn_replay: Optional[reverb.Client] = None,
+      use_learned_goal_classifiers: bool = False,
+      track_state_visitation: bool = False
   ) -> environment_loop.EnvironmentLoop:
     """The actor process."""
     environment_key, actor_key, explore_key = jax.random.split(
@@ -468,6 +473,8 @@ def make_distributed_experiment(
         planner_backup_strategy=default_behavior,
         max_option_duration=experiment.builder._config.option_timeout,
         num_goals_to_replay=experiment.builder._config.num_goals_to_replay,
+        use_learned_goal_classifiers=use_learned_goal_classifiers,
+        track_state_visitation=track_state_visitation
     )
 
   def _gsm_node(rng_num, networks, variable_source, exploration_var_source):
@@ -500,6 +507,8 @@ def make_distributed_experiment(
       reachability_novelty_combination_method=experiment.builder._config.reachability_novelty_combination_method,
       reachability_novelty_addition_alpha=experiment.builder._config.reachability_novelty_combination_alpha,
       descendant_threshold=experiment.builder._config.descendant_threshold,
+      subsampled_classifiers_dir=experiment.builder._config.classifier_load_dir,
+      use_pixel_baseline=use_pixel_baseline,
     )
     if experiment.checkpointing:
       checkpointing = experiment.checkpointing
@@ -676,7 +685,9 @@ def make_distributed_experiment(
             inference_node,
             gsm if create_goal_space_manager else None,
             cfn,
-            cfn_replay
+            cfn_replay,
+            use_learned_goal_classifiers,
+            track_state_visitation
         )
         colocation_nodes.append(actor)
 

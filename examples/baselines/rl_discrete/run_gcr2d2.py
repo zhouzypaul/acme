@@ -100,6 +100,10 @@ flags.DEFINE_integer('num_goals_to_replay', 5, 'Number of goals to replay')
 # Factored goals flags.
 flags.DEFINE_bool('use_learned_goal_classifiers', False, 'Whether to use learned goal classifiers')
 
+# Debugging flags.
+flags.DEFINE_bool('debug_classifiers', False, 'Enable classifier trigger visualizations')
+flags.DEFINE_bool('track_state_visitation', False, 'Enable state visitation tracking and visualization')
+
 # Goal sampling flags.
 flags.DEFINE_bool('use_exploration_vf_for_expansion', False, 'Whether to use exploration value function for expansion or the reward function')
 flags.DEFINE_bool('use_intermediate_difficulty', False, 'Whether to sample goals of intermediate difficulty.')
@@ -107,6 +111,8 @@ flags.DEFINE_bool('use_uvfa_reachability', False, 'Whether to use UVFA for reach
 flags.DEFINE_string('reachability_novelty_combination_method', 'multiplication', 'Method for combining reachability and novelty scores')
 flags.DEFINE_float('reachability_novelty_combination_alpha', 0.5, 'Alpha value for combining reachability and novelty scores')
 flags.DEFINE_float('descendant_threshold', 0., 'Threshold for considering a node as being reachable from the current state.')
+flags.DEFINE_string('classifier_load_dir', '/mnt/nfs/home/ademello/research/acme/classifiers/classifiers0_calcThresh_low_subsampled1', 'Directory to load classifiers from.')
+flags.DEFINE_bool('use_pixel_baseline', False, 'Baseline: use full pixel match for classifiers instead of patches.')
 
 # Task flags.
 flags.DEFINE_integer('taxi_grid_size', 5, 'Size of the taxi grid on each dim.')
@@ -114,7 +120,7 @@ flags.DEFINE_integer('taxi_grid_size', 5, 'Size of the taxi grid on each dim.')
 FLAGS = flags.FLAGS
 
 
-def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_size=5):
+def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_size=5, classifier_trigger_dir=None):
   
   minigrid_factory = functools.partial(
     helpers.make_minigrid_environment,
@@ -138,6 +144,7 @@ def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_si
       to_float=to_float,
       scale_dims=(84, 84),
       max_episode_steps=max_episode_steps,
+      classifier_trigger_dir=classifier_trigger_dir,
   )
   
   if 'MiniGrid' in env_name:
@@ -161,10 +168,19 @@ def build_experiment_config():
   env_name = FLAGS.env_name
   max_episode_steps = FLAGS.max_episode_steps
   use_learned_goal_classifiers = FLAGS.use_learned_goal_classifiers
+  debug_classifiers = FLAGS.debug_classifiers
   taxi_grid_size = FLAGS.taxi_grid_size
+  acme_dir = FLAGS.acme_dir
+  acme_id = FLAGS.acme_id
   
   def environment_factory(seed: int) -> dm_env.Environment:
-    return make_environment_factory(env_name, max_episode_steps, to_float=False, taxi_grid_size=taxi_grid_size)(
+    # Set up classifier trigger directory if debugging is enabled
+    classifier_trigger_dir = None
+    if debug_classifiers and use_learned_goal_classifiers:
+      import os
+      classifier_trigger_dir = os.path.join(acme_dir, acme_id, 'plots', 'classifier_triggers')
+    
+    return make_environment_factory(env_name, max_episode_steps, to_float=False, taxi_grid_size=taxi_grid_size, classifier_trigger_dir=classifier_trigger_dir)(
       seed=seed, goal_conditioned=True, use_learned_goal_classifiers=use_learned_goal_classifiers)
 
   checkpointing_config = experiments.CheckpointingConfig(directory=FLAGS.acme_dir)
@@ -202,6 +218,7 @@ def build_experiment_config():
       reachability_novelty_combination_method=FLAGS.reachability_novelty_combination_method,
       reachability_novelty_combination_alpha=FLAGS.reachability_novelty_combination_alpha,
       descendant_threshold=FLAGS.descendant_threshold,
+      classifier_load_dir=FLAGS.classifier_load_dir,
   )
   save_config(config, os.path.join(FLAGS.acme_dir, FLAGS.acme_id, 'gc_policy_config.json'))
   return experiments.ExperimentConfig(
@@ -375,7 +392,10 @@ def main(_):
         experiment=config,
         exploration_experiment=exploration_config,
         num_actors=FLAGS.num_actors if lp_utils.is_local_run() else 80,
-        create_goal_space_manager=True
+        create_goal_space_manager=True,
+        use_learned_goal_classifiers=FLAGS.use_learned_goal_classifiers,
+        track_state_visitation=FLAGS.track_state_visitation,
+        use_pixel_baseline=FLAGS.use_pixel_baseline
     )
     lp.launch(program, 
               xm_resources=lp_utils.make_xm_docker_resources(program),

@@ -23,10 +23,16 @@ class ModelFreeGSMPlotter:
     self._node_expansion_prob_dir = os.path.join(base_dir, 'plots', 'node_expansion_prob')
     self._gc_learning_curves_plotting_dir = os.path.join(base_dir, 'plots', 'gc_learning_curves')
     self._classifier_positives_plotting_dir = os.path.join(base_dir, 'plots', 'classifier_positives')
+    self._selection_difficulty_dir = os.path.join(base_dir, 'plots', 'selection_difficulty') # Reuse this dir
 
     os.makedirs(self._node_expansion_prob_dir, exist_ok=True)
     os.makedirs(self._gc_learning_curves_plotting_dir, exist_ok=True)
     os.makedirs(self._classifier_positives_plotting_dir, exist_ok=True)
+    os.makedirs(self._selection_difficulty_dir, exist_ok=True)
+
+    # Robust local history tracking
+    self._max_bonus_history = []  # List of (timestamp, max_bonus)
+    self._mean_bonus_history = [] # List of (timestamp, mean_bonus)
 
   def get_gsm_variables(self):
     try:
@@ -44,31 +50,119 @@ class ModelFreeGSMPlotter:
       classifiers=state[4],
       hash2obs=state[5],
       classifier2inferredinfo=state[6],
+      # selection_history ignored as it's empty on learner
     )
   
   def __call__(self, episode=0):
     vars = self.get_gsm_variables()
     if vars:
       classifier2positives = self._convert_hash2obs_to_classifier2positives(vars['hash2obs'])
-      self._plot_classifier_to_positives(classifier2positives)
+      
+      try:
+        self._plot_classifier_to_positives(classifier2positives)
+      except Exception as e:
+        print(f'Error plotting classifier positives: {e}')
+        
       self._print_classifier_inferred_info(vars['classifier2inferredinfo'])
+      
       try:
         self._plot_hash2bonus(vars['hash2bonus'], vars['hash2proto'], episode)
+      except Exception as e:
+        print(f'Error plotting hash2bonus: {e}')
+
+      try:
         self._plot_goal_learning_curves(vars['edge2successes'], vars['hash2proto'], episode)
       except Exception as e:
-        print(f'Error: {e}')
+        print(f'Error plotting learning curves: {e}')
+      
+      # Robust Bonus Plotting using Learner state
+      try:
+        if vars['hash2bonus']:
+            values = [v for v in vars['hash2bonus'].values() if v is not None]
+            if values:
+                # Handle potential numpy arrays
+                try:
+                    clean_values = [float(v) for v in values]
+                except:
+                     clean_values = [float(v.item()) if hasattr(v, 'item') else 0.0 for v in values]
+                
+                max_bonus = max(clean_values)
+                # mean_bonus = sum(clean_values) / len(clean_values)
+                mean_bonus = np.mean(clean_values)
+                timestamp = time.time()
+                
+                self._max_bonus_history.append((timestamp, max_bonus))
+                self._mean_bonus_history.append((timestamp, mean_bonus))
+                
+                self._plot_bonus_stats(episode)
+      except Exception as e:
+        print(f'Error plotting bonus stats: {e}')
 
     self._log_memory_usage(episode)
 
   def _print_classifier_inferred_info(self, classifier2inferredinfo):
     for classifier, inferred_info in classifier2inferredinfo.items():
-      print(f'Classifier {classifier} inferred info: {self._env.binary2info(inferred_info)}')
+      # Use internal binary2info logic safely
+      try:
+          info = self._binary2info(inferred_info)
+          print(f'Classifier {classifier} inferred info: {info}')
+      except:
+          pass
+
+  def _binary2info(self, binary_vector, sparse_info: bool = False):
+        """
+        Convert a binary vector back into an info dictionary for Montezuma's Revenge.
+        Inlined from MontezumaInfoWrapper to ensure robustness against env wrappers.
+        """
+        # Define the inventory mapping
+        inventory_items = ['torch', 'sword', 'sword', 'key', 'key', 'key', 'key', 'hammer']
+
+        # Initialize the info dictionary
+        info = {}
+
+        # Decode player_x (first 206 indices)
+        player_x_index = np.where(binary_vector[:206] == 1)[0]
+        if len(player_x_index) > 0 or not sparse_info:
+            info["player_x"] = player_x_index[0] if len(player_x_index) > 0 else -1
+
+        # Decode player_y (indices 206 to 341, normalized to 120-255)
+        player_y_index = np.where(binary_vector[206:342] == 1)[0]
+        if len(player_y_index) > 0 or not sparse_info:
+            info["player_y"] = player_y_index[0] + 120 if len(player_y_index) > 0 else -1
+
+        # Decode room number (indices 342 to 373)
+        room_number_index = np.where(binary_vector[342:374] == 1)[0]
+        if len(room_number_index) > 0 or not sparse_info:
+            info["room_number"] = room_number_index[0] if len(room_number_index) > 0 else -1
+
+        # Decode player state flags
+        # Accessing indices safely in case vector is short (though it shouldn't be)
+        if len(binary_vector) > 379:
+            if not sparse_info or binary_vector[378]:
+                info["left_door_open"] = bool(binary_vector[378])
+            if not sparse_info or binary_vector[379]:
+                info["right_door_open"] = bool(binary_vector[379])
+
+            # Decode inventory (binary string starting from index 380)
+            if len(binary_vector) >= 380 + len(inventory_items):
+                inventory_binary = binary_vector[380:380 + len(inventory_items)]
+                decoded_inventory = [
+                    item for bit, item in zip(inventory_binary, inventory_items) if bit
+                ]
+                if len(decoded_inventory) > 0 or not sparse_info:
+                    info["inventory"] = decoded_inventory
+        
+        return info
 
   def _convert_hash2obs_to_classifier2positives(self, hash2obs):
     """Convert the hash2obs dictionary to a classifier2positives dictionary."""
     classifier2positives = collections.defaultdict(list)
-    for hash, observations in hash2obs.items():
-      classifier_id = hash[0]
+    for hash_key, observations in hash2obs.items():
+      # Hash can be an int (from initialization) or a tuple (from updates)
+      if isinstance(hash_key, tuple):
+        classifier_id = hash_key[0]
+      else:
+        classifier_id = hash_key
       classifier2positives[classifier_id].extend(list(observations))
     return classifier2positives
 
@@ -91,7 +185,16 @@ class ModelFreeGSMPlotter:
       
       for i, oarg in enumerate(positives):
         if i < len(axes):
-          axes[i].imshow(oarg.observation[:,:,:3])
+          obs = oarg.observation
+          if obs.ndim == 2:
+            axes[i].imshow(obs, cmap='gray')
+          elif obs.ndim == 3 and obs.shape[2] == 1:
+             axes[i].imshow(obs[:,:,0], cmap='gray')
+          elif obs.ndim == 3 and obs.shape[2] == 2:
+             # Handle 2-channel images (e.g. frame stack of 2) by showing 1st channel
+             axes[i].imshow(obs[:,:,0], cmap='gray')
+          else:
+             axes[i].imshow(obs[:,:,:3])
           axes[i].axis('off')
       
       # Hide any unused subplots
@@ -109,10 +212,11 @@ class ModelFreeGSMPlotter:
     hashes = list(hash2bonus.keys())  # list of tuples where each tuple represents the hot idx in the proto-vector.
     values = list(hash2bonus.values())
     one_hot_vectors = [hash2proto[h] for h in hashes]
-    infos = [self._env.binary2info(b) for b in one_hot_vectors]
+    # Use robust local binary2info
+    infos = [self._binary2info(b) for b in one_hot_vectors]
     
-    info_val_with_key = [(infos[i], values[i]) for i in range(len(infos)) if infos[i]['has_key']]
-    info_val_without_key = [(infos[i], values[i]) for i in range(len(infos)) if not infos[i]['has_key']]
+    info_val_with_key = [(infos[i], values[i]) for i in range(len(infos)) if infos[i].get('inventory') and 'key' in infos[i]['inventory']]
+    info_val_without_key = [(infos[i], values[i]) for i in range(len(infos)) if not (infos[i].get('inventory') and 'key' in infos[i]['inventory'])]
     info_val_with_open_door = [(infos[i], values[i]) for i in range(len(infos)) if 'door4' in infos[i] and infos[i]['door4'] == 'open']
 
     xs_without_key = [info['player_x'] for info, _ in info_val_without_key]
@@ -263,3 +367,35 @@ class ModelFreeGSMPlotter:
       t1 = time.time()
       print(f'Plotted iteration {iteration} in {t1 - t0:.3f} seconds.')
       time.sleep(max(0, self._time_between_plots - (t1 - t0)))
+
+  def _plot_bonus_stats(self, episode):
+    """Plot the Max and Mean bonus of available goals over time."""
+    if not self._max_bonus_history:
+        return
+
+    # Unzip history
+    # max_history is list of (timestamp, val)
+    timestamps, max_vals = zip(*self._max_bonus_history)
+    _, mean_vals = zip(*self._mean_bonus_history)
+    
+    # Calculate relative time (minutes since start of history)
+    t0 = timestamps[0]
+    times_mins = [(t - t0) / 60.0 for t in timestamps]
+    
+    plt.figure(figsize=(10, 6))
+    
+    # Plot Max Bonus (Proxy for what the bandit selects)
+    plt.plot(times_mins, max_vals, color='blue', linewidth=2, label='Max Bonus (Best Goal)')
+    
+    # Plot Mean Bonus (General difficulty of frontier)
+    plt.plot(times_mins, mean_vals, color='green', linestyle='--', linewidth=1.5, label='Mean Bonus (All Goals)')
+    
+    plt.xlabel('Time (minutes)')
+    plt.ylabel('Goal Bonus (Implied CFN/Novelty)')
+    plt.title(f'Goal Bonus Trends Over Time (Episode {episode})')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Save to the selection_difficulty dir so user finds it where expected
+    plt.savefig(os.path.join(self._selection_difficulty_dir, f'selection_difficulty_{episode}.png'))
+    plt.close()

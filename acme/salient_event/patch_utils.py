@@ -133,15 +133,16 @@ def draw_bounding_boxes(image, bboxes, color=(255, 255, 255)):
             continue
         (x, y, w, h) = bbox
         cv2.rectangle(image, (x, y), (x + w, y + h), c, 1)
-        cv2.putText(
-            image,
-            str(object_id),
-            (x, y - 5),
-            cv2.FONT_HERSHEY_COMPLEX_SMALL,
-            0.4,  # font scale
-            c,  # color
-            1,  # thickness
-        )
+        # Labels removed per user request
+        # cv2.putText(
+        #     image,
+        #     str(object_id),
+        #     (x, y - 5),
+        #     cv2.FONT_HERSHEY_COMPLEX_SMALL,
+        #     0.4,  # font scale
+        #     c,  # color
+        #     1,  # thickness
+        # )
     return image
 
 

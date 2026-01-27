@@ -36,7 +36,9 @@ class GoalSampler:
       rmax_factor: float = 2.,
       max_vi_iterations: int = 20,
       goal_space_size: int = 100,
-      should_switch_goal: bool = False,):
+      should_switch_goal: bool = False,
+      success_rate_dict: Dict = None,
+      discovered_goals: set = None):  # All discovered goals (including HER)
     """Interface layer: takes graph from GSM and gets abstract policy from AMDP."""
     assert method in ('task', 'amdp', 'uniform', 'exploration'), method
     
@@ -69,6 +71,10 @@ class GoalSampler:
     # This is to avoid picking death nodes as expansion nodes b/c 
     # the exploration policy can't be run from there anyway.
     self._ignore_non_rewarding_terminal_nodes = ignore_non_rewarding_terminal_nodes
+    
+    # Store success rates and discovered goals for goal selection
+    self.success_rate_dict = success_rate_dict if success_rate_dict is not None else {}
+    self.discovered_goals = discovered_goals if discovered_goals is not None else set()
 
     print(f'Created GoalSampler with GS size {goal_space_size} and method {method}.')
 
@@ -119,9 +125,21 @@ class GoalSampler:
     at_goal = lambda g: all([g1 == g2 for g1, g2 in zip(current_node, g) if g2 >= 0])
     not_special_context = lambda g: g != self._exploration_goal_hash and g != self._task_goal_hash
     is_death = lambda g: self._ignore_non_rewarding_terminal_nodes and self.is_death_node(g)
+    
+    # Filter out never-achieved pre-learned goals, but only after some goals have been achieved
+    # This allows initial exploration to sample from all pre-loaded goals
+    # A goal is considered "achieved" if it's in discovered_goals OR has success_rate > 0
+    any_goals_achieved = (len(self.discovered_goals) > 0) or any(rate > 0 for rate in self.success_rate_dict.values()) if self.success_rate_dict else False
+    if any_goals_achieved:
+      # Once we've achieved at least one goal, only include goals that have been discovered or achieved
+      has_been_achieved = lambda g: (g in self.discovered_goals) or (self.success_rate_dict.get(g, 0.0) > 0)
+    else:
+      # During initial exploration, include all goals
+      has_been_achieved = lambda g: True
+    
     return {
       goal: oar for (goal, oar) in self.goal_dict.items()
-        if not at_goal(goal) and not_special_context(goal) and not is_death(goal)
+        if not at_goal(goal) and not_special_context(goal) and not is_death(goal) and has_been_achieved(goal)
     }
   
   def _select_expansion_node(
@@ -152,7 +170,54 @@ class GoalSampler:
     raise NotImplementedError(method)
   
   # TODO(ab): Support using the exploration value function.
-  def _get_expansion_scores(self, reachable_goals, use_tabular_counts=False):
+  def _get_expansion_scores(self, reachable_goals, use_tabular_counts=False, success_rate_dict=None, exploration_rate=0.2):
+    """Compute scores for goal selection.
+    
+    Favors goals with low but non-zero success rates (learnable goals).
+    Includes exploration bonus to try never-achieved goals.
+    
+    Args:
+      reachable_goals: List of candidate goals
+      use_tabular_counts: Use visit counts if no success rates
+      success_rate_dict: Maps goals to success rates
+      exploration_rate: Probability mass for exploring never-achieved goals (default 0.2 = 20%)
+    
+    Scoring strategy:
+    - Goals with 10-30% success: highest score (optimal learning zone)
+    - Goals with 0% success: moderate score (exploration bonus)
+    - Goals with >50% success: low score (already mastered)
+    """
+    if success_rate_dict is not None and len(success_rate_dict) > 0:
+      scores = []
+      for g in reachable_goals:
+        success_rate = success_rate_dict.get(g, 0.0)
+        
+        # Compute score using inverted bell curve
+        # Peak at optimal_rate (20%), drops off for 0% and high rates
+        optimal_rate = 0.2  # 20% success rate is ideal for learning
+        width = 0.3  # How quickly score drops off from optimal
+        
+        if success_rate == 0.0:
+          # Never achieved - rely purely on intrinsic novelty bonus
+          # The existing CFN/RND system handles exploration
+          curriculum_score = 0.0
+        else:
+          # Gaussian curve centered at optimal learning rate
+          curriculum_score = np.exp(-((success_rate - optimal_rate) ** 2) / (2 * width ** 2))
+          curriculum_score = curriculum_score * 1.5  # Boost learnable goals
+        
+        # Get intrinsic novelty bonus from existing CFN/RND system
+        novelty_bonus = self.bonus_dict.get(g, 0.0)
+        
+        # Combine: 70% curriculum (exploitation), 30% novelty (exploration)
+        novelty_weight = 0.3
+        combined_score = (1 - novelty_weight) * curriculum_score + novelty_weight * novelty_bonus
+        
+        scores.append(combined_score)
+      
+      return scores
+    
+    # Fallback to novelty-based scoring if no success rates available
     if use_tabular_counts:
       return [1. / np.sqrt(self.count_dict[g] + 1) for g in reachable_goals]
     return [self.bonus_dict[g] for g in reachable_goals]
@@ -172,7 +237,7 @@ class GoalSampler:
     print(f'[GoalSampler] Took {time.time() - t0} to get descendants.')
 
     if reachable_goals:
-      scores = self._get_expansion_scores(reachable_goals)
+      scores = self._get_expansion_scores(reachable_goals, success_rate_dict=self.success_rate_dict)
       scores = np.asarray(scores)
       if sampling_type == 'sum_sample':
         probs = scores2probabilities(scores)

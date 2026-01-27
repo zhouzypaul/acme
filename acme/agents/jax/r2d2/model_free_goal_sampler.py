@@ -25,6 +25,7 @@ class MFGoalSampler:
     reachability_method: str = 'multiplication',
     reachability_novelty_combination_alpha: float = 0.5,
     descendant_threshold: float = 0.1,
+    discovered_goals: set = None,  # All discovered goals (including HER)
   ):
     self.proto_dict = proto_dict
     self.count_dict = count_dict
@@ -35,6 +36,7 @@ class MFGoalSampler:
     self.reachability_method = reachability_method
     self.reachability_novelty_combination_alpha = reachability_novelty_combination_alpha
     self.descendant_threshold = descendant_threshold
+    self.discovered_goals = discovered_goals if discovered_goals is not None else set()
 
     def get_recurrent_state(batch_size=None):
       return uvfa_networks.init_recurrent_state(uvfa_rng_key, batch_size)
@@ -111,6 +113,17 @@ class MFGoalSampler:
     """Get the possible goals to pursue at the current state."""
     at_goal = lambda goal: self.binary_reward_func(np.asarray(current_node), np.asarray(goal))
     keys = list(self.proto_dict.keys())
+    
+    # Filter out never-achieved pre-learned goals, but only after some goals have been discovered
+    # This allows initial exploration to sample from all pre-loaded goals
+    any_goals_discovered = len(self.discovered_goals) > 0
+    if any_goals_discovered:
+      # Once we've discovered at least one goal, only include goals that have been discovered
+      # Goals are discovered when classifiers trigger during exploration or HER
+      has_been_discovered = lambda k: (k,) in self.discovered_goals
+      keys = [k for k in keys if has_been_discovered(k)]
+      print(f'[MFGoalSampler] Filtering to {len(keys)} discovered goals (out of {len(self.proto_dict)} total)')
+    
     return {k: self.proto_dict[k] for k in keys if not at_goal(self.proto_dict[k])}  
   
   def _select_expansion_node(
@@ -133,6 +146,17 @@ class MFGoalSampler:
       else:
         reachables = dist[0]
         probs = dist[1]
+      
+      # Ensure probabilities sum to 1 (handle numerical precision issues)
+      prob_sum = probs.sum()
+      if not np.isclose(prob_sum, 1.0):
+        print(f'[MFGoalSampler] WARNING: Probabilities sum to {prob_sum}, renormalizing')
+        if prob_sum > 0:
+          probs = probs / prob_sum
+        else:
+          # Fallback to uniform if all probabilities are zero
+          probs = np.ones_like(probs) / len(probs)
+      
       idx = np.random.choice(range(len(reachables)), p=probs)
       chosen_hash = reachables[idx]
       chosen = hash2proto[chosen_hash]

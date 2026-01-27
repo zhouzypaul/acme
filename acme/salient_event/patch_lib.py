@@ -215,9 +215,48 @@ def extract_patch(image, bbox):
 
 
 def is_similar(patch1, patch2):
+    # Fast SAD (Sum of Absolute Differences) check using cv2.norm
+    
+    # Squeeze singleton dimensions to ensure shapes match
+    # This is relatively cheap (~1µs) compared to the old 100µs check
+    if patch1.shape != patch2.shape:
+        p1 = patch1.squeeze()
+        p2 = patch2.squeeze()
+        if p1.shape != p2.shape:
+             return False
+    else:
+        p1 = patch1
+        p2 = patch2
+
+    # Type Sanitization for Robustness
+    # The OARWrapper guarantees uint8, but other callers (like GSM) might pass floats.
+    # We prioritize the fast path (uint8) but handle the slow path safely.
+    
+    if p1.dtype != np.uint8 or p2.dtype != np.uint8:
+        # Slow path: sanitize types
+        def _to_uint8(arr):
+            if arr.dtype == np.uint8:
+                return arr
+            if arr.dtype.kind == 'f' and arr.max() <= 1.05:
+                return (arr * 255).astype(np.uint8)
+            return arr.astype(np.uint8)
+
+        p1 = _to_uint8(p1)
+        p2 = _to_uint8(p2)
+
+    # Calculate L1 norm (fast rejection)
+    diff_sum = cv2.norm(p1, p2, cv2.NORM_L1)
+    
+    # Normalize by size to get average pixel difference
+    avg_diff = diff_sum / p1.size
+    
+    # Conservative threshold: if average pixel difference > 60 (out of 255), reject.
+    if avg_diff > 60:
+        return False
+
     res = cv2.matchTemplate(
-        patch1.astype(np.uint8),
-        patch2.astype(np.uint8),
+        p1,  # Guaranteed uint8 now
+        p2,
         cv2.TM_CCOEFF_NORMED
     )
     _, val, _, _ = cv2.minMaxLoc(res)
