@@ -33,10 +33,12 @@ def create_classifier(
 
 def classify(classifier: Dict, obs: np.ndarray) -> bool:
     assert classifier["classifier_id"] is not None, 'Assign ID before use.'
-    
+
     if classifier.get("use_pixel_baseline", False):
         # Pixel-wise strict check on the entire image
-        return np.array_equal(obs, classifier["prototype_image"])
+        # Use sum of squared differences to avoid threading issues with np.linalg.norm
+        diff = obs.astype(np.float32) - classifier["prototype_image"].astype(np.float32)
+        return np.sum(diff ** 2) < 0.01
 
     if len(classifier["salient_patches"]) == 0:
         return False
