@@ -32,7 +32,9 @@ import gym
 import haiku as hk
 import jax.numpy as jnp
 
-from acme.domains.minigrid.minigrid import environment_builder
+# Commented out for MontezumaRevenge experiments - missing visgrid dependency
+# from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
+# Commented out for MontezumaRevenge experiments - missing gym_sokoban dependency
 # from acme.domains.sokoban.sokoban import environment_builder as sokoban_environment_builder
 
 
@@ -188,51 +190,64 @@ def make_minigrid_environment(
   env = environment_builder(
     level_name,
     max_steps=max_episode_len,
-    goal_conditioned=goal_conditioned,
-    to_float=to_float,
-    use_learned_goal_classifiers=use_learned_goal_classifiers,
+    goal_conditioned=False
   )
   env = wrappers.SinglePrecisionWrapper(env)
-  return env
-
-def make_sokoban_environment(
-    level_name: str = 'Sokoban-v0',
-    seed: int = 42,
-    goal_conditioned: bool = True,
-    to_float: bool = False,
-    use_learned_goal_classifiers: bool = False,
-) -> dm_env.Environment:
-  """Loads the Sokoban environment."""
-  del seed  # For some reason, it is a jax array and not an int.
-  env = sokoban_environment_builder(
-    level_name,
-    seed=42,
-    goal_conditioned=goal_conditioned,
-    to_float=to_float,
-  )
-  env = wrappers.SinglePrecisionWrapper(env)
+  if oar_wrapper:
+     env = wrappers.ObservationActionRewardWrapper(env)
   return env
 
 
-def make_taxi_environment(
-  max_steps,
-  goal_conditioned,
-  oarg_wrapper,
-  seed,
-  use_learned_goal_classifiers,
-  grid_size=5,
-):
-  from acme.domains.taxi.taxi_env import environment_builder as taxi_environment_builder
-  del seed
-  env = taxi_environment_builder(
-    goal_conditioned=goal_conditioned,
-    max_steps=max_steps,
-    oarg_wrapper=oarg_wrapper,
-    use_learned_goal_classifiers=use_learned_goal_classifiers,
-    grid_size=grid_size,
-  )
-  env = wrappers.SinglePrecisionWrapper(env)
-  return env
+# Commented out for MontezumaRevenge experiments - missing visgrid dependency
+# def make_visgrid_environment(
+#       size=42,
+#       max_steps_per_episode=150,
+#       oar_wrapper=False
+# ) -> dm_env.Environment:
+#   from acme.domains.gridworld.visgrid import environment_builder
+#   env = environment_builder(size, max_steps_per_episode)
+#   env = wrappers.SinglePrecisionWrapper(env)
+#   if oar_wrapper:
+#      env = wrappers.ObservationActionRewardWrapper(env)
+#   return env 
+
+
+# Commented out for MontezumaRevenge experiments - missing visgrid dependency
+# def make_taxi_environment(
+#   max_steps,
+#   goal_conditioned,
+#   oar_wrapper,
+#   seed,
+#   grid_size=5,
+# ):
+#   del seed
+#   env = taxi_environment_builder(
+#     goal_conditioned=goal_conditioned,
+#     max_steps=max_steps,
+#     oar_wrapper=oar_wrapper,
+#     use_learned_goal_classifiers=False,
+#     grid_size=grid_size,
+#   )
+#   env = wrappers.SinglePrecisionWrapper(env)
+#   return env
+
+
+# Commented out for MontezumaRevenge experiments - missing gym_sokoban dependency
+# def make_sokoban_environment(
+#     level_name: str = 'Sokoban-v0',
+#     seed: int = 42,
+#     goal_conditioned: bool = False,
+#     to_float: bool = False,
+# ) -> dm_env.Environment:
+#   """Loads the Sokoban environment."""
+#   del seed  # For some reason, it is a jax array and not an int.
+#   env = sokoban_environment_builder(
+#     level_name,
+#     seed=42,
+#     goal_conditioned=goal_conditioned,
+#     to_float=to_float,
+#   )
+#   return env
 
 
 def make_dqn_atari_network(

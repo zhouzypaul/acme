@@ -121,18 +121,8 @@ FLAGS = flags.FLAGS
 
 
 def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_size=5, classifier_trigger_dir=None):
+  """Create environment factory for Montezuma's Revenge."""
   
-  minigrid_factory = functools.partial(
-    helpers.make_minigrid_environment,
-    level_name=env_name, max_episode_len=max_episode_steps, to_float=to_float)
-  
-  sokoban_factory = functools.partial(
-    helpers.make_sokoban_environment, level_name=env_name, to_float=to_float)
-
-  taxi_factory = functools.partial(
-    helpers.make_taxi_environment, max_steps=max_episode_steps, oarg_wrapper=True,
-      grid_size=taxi_grid_size)
-
   montezuma_factory = functools.partial(
     helpers.make_montezuma_environment,
       sticky_actions=False,
@@ -147,15 +137,10 @@ def make_environment_factory(env_name, max_episode_steps, to_float, taxi_grid_si
       classifier_trigger_dir=classifier_trigger_dir,
   )
   
-  if 'MiniGrid' in env_name:
-    return minigrid_factory
-  elif 'sokoban' in env_name.lower():
-    return sokoban_factory
-  elif 'taxi' in env_name.lower():
-    return taxi_factory
-  elif 'montezuma' in env_name.lower():
+  if 'montezuma' in env_name.lower():
     return montezuma_factory
-  raise ValueError(f"Unknown environment name: {env_name}")
+  
+  raise ValueError(f"Only Montezuma's Revenge is supported. Got: {env_name}")
 
 
 def build_experiment_config():
