@@ -1,0 +1,36 @@
+2026-01-26 12:20:45.878172: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcuda.so.1'; dlerror: libcuda.so.1: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/cv2/../../../../lib:
+2026-01-26 12:20:45.878215: W tensorflow/stream_executor/cuda/cuda_driver.cc:269] failed call to cuInit: UNKNOWN ERROR (303)
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/tensorflow_probability/python/__init__.py:57: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.
+  if (distutils.version.LooseVersion(tf.__version__) <
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/acme/agents/jax/dqn/learning_lib.py:48: DeprecationWarning: jax.numpy.DeviceArray is deprecated. Use jax.Array.
+  metrics: Dict[str, jnp.DeviceArray]
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/acme/agents/jax/dqn/losses.py:44: DeprecationWarning: jax.numpy.DeviceArray is deprecated. Use jax.Array.
+  ) -> Tuple[jnp.DeviceArray, learning_lib.LossExtra]:
+I0126 12:20:46.982276 125960800098112 xla_bridge.py:603] Unable to initialize backend 'cuda': FAILED_PRECONDITION: No visible GPU devices.
+I0126 12:20:46.982386 125960800098112 xla_bridge.py:603] Unable to initialize backend 'rocm': NOT_FOUND: Could not find registered platform with name: "rocm". Available platform names are: CUDA Interpreter
+I0126 12:20:46.982611 125960800098112 xla_bridge.py:603] Unable to initialize backend 'tpu': module 'jaxlib.xla_extension' has no attribute 'get_tpu_client'
+W0126 12:20:46.982667 125960800098112 xla_bridge.py:617] No GPU/TPU found, falling back to CPU. (Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/gym/envs/registration.py:592: UserWarning: [33mWARN: The environment MontezumaRevengeNoFrameskip-v0 is out of date. You should consider upgrading to version `v4`.[0m
+  logger.warn(
+A.L.E: Arcade Learning Environment (version 0.7.5+db37282)
+[Powered by Stella]
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/gym/core.py:329: DeprecationWarning: [33mWARN: Initializing wrapper in old step API which returns one bool instead of two. It is recommended to set `new_step_api=True` to use new step API. This will be the default behaviour in future.[0m
+  deprecation(
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/gym/wrappers/step_api_compatibility.py:39: DeprecationWarning: [33mWARN: Initializing environment in old step API which returns one bool instead of two. It is recommended to set `new_step_api=True` to use new step API. This will be the default behaviour in future.[0m
+  deprecation(
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/haiku/_src/transform.py:264: DeprecationWarning: jax.xla is deprecated. Use jax.interpreters.xla
+  if isinstance(f, (jax.xla.xe.CompiledFunction, jax.xla.xe.PmapFunction)):  # pytype: disable=name-error
+actor backend cpu
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/jax/_src/pjit.py:307: DeprecationWarning: backend and device argument on jit is deprecated. You can use a `jax.sharding.Mesh` context manager or device_put the arguments before passing them to `jit`. Please see https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html for more information.
+  warnings.warn(
+I0126 12:20:47.221468 125960800098112 csv.py:76] Logging to /mnt/nfs/home/ademello/acme/debug_output_files/logs/evaluator/logs.csv
+I0126 12:20:47.221699 125960800098112 courier_utils.py:120] Binding: run
+I0126 12:20:47.221743 125960800098112 courier_utils.py:120] Binding: run_episode
+I0126 12:20:47.221767 125960800098112 courier_utils.py:120] Binding: update_global_counts
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/gym/utils/passive_env_checker.py:227: DeprecationWarning: [33mWARN: Core environment is written in old step API which returns one bool instead of two. It is recommended to rewrite the environment with new step API. [0m
+  logger.deprecation(
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/gym/utils/passive_env_checker.py:233: DeprecationWarning: `np.bool8` is a deprecated alias for `np.bool_`.  (Deprecated NumPy 1.24)
+  if not isinstance(done, (bool, np.bool8)):
+I0126 12:20:54.733703 125960800098112 terminal.py:91] [Evaluator] Actor Episodes = 5 | Actor Steps = 1124 | Env Reset Duration Sec = 0.005 | Env Step Duration Sec = 0.001 | Episode Duration = 7.511 | Episode Length = 224 | Episode Return = 0.0 | Evaluator Episodes = 1 | Evaluator Steps = 224 | Learner Steps = 0 | Select Action Duration Sec = 0.032 | Steps Per Second = 29.822
+I0126 12:20:56.132091 125960800098112 terminal.py:91] [Evaluator] Actor Episodes = 7 | Actor Steps = 1568 | Env Reset Duration Sec = 0.007 | Env Step Duration Sec = 0.001 | Episode Duration = 0.649 | Episode Length = 224 | Episode Return = 0.0 | Evaluator Episodes = 3 | Evaluator Steps = 672 | Learner Steps = 0 | Select Action Duration Sec = 0.002 | Steps Per Second = 344.923
+I0126 12:20:57.320068 125960800098112 terminal.py:91] [Evaluator] Actor Episodes = 7 | Actor Steps = 1568 | Env Reset Duration Sec = 0.005 | Env Step Duration Sec = 0.001 | Episode Duration = 0.594 | Episode Length = 224 | Episode Return = 0.0 | Evaluator Episodes = 5 | Evaluator Steps = 1125 | Learner Steps = 0 | Select Action Duration Sec = 0.002 | Steps Per Second = 377.288

@@ -1,0 +1,18 @@
+2026-01-26 12:20:45.914691: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcuda.so.1'; dlerror: libcuda.so.1: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/cv2/../../../../lib:
+2026-01-26 12:20:45.914717: W tensorflow/stream_executor/cuda/cuda_driver.cc:269] failed call to cuInit: UNKNOWN ERROR (303)
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/tensorflow_probability/python/__init__.py:57: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.
+  if (distutils.version.LooseVersion(tf.__version__) <
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/acme/agents/jax/dqn/learning_lib.py:48: DeprecationWarning: jax.numpy.DeviceArray is deprecated. Use jax.Array.
+  metrics: Dict[str, jnp.DeviceArray]
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/acme/agents/jax/dqn/losses.py:44: DeprecationWarning: jax.numpy.DeviceArray is deprecated. Use jax.Array.
+  ) -> Tuple[jnp.DeviceArray, learning_lib.LossExtra]:
+I0126 12:20:47.018103 123417210865472 savers.py:164] Attempting to restore checkpoint: None
+I0126 12:20:47.022245 123417210865472 courier_utils.py:120] Binding: get_counts
+I0126 12:20:47.022409 123417210865472 courier_utils.py:120] Binding: get_directory
+I0126 12:20:47.022440 123417210865472 courier_utils.py:120] Binding: get_steps_key
+I0126 12:20:47.022461 123417210865472 courier_utils.py:120] Binding: increment
+I0126 12:20:47.022480 123417210865472 courier_utils.py:120] Binding: restore
+I0126 12:20:47.022497 123417210865472 courier_utils.py:120] Binding: save
+I0126 12:20:47.022898 123417210865472 savers.py:155] Saving checkpoint: /mnt/nfs/home/ademello/acme/debug_output_files/checkpoints/counter
+I0126 12:20:57.970132 123417210865472 savers.py:206] Caught SIGTERM: forcing a checkpoint save.
+I0126 12:20:57.970286 123417210865472 savers.py:155] Saving checkpoint: /mnt/nfs/home/ademello/acme/debug_output_files/checkpoints/counter

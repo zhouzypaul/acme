@@ -1,0 +1,13 @@
+2026-01-26 12:20:45.912029: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libcuda.so.1'; dlerror: libcuda.so.1: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/cv2/../../../../lib:
+2026-01-26 12:20:45.912062: W tensorflow/stream_executor/cuda/cuda_driver.cc:269] failed call to cuInit: UNKNOWN ERROR (303)
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/tensorflow_probability/python/__init__.py:57: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.
+  if (distutils.version.LooseVersion(tf.__version__) <
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/acme/agents/jax/dqn/learning_lib.py:48: DeprecationWarning: jax.numpy.DeviceArray is deprecated. Use jax.Array.
+  metrics: Dict[str, jnp.DeviceArray]
+/mnt/nfs/home/ademello/miniconda3/envs/acmenv/lib/python3.10/site-packages/acme/agents/jax/dqn/losses.py:44: DeprecationWarning: jax.numpy.DeviceArray is deprecated. Use jax.Array.
+  ) -> Tuple[jnp.DeviceArray, learning_lib.LossExtra]:
+I0126 12:20:46.957722 127203293194048 courier_utils.py:120] Binding: run
+I0126 12:20:46.958335 127203293194048 lp_utils.py:87] StepsLimiter: Starting with max_steps = 100 (actor_steps)
+I0126 12:20:47.960397 127203293194048 lp_utils.py:95] StepsLimiter: Reached 0 recorded steps
+I0126 12:20:57.969822 127203293194048 lp_utils.py:95] StepsLimiter: Reached 1568 recorded steps
+I0126 12:20:57.969923 127203293194048 lp_utils.py:98] StepsLimiter: Max steps of 100 was reached, terminating

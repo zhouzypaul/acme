@@ -207,9 +207,8 @@ class R2D2AtariNetwork(hk.RNNCore):
     self._embed = embedding.OAREmbedding(
         DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True, to_float=to_float),
         num_actions)
-    # self._goal_embed = embedding.GoalEmbedding(
-    #   DeepAtariTorso(hidden_sizes=[512], use_layer_norm=True))
-    self._goal_embed = hk.Linear(256)
+    self._goal_embed = embedding.GoalEmbedding(
+      DeepAtariTorso(hidden_sizes=[256], use_layer_norm=True, to_float=to_float))
     self._core = hk.LSTM(512)
     self._duelling_head = duelling.DuellingMLP(num_actions, hidden_sizes=[512, 512])
     self._num_actions = num_actions
@@ -220,34 +219,23 @@ class R2D2AtariNetwork(hk.RNNCore):
       state: hk.LSTMState  # [B, ...]
   ) -> Tuple[base.QValues, hk.LSTMState]:
 
-    assert inputs.observation.shape in ((84,84,2),)
+    assert inputs.observation.shape in ((84, 84, 2),)
 
-    # Split the input into obs and goal, only _embed obs.
-    # assert inputs.observation.shape[-1] == 4, inputs.observation.shape
-    obs_img = inputs.observation[..., :1]
-    # obs_img = inputs.observation[..., :3]
+    # Split observation and goal channels.
+    obs_img = inputs.observation[..., :1]   # (84, 84, 1)
+    goal_img = inputs.observation[..., -1:]  # (84, 84, 1)
 
-    # import ipdb; ipdb.set_trace()
-    n_goal_dims = inputs.goals.shape[0]
-    goal_vec = inputs.observation[..., -1]  # (84, 84)
-    goal_vec = goal_vec.reshape(-1)
-    goal_vec = goal_vec[:n_goal_dims]
-    # print("call", goal_vec.shape)
-
-    inputs = inputs._replace(observation=obs_img)
-
-    embeddings = self._embed(inputs)  # [B, D+A+1]
+    embeddings = self._embed(inputs._replace(observation=obs_img))  # [D+A+1]
     core_outputs, new_state = self._core(embeddings, state)
 
-    # Pass the goal through the DeepAtariTorso.
-    goal_embeddings = self._goal_embed(goal_vec.astype(jnp.float32))
+    # Pass the goal image through the CNN torso.
+    goal_embeddings = self._goal_embed(goal_img)  # [256]
 
     # Concat the goal embeddings to the core_outputs.
     augmented_core_outputs = jnp.concatenate(
       [core_outputs, goal_embeddings], axis=-1
     )
 
-    # Pass the augmented_core_outputs to the duelling head.
     q_values = self._duelling_head(augmented_core_outputs)
     return q_values, new_state
 
@@ -261,24 +249,15 @@ class R2D2AtariNetwork(hk.RNNCore):
       state: hk.LSTMState  # [T, ...]
   ) -> Tuple[base.QValues, hk.LSTMState]:
     """Efficient unroll that applies torso, core, and duelling mlp in one pass."""
-    obs_tensor = inputs.observation[..., :1]
-    # obs_tensor = inputs.observation[..., :3]
-    
-    # import ipdb; ipdb.set_trace()
-    n_goal_dims = inputs.goals.shape[-1]     # (T, B, 130) -> 130
-    goal_vec = inputs.observation[..., -1]  # (T, B, 84, 84)
-    # goal_vec = goal_vec.reshape(-1)      # (T * B * 84 * 84), 9257472
-    goal_vec = goal_vec.reshape(goal_vec.shape[0], goal_vec.shape[1], -1)  # Reshape to (T, B, 84*84=7056)
-    goal_vec = goal_vec[:,:,:n_goal_dims]    # (T, B, 130)
-    # print("unroll", goal_vec.shape)
-    
-    
+    obs_tensor = inputs.observation[..., :1]   # (T, B, 84, 84, 1)
+    goal_tensor = inputs.observation[..., -1:]  # (T, B, 84, 84, 1)
+
     embeddings = hk.BatchApply(self._embed)(
       inputs._replace(observation=obs_tensor))  # [T, B, D+A+1]
     core_outputs, new_states = hk.static_unroll(self._core, embeddings, state)
 
-
-    goal_embeddings = hk.BatchApply(self._goal_embed)(goal_vec.astype(jnp.float32))
+    # Pass goal images through the CNN torso over T and B dims.
+    goal_embeddings = hk.BatchApply(self._goal_embed)(goal_tensor)  # [T, B, 256]
 
     augmented_core_outputs = jnp.concatenate(
       [core_outputs, goal_embeddings], axis=-1
