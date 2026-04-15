@@ -186,7 +186,7 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
     goals = np.zeros((self._n_goal_dims), dtype=bool)
     obs_hash = self._hash_observation(ts.observation)
     
-    for classifier in self.classifiers:
+    for idx, classifier in enumerate(self.classifiers):
       if (classifier['classifier_id'], obs_hash) in self.cache:
         decision = self.cache[(classifier['classifier_id'], obs_hash)]
       else:
@@ -194,10 +194,9 @@ class ObservationActionRewardGoalWrapper(base.EnvironmentWrapper):
         self.cache[(classifier['classifier_id'], obs_hash)] = decision
         if len(self.cache) > self.cache_maxsize:
           self.cache.popitem(last=False)
-      
+
       if decision:
-        classifier_id = classifier["classifier_id"]
-        goals[classifier_id] = True
+        goals[idx] = True
         
         # Log classifier firing
         if self.classifier_firing_tracker is not None:

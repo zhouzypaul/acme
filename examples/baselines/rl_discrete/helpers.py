@@ -151,6 +151,7 @@ def make_montezuma_environment(
     reset_to_laser_room=False,
     use_learned_goal_classifiers=False,
     classifier_trigger_dir: str = None,
+    classifier_load_dir: str = None,
 ) -> dm_env.Environment:
   from acme.domains.montezuma.montezuma import environment_builder as montezuma_environment_builder
   assert oar_wrapper ^ oarg_wrapper, "Only one of oar_wrapper and oarg_wrapper can be True"
@@ -168,6 +169,7 @@ def make_montezuma_environment(
     reset_to_laser_room=reset_to_laser_room,
     use_learned_goal_classifiers=use_learned_goal_classifiers,
     classifier_trigger_dir=classifier_trigger_dir,
+    classifier_load_dir=classifier_load_dir,
   )
   
   if oar_wrapper:

@@ -373,12 +373,20 @@ def environment_builder(
     reset_to_laser_room=False,
     use_learned_goal_classifiers=True,
     classifier_trigger_dir=None,
+    classifier_load_dir=None,
 ):
     version = 'v0' if sticky_actions else 'v4'
     level_name = f'MontezumaRevengeNoFrameskip-{version}'
     env = gym.make(level_name, full_action_space=True)
     env = MontezumaInfoWrapper(env, reset_to_laser_room=reset_to_laser_room)
-    n_goal_dims = determine_n_goal_dims(env)
+    if classifier_load_dir:
+        import os
+        n_goal_dims = sum(
+            len([f for f in os.listdir(d.strip()) if f.endswith('.pkl')])
+            for d in classifier_load_dir.split(',')
+        )
+    else:
+        n_goal_dims = determine_n_goal_dims(env)
     env = GymnasiumWrapper(env)
     
     if goal_conditioned:
@@ -416,5 +424,14 @@ def environment_builder(
             use_learned_goal_classifiers=use_learned_goal_classifiers,
             classifier_trigger_dir=classifier_trigger_dir,
         )
+        # UVFAObsSpecWrapper sets task_goal_features from info2binary (always 470
+        # elements, last index = 1). When n_goal_dims differs (e.g. 431 for s3_p3),
+        # environment_loop._reached compares a 431-element goals vector against a
+        # 470-element task_goal_features, causing an IndexError at index 469.
+        # Fix: resize task_goal_features to match n_goal_dims.
+        if goal_conditioned and n_goal_dims != len(env._environment.task_goal_features):
+            task_goal = np.zeros(n_goal_dims, dtype=env._environment.task_goal_features.dtype)
+            task_goal[-1] = 1
+            env._environment.task_goal_features = task_goal
     env = wrappers.SinglePrecisionWrapper(env)
     return env
